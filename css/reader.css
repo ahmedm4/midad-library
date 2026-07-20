@@ -49,7 +49,7 @@
   align-items: center; justify-content: center; perspective: 2400px; }
 
 .r-paper { position: relative; background: var(--paper); color: var(--ink-c);
-  width: min(var(--r-width), calc(100vw - 96px)); height: min(96%, 1050px);
+  width: min(var(--r-width), calc(100vw - 96px)); height: 97%;
   border-radius: 4px 14px 14px 4px;
   box-shadow:
     -22px 30px 70px rgba(0,0,0,.55),

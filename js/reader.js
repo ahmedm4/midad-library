@@ -298,8 +298,8 @@ const Reader = (() => {
     try {
       const page = await pdfDoc.getPage(n);
       const stage = $('#r-stage');
-      const availH = stage.clientHeight * 0.95;
-      const availW = Math.min(stage.clientWidth - 130, 1100);
+      const availH = stage.clientHeight * 0.96;
+      const availW = Math.min(stage.clientWidth - 130, 1500);
       const vp1 = page.getViewport({ scale: 1 });
       const scale = Math.min(availH / vp1.height, availW / vp1.width) * pdfZoom;
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
