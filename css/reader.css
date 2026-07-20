@@ -1,0 +1,362 @@
+/* ═══════════════ مِداد — القارئ ═══════════════ */
+#reader {
+  position: fixed; inset: 0; z-index: 200;
+  --paper: #f4e4c9; --ink-c: #43301a; --paper-edge: rgba(0,0,0,.12);
+  --r-font: 'Noto Naskh Arabic', serif; --r-size: 20px; --r-lh: 1.9; --r-width: 680px;
+  display: flex; flex-direction: column;
+}
+
+/* خلفية المشهد */
+.r-ambient { position: absolute; inset: 0; transition: background 1s; }
+.r-ambient.bg-dusk { background:
+  radial-gradient(1100px 600px at 50% -12%, #33244f 0%, transparent 60%),
+  linear-gradient(170deg, #191227 0%, #100c1a 70%, #0c0913 100%); }
+.r-ambient.bg-wood { background:
+  radial-gradient(900px 500px at 50% -10%, rgba(255, 190, 110, .16), transparent 60%),
+  repeating-linear-gradient(90deg, rgba(0,0,0,.14) 0 3px, transparent 3px 90px),
+  linear-gradient(170deg, #4a3117 0%, #33210e 60%, #241708 100%); }
+.r-ambient.bg-slate { background: linear-gradient(170deg, #2a2c33 0%, #1d1f24 100%); }
+.r-ambient.bg-paper { background: color-mix(in srgb, var(--paper) 82%, #000 18%); }
+
+/* طبقة الدفء (إضاءة ليلية) */
+.r-warmth { position: absolute; inset: 0; pointer-events: none; z-index: 60;
+  background: #ff9330; mix-blend-mode: multiply; opacity: 0; transition: opacity .5s; }
+
+/* ─── الشريط العلوي ─── */
+.r-top { position: relative; z-index: 80; display: flex; align-items: center; gap: 14px;
+  padding: 14px 22px;
+  background: linear-gradient(180deg, rgba(10,7,18,.85), rgba(10,7,18,0));
+  transition: opacity .4s, transform .4s; }
+.r-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.r-title b { font-family: 'Amiri', serif; font-size: 19px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; color: #f1e9d6; }
+.r-title span { font-size: 12.5px; color: #9a92ad; white-space: nowrap; }
+.r-tools { display: flex; gap: 4px; }
+.r-top .icon-btn { color: #d8d2e6; }
+.r-top .icon-btn .aA { font-family: 'Amiri', serif; font-size: 20px; font-weight: 700; }
+.r-top .icon-btn.on { color: var(--gold, #d9a94f); background: rgba(217,169,79,.14); }
+
+#reader.ui-hidden .r-top { opacity: 0; transform: translateY(-14px); pointer-events: none; }
+#reader.ui-hidden .r-bottom { opacity: 0; transform: translateY(14px); pointer-events: none; }
+#reader.ui-hidden .r-nav { opacity: 0; pointer-events: none; }
+
+/* ─── المسرح والورقة ─── */
+.r-stage { position: relative; flex: 1; display: flex; align-items: center;
+  justify-content: center; min-height: 0; padding: 8px 0 4px; z-index: 20;
+  filter: brightness(1); transition: filter .4s; }
+
+.r-book { position: relative; height: 100%; width: 100%; display: flex;
+  align-items: center; justify-content: center; perspective: 2400px; }
+
+.r-paper { position: relative; background: var(--paper); color: var(--ink-c);
+  width: min(var(--r-width), calc(100vw - 96px)); height: min(96%, 1050px);
+  border-radius: 4px 14px 14px 4px;
+  box-shadow:
+    -22px 30px 70px rgba(0,0,0,.55),
+    inset 12px 0 26px -14px rgba(0,0,0,.35),
+    inset -3px 0 8px -4px rgba(0,0,0,.14);
+  transition: background .5s, color .5s, width .3s; }
+/* حواف أوراق مكدّسة */
+.r-paper::before, .r-paper::after { content: ''; position: absolute; border-radius: inherit;
+  background: color-mix(in srgb, var(--paper) 86%, #000 14%); z-index: -1; }
+.r-paper::before { inset: 4px -5px -5px 3px; }
+.r-paper::after { inset: 8px -10px -10px 6px; opacity: .7; }
+
+#reader.mode-pdf .r-book { overflow: auto; scrollbar-width: thin; }
+#reader.mode-pdf .r-paper { width: auto; height: auto; margin: auto;
+  background: transparent; box-shadow: none; }
+#reader.mode-pdf .r-paper::before, #reader.mode-pdf .r-paper::after { display: none; }
+#reader.zoomed #r-canvas { max-width: none; max-height: none; }
+
+/* الصفحتان المتقابلتان: ورقة أعرض ككتاب مفتوح */
+#reader.spread .r-paper { width: min(calc(var(--r-width) * 1.85), calc(100vw - 110px));
+  border-radius: 10px 14px 14px 10px; }
+
+/* عمود فقري بين الصفحتين المتقابلتين */
+#reader.spread .r-viewport::after { content: ''; position: absolute; top: 0; bottom: 0;
+  left: 50%; width: 80px; translate: -50% 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(0,0,0,.1) 42%, rgba(0,0,0,.22) 50%, rgba(0,0,0,.1) 58%, transparent); }
+
+/* الفقرة المقروءة صوتياً */
+.r-content .tts-now { background: color-mix(in srgb, var(--ink-c) 12%, transparent);
+  border-radius: 6px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--ink-c) 12%, transparent); }
+
+/* أدوات تكبير PDF */
+.zoom-pill { position: absolute; bottom: 18px; left: 18px; z-index: 90;
+  display: flex; align-items: center; gap: 2px; padding: 5px 8px;
+  background: rgba(25,18,42,.9); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.13); border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.zoom-pill button { width: 30px; height: 30px; border-radius: 50%; font-size: 17px;
+  color: #d8d2e6; display: flex; align-items: center; justify-content: center; }
+.zoom-pill button:hover { background: rgba(255,255,255,.12); }
+.zoom-pill span { font-size: 12px; color: #b6aecb; min-width: 44px; text-align: center; }
+
+#goto-input { width: 74px; padding: 4px 8px; border-radius: 8px; font-size: 13px;
+  border: 1px solid rgba(217,169,79,.55); background: rgba(0,0,0,.4); color: #ffe9bd; outline: none; }
+.r-page-label { cursor: pointer; }
+.r-page-label:hover { color: #ffe9bd; }
+
+/* شريط العلامة المرجعية */
+.r-ribbon { position: absolute; top: -6px; left: 40px; width: 34px; height: 46px; z-index: 40;
+  cursor: pointer; opacity: .35; transition: .3s;
+  background: linear-gradient(180deg, #c0392b, #922b21);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%);
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,.35)); }
+.r-ribbon:hover { opacity: .7; height: 54px; }
+.r-ribbon.on { opacity: 1; height: 60px;
+  background: linear-gradient(180deg, #e74c3c, #a93226); }
+
+/* نافذة النص */
+.r-viewport { position: absolute; inset: 44px 54px 52px; overflow: hidden; }
+.r-content { height: 100%; direction: rtl;
+  column-fill: auto; column-gap: 64px;
+  font-family: var(--r-font); font-size: var(--r-size); line-height: var(--r-lh);
+  color: var(--ink-c); text-align: justify;
+  transition: transform .45s cubic-bezier(.25,.8,.3,1); }
+#reader.no-anim .r-content { transition: none; }
+.r-content p { margin-bottom: .95em; }
+.r-content h2 { font-family: 'Amiri', serif; font-size: 1.5em; margin: 1.1em 0 .7em;
+  text-align: center; column-span: none; position: relative; padding-bottom: .45em; }
+.r-content h2::after { content: ''; position: absolute; bottom: 0; right: 50%; translate: 50% 0;
+  width: 84px; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent); opacity: .45; }
+.r-content h3 { font-family: 'Amiri', serif; font-size: 1.22em; margin: 1em 0 .55em; }
+.r-content mark.hl { background: color-mix(in srgb, var(--c) 55%, transparent);
+  color: inherit; border-radius: 3px; padding: 1px 0; cursor: pointer;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--c) 80%, #000 20%); }
+.r-content mark.hl.has-note::after { content: '📝'; font-size: .65em; vertical-align: super; margin-inline-start: 2px; }
+.r-content mark.hl.flash { animation: hl-flash 1.2s; }
+@keyframes hl-flash { 0%, 40% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 70%, transparent); } }
+
+/* وضع التمرير المتصل */
+#reader.mode-scroll .r-viewport { overflow-y: auto; scrollbar-width: thin; }
+#reader.mode-scroll .r-content { column-width: auto !important; column-gap: 0;
+  height: auto; transform: none !important; padding-bottom: 40px; }
+
+/* كنفا PDF */
+.r-canvas-wrap { position: relative; border-radius: 6px;
+  box-shadow: -18px 26px 60px rgba(0,0,0,.55); }
+#r-canvas { display: block; max-width: calc(100vw - 110px); max-height: 100%;
+  border-radius: 6px; background: #fff; transition: opacity .25s; }
+/* طبقة لون الورق فوق صفحة الـ PDF: تصبغ الأبيض بلون الورق وتُبقي الحبر داكناً */
+.r-canvas-tint { position: absolute; inset: 0; border-radius: 6px; pointer-events: none;
+  background: var(--paper); mix-blend-mode: multiply; transition: background .5s; }
+/* طبقة الكتابة على الصفحة */
+#r-draw { position: absolute; inset: 0; width: 100%; height: 100%;
+  border-radius: 6px; pointer-events: none; }
+#reader.draw-on #r-draw { pointer-events: auto; cursor: crosshair; touch-action: none; }
+#reader.mode-pdf .r-canvas-wrap { cursor: grab; }
+#reader.mode-pdf.draw-on .r-canvas-wrap { cursor: crosshair; }
+
+.draw-bar { position: absolute; bottom: 76px; right: 50%; translate: 50% 0; z-index: 115;
+  display: flex; gap: 5px; align-items: center;
+  background: rgba(25,18,42,.96); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.55); animation: rise .25s; }
+.draw-bar button { width: 36px; height: 36px; border-radius: 50%; font-size: 17px;
+  display: flex; align-items: center; justify-content: center; transition: .15s; }
+.draw-bar button:hover { background: rgba(255,255,255,.1); }
+.draw-bar button.active { background: rgba(217,169,79,.22);
+  box-shadow: 0 0 0 2px rgba(217,169,79,.55); }
+.draw-bar .db-color { width: 22px; height: 22px; margin: 0 2px;
+  background: var(--c); border: 2px solid rgba(255,255,255,.25); }
+.draw-bar .db-color:hover { background: var(--c); transform: scale(1.15); }
+.draw-bar .db-color.active { background: var(--c);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.45); }
+.db-sep { width: 1px; height: 22px; background: rgba(255,255,255,.16); }
+
+.kbd-list { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: #b6aecb; }
+.kbd-list b { display: inline-block; min-width: 96px; color: #ffe9bd; font-weight: 600;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 7px; padding: 2px 8px; margin-inline-end: 8px; text-align: center; }
+
+#reader.mode-pdf .r-viewport { display: none; }
+#reader.pdf-dark #r-canvas { filter: invert(.9) hue-rotate(180deg) contrast(.92); }
+#reader.pdf-dark .r-canvas-tint { display: none; }
+
+/* طبقة تقليب الصفحة */
+.r-flip-layer { position: absolute; inset: 0; pointer-events: none; z-index: 30;
+  perspective: 2200px; transform-style: preserve-3d; }
+.r-leaf { position: absolute; inset: 0; background: var(--paper); border-radius: inherit;
+  transform-origin: right center; backface-visibility: hidden; overflow: hidden;
+  box-shadow: -14px 8px 30px rgba(0,0,0,.35); }
+#reader.mode-pdf .r-leaf { background: var(--paper); }
+#reader.mode-pdf .r-leaf canvas { mix-blend-mode: multiply; }
+#reader.pdf-dark .r-leaf { background: #1a1c22; }
+#reader.pdf-dark .r-leaf canvas { mix-blend-mode: normal;
+  filter: invert(.9) hue-rotate(180deg) contrast(.92); }
+.r-leaf .leaf-shade { position: absolute; inset: 0;
+  background: linear-gradient(270deg, rgba(0,0,0,.28), transparent 45%); opacity: 0; }
+/* الصفحة ترتفع بحافتها الحرة نحو القارئ (خارج الكتاب) وتدور حول الكعب الأيمن */
+.r-leaf.turning { animation: leaf-turn .55s cubic-bezier(.3,.1,.4,1) forwards; }
+.r-leaf.turning .leaf-shade { animation: leaf-shade .55s forwards; }
+@keyframes leaf-turn {
+  60% { box-shadow: -40px 22px 50px rgba(0,0,0,.45); }
+  to { transform: rotateY(88deg); box-shadow: -60px 26px 60px rgba(0,0,0,.35); }
+}
+@keyframes leaf-shade { to { opacity: 1; } }
+.r-leaf.turning-back { transform: rotateY(88deg);
+  animation: leaf-back .55s cubic-bezier(.3,.1,.4,1) forwards; }
+@keyframes leaf-back { to { transform: rotateY(0deg); } }
+
+/* أزرار التنقل الجانبية */
+.r-nav { position: absolute; top: 50%; translate: 0 -50%; z-index: 70;
+  width: 52px; height: 110px; font-size: 40px; color: #cfc8dd;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  backdrop-filter: blur(6px); transition: .25s; opacity: .55; }
+.r-nav:hover { background: rgba(217,169,79,.18); color: #ffe9bd; opacity: 1; }
+.r-nav-next { left: 14px; border-radius: 16px 4px 4px 16px; }
+.r-nav-prev { right: 14px; border-radius: 4px 16px 16px 4px; }
+.r-nav:disabled { opacity: .12; pointer-events: none; }
+
+/* ─── الشريط السفلي ─── */
+.r-bottom { position: relative; z-index: 80; display: flex; align-items: center; gap: 18px;
+  padding: 12px 30px 16px; color: #b6aecb; font-size: 13px;
+  background: linear-gradient(0deg, rgba(10,7,18,.85), rgba(10,7,18,0));
+  transition: opacity .4s, transform .4s; }
+.r-page-label { min-width: 110px; font-weight: 600; color: #e5deee; }
+.r-time-left { min-width: 130px; text-align: left; }
+#r-slider { flex: 1; appearance: none; height: 6px; border-radius: 3px; outline: none;
+  background: linear-gradient(to left, #d9a94f var(--pct, 0%), rgba(255,255,255,.14) var(--pct, 0%)); }
+#r-slider::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe9bd, #d9a94f 70%); cursor: pointer;
+  box-shadow: 0 2px 10px rgba(217,169,79,.6); transition: transform .15s; }
+#r-slider::-webkit-slider-thumb:hover { transform: scale(1.25); }
+
+/* ─── الأدراج ─── */
+.r-drawer { position: absolute; top: 0; bottom: 0; right: -400px; width: 372px; z-index: 120;
+  background: linear-gradient(170deg, rgba(28,21,46,.97), rgba(19,14,32,.97));
+  backdrop-filter: blur(14px); border-inline-start: 1px solid rgba(255,255,255,.09);
+  padding: 26px 24px; overflow-y: auto; transition: right .4s cubic-bezier(.25,.9,.3,1);
+  box-shadow: -30px 0 60px rgba(0,0,0,.45); color: #eae4f2; display: flex; flex-direction: column; }
+.r-drawer.open { right: 0; }
+.r-drawer-right { right: auto; left: -400px; border-inline-start: none;
+  border-inline-end: 1px solid rgba(255,255,255,.09); transition: left .4s cubic-bezier(.25,.9,.3,1);
+  box-shadow: 30px 0 60px rgba(0,0,0,.45); }
+.r-drawer-right.open { left: 0; }
+
+.r-drawer h3 { font-family: 'Amiri', serif; font-size: 21px; margin-bottom: 18px; color: #f3ecd9; }
+.r-drawer section { margin-bottom: 24px; }
+.r-drawer h4 { font-size: 13px; color: #a89fc0; font-weight: 700; margin-bottom: 12px;
+  letter-spacing: .3px; }
+.r-drawer label { display: block; font-size: 13px; color: #b6aecb; margin-bottom: 14px; }
+.r-drawer label input[type="range"] { width: 100%; margin-top: 8px; appearance: none;
+  height: 5px; border-radius: 3px; background: rgba(255,255,255,.14); outline: none; }
+.r-drawer input[type="range"]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px;
+  border-radius: 50%; background: #d9a94f; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.inline-label { display: flex !important; align-items: center; gap: 10px; }
+.inline-label input[type="color"] { width: 42px; height: 30px; border: none; border-radius: 8px;
+  background: none; cursor: pointer; padding: 0; }
+
+.theme-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.theme-row button { aspect-ratio: 1.35; border-radius: 12px; border: 2px solid transparent;
+  background: var(--p); color: var(--k); font-family: 'Amiri', serif; font-size: 17px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; transition: .2s; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.theme-row button span { font-size: 10px; font-family: 'Tajawal'; display: block; }
+.theme-row button.active { border-color: #d9a94f; transform: scale(1.06);
+  box-shadow: 0 4px 14px rgba(217,169,79,.35); }
+
+.bgmode-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.bgmode-row button { padding: 8px 14px; border-radius: 10px; font-size: 12.5px;
+  border: 1px solid rgba(255,255,255,.12); color: #b6aecb; transition: .2s; }
+.bgmode-row button.active { background: rgba(217,169,79,.16); border-color: rgba(217,169,79,.55);
+  color: #ffe9bd; font-weight: 700; }
+
+.font-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 16px; }
+.font-row button { padding: 12px 8px; border-radius: 11px; border: 1px solid rgba(255,255,255,.12);
+  color: #d8d2e6; font-size: 16px; transition: .2s; }
+.font-row button.active { background: rgba(217,169,79,.16); border-color: rgba(217,169,79,.55); color: #ffe9bd; }
+
+/* درج الفهرس */
+.drawer-tabs { display: flex; gap: 6px; background: rgba(0,0,0,.3); padding: 5px;
+  border-radius: 12px; margin-bottom: 16px; }
+.drawer-tabs button { flex: 1; padding: 9px; border-radius: 8px; font-size: 13.5px;
+  color: #a89fc0; font-weight: 600; }
+.drawer-tabs button.active { background: rgba(217,169,79,.16); color: #ffe9bd; }
+.drawer-pane { flex: 1; overflow-y: auto; }
+
+.toc-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  width: 100%; text-align: start; padding: 11px 12px; border-radius: 10px;
+  font-size: 14.5px; color: #d8d2e6; transition: .15s; }
+.toc-item:hover { background: rgba(255,255,255,.07); }
+.toc-item.lvl2 { padding-inline-start: 28px; font-size: 13.5px; color: #b6aecb; }
+.toc-item small { color: #877fa0; font-size: 11.5px; flex-shrink: 0; }
+.toc-item.current { background: rgba(217,169,79,.12); color: #ffe9bd; }
+
+.note-item { padding: 13px 14px; border-radius: 12px; margin-bottom: 10px; cursor: pointer;
+  background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.07);
+  border-inline-start: 3px solid var(--c, #d9a94f); transition: .15s; }
+.note-item:hover { background: rgba(255,255,255,.08); }
+.note-item q { display: block; font-family: 'Amiri', serif; font-size: 14.5px; line-height: 1.7;
+  color: #e5deee; quotes: '«' '»'; margin-bottom: 6px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.note-item .n-note { font-size: 13px; color: #cbb98a; line-height: 1.6; margin-bottom: 6px; }
+.note-item .n-meta { display: flex; justify-content: space-between; font-size: 11px; color: #877fa0; }
+.note-item .n-del { color: #ff8787; font-size: 11.5px; }
+.note-item .n-del:hover { text-decoration: underline; }
+
+.mark-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: start;
+  padding: 12px; border-radius: 11px; color: #d8d2e6; font-size: 14px; transition: .15s; }
+.mark-item:hover { background: rgba(255,255,255,.07); }
+.mark-item .mk-flag { color: #e74c3c; font-size: 17px; }
+.mark-item small { margin-inline-start: auto; color: #877fa0; }
+
+.drawer-empty { text-align: center; color: #877fa0; padding: 40px 10px; font-size: 13.5px; line-height: 2; }
+.drawer-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding-top: 14px; border-top: 1px solid rgba(255,255,255,.08); margin-top: 10px; }
+.drawer-foot .btn-ghost { font-size: 12.5px; padding: 8px 14px; }
+.read-stat { font-size: 11.5px; color: #877fa0; text-align: left; line-height: 1.6; }
+
+/* ─── البحث ─── */
+.r-search { position: absolute; top: 66px; right: 50%; translate: 50% 0; z-index: 130;
+  width: min(560px, 92vw); background: rgba(25,18,42,.97); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 12px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.55); animation: rise .25s; }
+.r-search { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+.r-search[hidden] { display: none; }
+#r-search-input { padding: 11px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.3); color: #eee; font-size: 14.5px; outline: none; }
+#r-search-count { font-size: 12.5px; color: #a89fc0; white-space: nowrap; }
+.r-search-results { grid-column: 1 / -1; max-height: 300px; overflow-y: auto; }
+.r-search-results button { display: block; width: 100%; text-align: start; padding: 10px 12px;
+  border-radius: 9px; font-size: 13.5px; color: #cfc8dd; line-height: 1.7; }
+.r-search-results button:hover { background: rgba(255,255,255,.07); }
+.r-search-results b { color: #ffd76e; font-weight: 700; }
+
+/* ─── منبثقة التظليل ─── */
+.hl-popup { position: fixed; z-index: 500; display: flex; align-items: center; gap: 10px;
+  background: #241c3d; border: 1px solid rgba(255,255,255,.14); border-radius: 999px;
+  padding: 8px 12px; box-shadow: 0 16px 40px rgba(0,0,0,.55);
+  animation: pop .2s cubic-bezier(.2,1.4,.4,1); }
+.hl-colors { display: flex; gap: 7px; }
+.hl-colors button { width: 26px; height: 26px; border-radius: 50%; background: var(--c);
+  border: 2px solid rgba(255,255,255,.25); transition: .15s; }
+.hl-colors button:hover { transform: scale(1.2); border-color: #fff; }
+.hl-note-btn, .hl-del-btn { font-size: 12.5px; color: #e5deee; padding: 7px 12px;
+  border-radius: 999px; background: rgba(255,255,255,.08); white-space: nowrap; }
+.hl-note-btn:hover { background: rgba(217,169,79,.25); }
+.hl-del-btn { color: #ff9b9b; }
+.hl-del-btn:hover { background: rgba(231,76,60,.2); }
+
+@media (max-width: 760px) {
+  .r-viewport { inset: 30px 22px 40px; }
+  .r-paper { width: calc(100vw - 28px) !important; }
+  .r-drawer { width: 88vw; }
+  .r-page-label, .r-time-left { min-width: 0; }
+  .r-time-left { display: none; }
+  .r-bottom { gap: 10px; padding: 10px 16px 12px; }
+  .r-top { padding: 10px 8px; gap: 6px; }
+  .r-top .icon-btn { width: 34px; height: 34px; }
+  .r-top .icon-btn svg { width: 19px; height: 19px; }
+  .r-title b { font-size: 15px; }
+  .r-title span { display: none; }
+  .draw-bar { flex-wrap: wrap; justify-content: center; width: min(94vw, 340px);
+    border-radius: 22px; bottom: 86px; }
+  .zoom-pill { bottom: 12px; left: 10px; }
+}
+/* على شاشات اللمس الضيقة: السحب ومناطق النقر تكفي للتقليب */
+@media (max-width: 640px) {
+  .r-nav { display: none; }
+}

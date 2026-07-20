@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مِداد — مكتبتك الرقمية</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@300;400;600;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/reader.css">
+</head>
+<body>
+
+<!-- ═══════════ المكتبة ═══════════ -->
+<div id="library-view">
+  <div class="bg-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" class="brand-icon"><path fill="currentColor" d="M20.7 3.3c-2.6-.5-5.5-.2-7.7 1.2-.4.3-.7.6-1 .9-.3-.3-.6-.6-1-.9C8.8 3.1 5.9 2.8 3.3 3.3c-.8.1-1.3.8-1.3 1.5v12.4c0 1 .9 1.7 1.9 1.5 2.2-.4 4.6-.1 6.4 1 .5.3 1 .5 1.7.5s1.2-.2 1.7-.5c1.8-1.1 4.2-1.4 6.4-1 1 .2 1.9-.5 1.9-1.5V4.8c0-.7-.5-1.4-1.3-1.5zM11 17.6c-1.9-1-4.2-1.4-6.5-1.2V5.2c2.1-.3 4.4 0 6 1.1.2.1.4.3.5.5v10.8zm8.5-1.2c-2.3-.2-4.6.2-6.5 1.2V6.8c.1-.2.3-.4.5-.5 1.6-1.1 3.9-1.4 6-1.1v11.2z"/></svg>
+      <div>
+        <h1>مِداد</h1>
+        <p>مكتبتك الرقمية الفاخرة</p>
+      </div>
+    </div>
+
+    <div class="search-box">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+      <input id="search-input" type="search" placeholder="ابحث عن كتاب أو مؤلف…">
+    </div>
+
+    <div class="top-actions">
+      <div class="lib-stats" id="lib-stats"></div>
+      <button class="icon-btn lib-menu-btn" id="btn-lib-menu" title="إحصائيات ونسخ احتياطي">⋮</button>
+      <button class="btn-gold" id="btn-add">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
+        أضف كتاباً
+      </button>
+    </div>
+  </header>
+
+  <main class="lib-main">
+    <section id="hero-continue" hidden></section>
+
+    <nav class="chips" id="cat-chips"></nav>
+
+    <div class="grid-head">
+      <h2 id="grid-title">كل الكتب</h2>
+      <select id="sort-select">
+        <option value="recent">الأحدث قراءة</option>
+        <option value="added">الأحدث إضافة</option>
+        <option value="title">الاسم</option>
+        <option value="progress">نسبة الإنجاز</option>
+      </select>
+    </div>
+
+    <section class="book-grid" id="book-grid"></section>
+
+    <div class="empty-state" id="empty-state" hidden>
+      <div class="empty-shelf">
+        <span></span><span></span><span></span>
+      </div>
+      <h3>رفوفك بانتظار أول كتاب</h3>
+      <p>أضف ملف PDF أو نصاً وابدأ رحلة القراءة</p>
+      <button class="btn-gold" id="btn-add-empty">＋ أضف أول كتاب</button>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════ نافذة إضافة / تعديل كتاب ═══════════ -->
+<div class="modal-backdrop" id="add-modal" hidden>
+  <div class="modal">
+    <header>
+      <h3 id="add-modal-title">إضافة كتاب جديد</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </header>
+
+    <div class="add-tabs" id="add-tabs">
+      <button class="active" data-tab="file">📄 ملف PDF / TXT</button>
+      <button data-tab="paste">✍️ لصق نص</button>
+    </div>
+
+    <div class="tab-pane" id="pane-file">
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+        <b>اسحب الملف هنا أو انقر للاختيار</b>
+        <span>PDF أو TXT — يُحفظ داخل متصفحك بأمان</span>
+        <input type="file" id="file-input" accept=".pdf,.txt,.md,application/pdf,text/plain" multiple hidden>
+      </div>
+      <div class="file-chip" id="file-chip" hidden></div>
+    </div>
+
+    <div class="tab-pane" id="pane-paste" hidden>
+      <textarea id="paste-text" placeholder="الصق نص الكتاب هنا… (يدعم عناوين الفصول بصيغة # العنوان)"></textarea>
+    </div>
+
+    <div class="meta-row">
+      <div class="cover-col">
+        <div class="cover-preview" id="cover-preview"></div>
+        <button class="btn-ghost btn-cover" id="btn-cover">🖼 غلاف مخصص</button>
+        <input type="file" id="cover-input" accept="image/*" hidden>
+      </div>
+      <div class="meta-fields">
+        <label>عنوان الكتاب<input id="meta-title" placeholder="مثال: البداية والنهاية"></label>
+        <label>المؤلف<input id="meta-author" placeholder="اختياري"></label>
+        <label>التصنيف
+          <select id="meta-category"></select>
+        </label>
+      </div>
+    </div>
+
+    <footer>
+      <button class="btn-ghost" data-close>إلغاء</button>
+      <button class="btn-gold" id="btn-save-book">حفظ في المكتبة</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ═══════════ القارئ ═══════════ -->
+<div id="reader" hidden>
+  <div class="r-ambient" id="r-ambient"></div>
+
+  <header class="r-top" id="r-top">
+    <button class="icon-btn" id="r-back" title="عودة للمكتبة">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+    </button>
+    <div class="r-title">
+      <b id="r-book-title"></b>
+      <span id="r-book-author"></span>
+    </div>
+    <div class="r-tools">
+      <button class="icon-btn" id="r-btn-search" title="بحث في الكتاب">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+      </button>
+      <button class="icon-btn" id="r-btn-toc" title="الفهرس والملاحظات">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 9h14V7H3v2zm0 4h14v-2H3v2zm0 4h14v-2H3v2zm16 0h2v-2h-2v2zm0-10v2h2V7h-2zm0 6h2v-2h-2v2z"/></svg>
+      </button>
+      <button class="icon-btn" id="r-btn-bookmark" title="علامة مرجعية">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
+      </button>
+      <button class="icon-btn" id="r-btn-draw" title="الكتابة على الصفحة">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      </button>
+      <button class="icon-btn" id="r-btn-tts" title="القراءة الصوتية">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+      </button>
+      <button class="icon-btn" id="r-btn-settings" title="إعدادات القراءة">
+        <span class="aA">ع</span>
+      </button>
+      <button class="icon-btn" id="r-btn-full" title="ملء الشاشة">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="r-stage" id="r-stage">
+    <div class="r-book" id="r-book">
+      <div class="r-paper" id="r-paper">
+        <div class="r-ribbon" id="r-ribbon" title="علامة مرجعية"></div>
+        <div class="r-viewport" id="r-viewport">
+          <div class="r-content" id="r-content"></div>
+        </div>
+        <div class="r-canvas-wrap" id="r-canvas-wrap" hidden>
+          <canvas id="r-canvas"></canvas>
+          <div class="r-canvas-tint"></div>
+          <canvas id="r-draw"></canvas>
+        </div>
+        <div class="r-flip-layer" id="r-flip-layer"></div>
+      </div>
+    </div>
+    <div class="r-warmth" id="r-warmth"></div>
+    <button class="r-nav r-nav-next" id="r-next" title="الصفحة التالية">‹</button>
+    <button class="r-nav r-nav-prev" id="r-prev" title="الصفحة السابقة">›</button>
+    <div class="zoom-pill" id="zoom-pill" hidden>
+      <button id="zoom-in" title="تكبير">＋</button>
+      <span id="zoom-val">100٪</span>
+      <button id="zoom-out" title="تصغير">−</button>
+    </div>
+  </div>
+
+  <!-- شريط أدوات الكتابة على الصفحة -->
+  <div class="draw-bar" id="draw-bar" hidden>
+    <button data-tool="pen" class="active" title="قلم">✏️</button>
+    <button data-tool="hl" title="قلم تظليل">🖍️</button>
+    <button data-tool="eraser" title="ممحاة">🧹</button>
+    <span class="db-sep"></span>
+    <button class="db-color active" data-color="#e03131" style="--c:#e03131" title="أحمر"></button>
+    <button class="db-color" data-color="#1971c2" style="--c:#1971c2" title="أزرق"></button>
+    <button class="db-color" data-color="#2f9e44" style="--c:#2f9e44" title="أخضر"></button>
+    <button class="db-color" data-color="#f5c211" style="--c:#f5c211" title="أصفر"></button>
+    <span class="db-sep"></span>
+    <button id="draw-undo" title="تراجع">↩️</button>
+    <button id="draw-clear" title="مسح كتابات الصفحة">🗑️</button>
+  </div>
+
+  <footer class="r-bottom" id="r-bottom">
+    <span class="r-page-label" id="r-page-label"></span>
+    <input type="range" id="r-slider" min="0" max="100" value="0">
+    <span class="r-time-left" id="r-time-left"></span>
+  </footer>
+
+  <!-- درج الإعدادات -->
+  <aside class="r-drawer" id="settings-drawer">
+    <h3>إعدادات القراءة</h3>
+
+    <section>
+      <h4>لون الورق</h4>
+      <div class="theme-row" id="theme-row"></div>
+      <label class="inline-label">لون مخصص <input type="color" id="custom-paper" value="#f4e4c9"></label>
+    </section>
+
+    <section>
+      <h4>الإضاءة</h4>
+      <label>السطوع <input type="range" id="set-brightness" min="45" max="115" value="100"></label>
+      <label>إضاءة دافئة (راحة العين ليلاً) <input type="range" id="set-warmth" min="0" max="60" value="0"></label>
+      <h4>الخلفية</h4>
+      <div class="bgmode-row" id="bgmode-row">
+        <button data-bg="dusk" class="active">غسق</button>
+        <button data-bg="wood">مكتب خشبي</button>
+        <button data-bg="slate">حيادي</button>
+        <button data-bg="paper">بلون الورق</button>
+      </div>
+    </section>
+
+    <section id="typo-section">
+      <h4>الخط</h4>
+      <div class="font-row" id="font-row"></div>
+      <label>حجم الخط <input type="range" id="set-fontsize" min="15" max="30" value="20"></label>
+      <label>تباعد الأسطر <input type="range" id="set-lineheight" min="150" max="240" value="190"></label>
+      <label>عرض النص <input type="range" id="set-width" min="480" max="900" value="680"></label>
+      <h4>تخطيط الصفحات</h4>
+      <div class="bgmode-row" id="spread-row">
+        <button data-spread="0" class="active">صفحة واحدة</button>
+        <button data-spread="1">صفحتان متقابلتان</button>
+      </div>
+    </section>
+
+    <section id="flip-section">
+      <h4>أسلوب التنقل</h4>
+      <div class="bgmode-row" id="flip-row">
+        <button data-flip="flip" class="active">تقليب ورقي</button>
+        <button data-flip="slide">انزلاق</button>
+        <button data-flip="scroll" id="flip-scroll-btn">تمرير متصل</button>
+      </div>
+    </section>
+
+    <section>
+      <h4>القراءة الصوتية 🔊</h4>
+      <label>سرعة القراءة <input type="range" id="set-ttsrate" min="60" max="140" value="100"></label>
+    </section>
+
+    <button class="btn-ghost" id="btn-reset-settings" style="width:100%;margin-bottom:18px">↺ استعادة الإعدادات الافتراضية</button>
+
+    <section>
+      <h4>اختصارات لوحة المفاتيح</h4>
+      <div class="kbd-list">
+        <span><b>◄ / مسافة</b> الصفحة التالية</span>
+        <span><b>►</b> الصفحة السابقة</span>
+        <span><b>B</b> علامة مرجعية</span>
+        <span><b>Home / End</b> البداية / النهاية</span>
+        <span><b>Esc</b> إغلاق</span>
+        <span><b>سحب الفأرة</b> تقليب الصفحة</span>
+      </div>
+    </section>
+  </aside>
+
+  <!-- درج الفهرس / الملاحظات / العلامات -->
+  <aside class="r-drawer r-drawer-right" id="toc-drawer">
+    <div class="drawer-tabs" id="drawer-tabs">
+      <button class="active" data-pane="toc">الفهرس</button>
+      <button data-pane="notes">الملاحظات</button>
+      <button data-pane="marks">العلامات</button>
+    </div>
+    <div class="drawer-pane" id="pane-toc"></div>
+    <div class="drawer-pane" id="pane-notes" hidden></div>
+    <div class="drawer-pane" id="pane-marks" hidden></div>
+    <footer class="drawer-foot">
+      <button class="btn-ghost" id="btn-export-notes">⬇ تصدير الملاحظات</button>
+      <span class="read-stat" id="read-stat"></span>
+    </footer>
+  </aside>
+
+  <!-- شريط البحث داخل الكتاب -->
+  <div class="r-search" id="r-search" hidden>
+    <input id="r-search-input" placeholder="ابحث في نص الكتاب…">
+    <span id="r-search-count"></span>
+    <button class="icon-btn" id="r-search-close">✕</button>
+    <div class="r-search-results" id="r-search-results"></div>
+  </div>
+
+  <!-- منبثقة التظليل والملاحظة -->
+  <div class="hl-popup" id="hl-popup" hidden>
+    <div class="hl-colors">
+      <button data-color="#f6d743" style="--c:#f6d743"></button>
+      <button data-color="#8ce99a" style="--c:#8ce99a"></button>
+      <button data-color="#74c0fc" style="--c:#74c0fc"></button>
+      <button data-color="#faa2c1" style="--c:#faa2c1"></button>
+    </div>
+    <button class="hl-note-btn" id="hl-note-btn">📝 تظليل + ملاحظة</button>
+    <button class="hl-del-btn" id="hl-del-btn" hidden>🗑 إزالة التظليل</button>
+  </div>
+
+  <!-- محرر الملاحظة -->
+  <div class="modal-backdrop" id="note-modal" hidden>
+    <div class="modal modal-sm">
+      <header><h3>ملاحظتك</h3><button class="icon-btn" data-close>✕</button></header>
+      <blockquote id="note-quote"></blockquote>
+      <textarea id="note-text" placeholder="اكتب ما جال في خاطرك…"></textarea>
+      <footer>
+        <button class="btn-ghost" data-close>إلغاء</button>
+        <button class="btn-gold" id="note-save">حفظ الملاحظة</button>
+      </footer>
+    </div>
+  </div>
+</div>
+
+<!-- نافذة الإحصائيات -->
+<div class="modal-backdrop" id="stats-modal" hidden>
+  <div class="modal">
+    <header><h3>📊 إحصائيات قراءتك</h3><button class="icon-btn" data-close>✕</button></header>
+    <div id="stats-body"></div>
+  </div>
+</div>
+<input type="file" id="import-input" accept=".json,application/json" hidden>
+
+<div id="toast-wrap"></div>
+
+<script src="vendor/pdf.min.js"></script>
+<script src="js/store.js"></script>
+<script src="js/library.js"></script>
+<script src="js/reader.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

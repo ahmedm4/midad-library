@@ -1,0 +1,617 @@
+/* ═══════ مِداد — واجهة المكتبة ═══════ */
+const Library = (() => {
+  const CATEGORIES = ['رواية', 'دين', 'تاريخ', 'علوم', 'تطوير ذات', 'أدب وشعر', 'أطفال', 'أخرى'];
+  const COVER_PALETTES = [
+    ['#3b2a5e', '#1d1436', '#c9a35f'], ['#5e2a3b', '#361420', '#e0b070'],
+    ['#1e4a4a', '#0e2626', '#8fd0c0'], ['#5e4a1e', '#33280d', '#f0d78c'],
+    ['#2a3b5e', '#141d36', '#9fb8e8'], ['#4a1e5e', '#280d33', '#d79ce8'],
+    ['#1e5e35', '#0d331c', '#9ce8b4'], ['#5e351e', '#33200d', '#e8b89c'],
+  ];
+  const ORNAMENTS = ['❁', '✦', '☙', '❖', '✤', '𓂃', '⁂', '✾'];
+
+  let books = [];
+  let states = {};
+  let activeCat = 'الكل';
+  let query = '';
+  let sort = 'recent';
+  let pendingFile = null;   // {kind:'pdf'|'text', blob?, text?, cover?}
+  let pendingCover = null;  // غلاف مخصص اختاره المستخدم (dataURL)
+  let editingId = null;
+  let origText = null;      // النص الأصلي عند تحرير كتاب نصي (لكشف التغيير)
+  const STATUS_FAV = '⭐ المفضلة', STATUS_READING = '📖 قيد القراءة', STATUS_DONE = '✅ مكتملة';
+
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  /* ─── تهيئة ─── */
+  async function init() {
+    fillCategorySelect();
+    wireTopbar();
+    wireAddModal();
+    wireLibMenu();
+    wireGlobalDrop();
+    await refresh();
+  }
+
+  async function refresh() {
+    books = await Store.getBooks();
+    states = {};
+    for (const b of books) states[b.id] = await Store.getState(b.id);
+    render();
+  }
+
+  /* ─── العرض ─── */
+  function render() {
+    renderStats();
+    renderHero();
+    renderChips();
+    renderGrid();
+  }
+
+  function renderStats() {
+    const reading = books.filter((b) => states[b.id].pct > 0 && !states[b.id].finished).length;
+    const done = books.filter((b) => states[b.id].finished).length;
+    $('#lib-stats').innerHTML = `
+      <span><b>${books.length}</b>كتاب</span>
+      <span><b>${reading}</b>قيد القراءة</span>
+      <span><b>${done}</b>مكتمل</span>`;
+  }
+
+  function renderHero() {
+    const hero = $('#hero-continue');
+    const last = books
+      .filter((b) => states[b.id].lastRead && !states[b.id].finished && states[b.id].pct > 0)
+      .sort((a, b) => states[b.id].lastRead - states[a.id].lastRead)[0];
+    if (!last) { hero.hidden = true; return; }
+    const st = states[last.id];
+    const pct = Math.round(st.pct * 100);
+    hero.hidden = false;
+    hero.innerHTML = `
+      <div class="continue-card" data-id="${last.id}">
+        ${coverHTML(last, 'cc-cover')}
+        <div class="cc-info">
+          <div class="cc-label">✦ واصل القراءة</div>
+          <h3>${esc(last.title)}</h3>
+          <div class="cc-author">${esc(last.author || '')}</div>
+          <div class="cc-bar"><i style="width:${pct}%"></i></div>
+          <div class="cc-pct">أنجزت ${pct}٪ ${st.seconds ? '· ' + fmtDuration(st.seconds) + ' قراءة' : ''}</div>
+        </div>
+        <button class="btn-gold cc-btn">استئناف القراءة ←</button>
+      </div>`;
+    hero.querySelector('.continue-card').onclick = () => Reader.open(last.id);
+  }
+
+  function renderChips() {
+    const used = new Set(books.map((b) => b.category).filter(Boolean));
+    const status = [];
+    if (books.some((b) => b.fav)) status.push(STATUS_FAV);
+    if (books.some((b) => states[b.id].pct > 0 && !states[b.id].finished)) status.push(STATUS_READING);
+    if (books.some((b) => states[b.id].finished)) status.push(STATUS_DONE);
+    const cats = ['الكل', ...status, ...CATEGORIES.filter((c) => used.has(c))];
+    $('#cat-chips').innerHTML = cats
+      .map((c) => `<button class="${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`)
+      .join('');
+    $('#cat-chips').querySelectorAll('button').forEach((btn) => {
+      btn.onclick = () => { activeCat = btn.dataset.cat; render(); };
+    });
+  }
+
+  function visibleBooks() {
+    let list = books.slice();
+    if (activeCat === STATUS_FAV) list = list.filter((b) => b.fav);
+    else if (activeCat === STATUS_READING) list = list.filter((b) => states[b.id].pct > 0 && !states[b.id].finished);
+    else if (activeCat === STATUS_DONE) list = list.filter((b) => states[b.id].finished);
+    else if (activeCat !== 'الكل') list = list.filter((b) => b.category === activeCat);
+    if (query) {
+      const q = query.toLowerCase();
+      list = list.filter((b) => (b.title + ' ' + (b.author || '')).toLowerCase().includes(q));
+    }
+    const st = (b) => states[b.id];
+    if (sort === 'recent') list.sort((a, b) => (st(b).lastRead || 0) - (st(a).lastRead || 0) || b.addedAt - a.addedAt);
+    else if (sort === 'added') list.sort((a, b) => b.addedAt - a.addedAt);
+    else if (sort === 'title') list.sort((a, b) => a.title.localeCompare(b.title, 'ar'));
+    else if (sort === 'progress') list.sort((a, b) => st(b).pct - st(a).pct);
+    return list;
+  }
+
+  function renderGrid() {
+    const list = visibleBooks();
+    const grid = $('#book-grid');
+    $('#empty-state').hidden = books.length > 0;
+    $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب' : activeCat;
+    grid.innerHTML = list.map((b) => {
+      const st = states[b.id];
+      const pct = Math.round(st.pct * 100);
+      return `
+      <article class="book-card" data-id="${b.id}">
+        <div class="bk">
+          ${coverHTML(b)}
+          <button class="bc-fav ${b.fav ? 'on' : ''}" title="${b.fav ? 'إزالة من المفضلة' : 'أضف إلى المفضلة'}">${b.fav ? '★' : '☆'}</button>
+          ${st.finished ? '<span class="done-badge">✓ مكتمل</span>' : ''}
+          <span class="type-badge">${b.type === 'pdf' ? 'PDF' : 'نص'}</span>
+          ${pct > 0 && !st.finished ? `<div class="prog"><i style="width:${pct}%"></i></div>` : ''}
+        </div>
+        <div class="bc-meta">
+          <b>${esc(b.title)}</b>
+          <span>${esc(b.author || '—')}</span>
+          <button class="bc-menu-btn" title="خيارات">⋯</button>
+        </div>
+      </article>`;
+    }).join('');
+
+    grid.querySelectorAll('.book-card').forEach((card) => {
+      const id = card.dataset.id;
+      card.querySelector('.bk').onclick = () => Reader.open(id);
+      card.querySelector('.bc-menu-btn').onclick = (e) => {
+        e.stopPropagation();
+        const r = e.currentTarget.getBoundingClientRect();
+        openCardMenu(r.left, r.bottom + 6, id);
+      };
+      card.querySelector('.bc-fav').onclick = async (e) => {
+        e.stopPropagation();
+        const b = books.find((x) => x.id === id);
+        await Store.updateBook(id, { fav: !b.fav });
+        b.fav = !b.fav;
+        render();
+      };
+      // الزر الأيمن على البطاقة يفتح القائمة أيضاً
+      card.oncontextmenu = (e) => { e.preventDefault(); openCardMenu(e.clientX, e.clientY, id); };
+    });
+  }
+
+  function coverHTML(b, extraClass = '') {
+    if (b.cover) return `<img class="${extraClass}" src="${b.cover}" alt="">`;
+    const pal = COVER_PALETTES[hashCode(b.id) % COVER_PALETTES.length];
+    const orn = ORNAMENTS[hashCode(b.title) % ORNAMENTS.length];
+    return `
+      <div class="gen-cover ${extraClass}" style="background:
+          radial-gradient(140% 100% at 50% 0%, ${pal[0]}, ${pal[1]});
+          color:${pal[2]}; border:1px solid ${pal[2]}33">
+        <div class="gc-orn">${orn}</div>
+        <div class="gc-title">${esc(b.title)}</div>
+        <div class="gc-author">${esc(b.author || '')}</div>
+      </div>`;
+  }
+
+  function hashCode(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h;
+  }
+
+  /* ─── قائمة خيارات الكتاب ─── */
+  function openCardMenu(x, y, id) {
+    closeCardMenu();
+    const b = books.find((x2) => x2.id === id);
+    const menu = document.createElement('div');
+    menu.className = 'bc-menu';
+    menu.innerHTML = `
+      <button data-act="read">📖 قراءة</button>
+      <button data-act="fav">${b.fav ? '☆ إزالة من المفضلة' : '⭐ أضف إلى المفضلة'}</button>
+      <button data-act="edit">✏️ تعديل البيانات</button>
+      <button data-act="export">⬇️ تصدير الملاحظات</button>
+      <button data-act="reset">↺ تصفير التقدم</button>
+      <button data-act="delete" class="danger">🗑 حذف الكتاب</button>`;
+    document.body.appendChild(menu);
+    menu.style.top = Math.min(y, innerHeight - menu.offsetHeight - 12) + 'px';
+    menu.style.left = Math.min(Math.max(10, x - menu.offsetWidth + 30), innerWidth - menu.offsetWidth - 10) + 'px';
+    menu.onclick = async (e) => {
+      const act = e.target.dataset.act;
+      closeCardMenu();
+      if (act === 'read') Reader.open(id);
+      else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; render(); }
+      else if (act === 'edit') openAddModal(b);
+      else if (act === 'export') exportNotes(id);
+      else if (act === 'reset') {
+        const st = await Store.getState(id);
+        Object.assign(st, { pct: 0, page: 0, scrollTop: 0, finished: false, seconds: 0 });
+        await Store.saveState(st); await refresh(); toast('تم تصفير التقدم');
+      } else if (act === 'delete') {
+        if (confirm(`حذف «${b.title}» نهائياً مع ملاحظاته؟`)) {
+          await Store.deleteBook(id); await refresh(); toast('حُذف الكتاب');
+        }
+      }
+    };
+    setTimeout(() => document.addEventListener('pointerdown', onDocDown, { once: true }));
+    function onDocDown(e) { if (!menu.contains(e.target)) closeCardMenu(); }
+  }
+  function closeCardMenu() { document.querySelectorAll('.bc-menu').forEach((m) => m.remove()); }
+
+  async function exportNotes(id) {
+    const b = books.find((x) => x.id === id);
+    const st = await Store.getState(id);
+    const items = [...(st.highlights || []), ...(st.pageNotes || [])];
+    if (!items.length) return toast('لا توجد ملاحظات لهذا الكتاب بعد');
+    let out = `ملاحظاتي على «${b.title}»${b.author ? ' — ' + b.author : ''}\n`;
+    out += '─'.repeat(40) + '\n\n';
+    for (const h of st.highlights || []) {
+      out += `«${h.text.trim()}»\n`;
+      if (h.note) out += `📝 ${h.note}\n`;
+      out += '\n';
+    }
+    for (const n of st.pageNotes || []) out += `[صفحة ${n.page + 1}] 📝 ${n.note}\n\n`;
+    const blob = new Blob(['﻿' + out], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ملاحظات - ${b.title}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('صُدّرت الملاحظات 📄', 'gold');
+  }
+
+  /* ─── الشريط العلوي ─── */
+  function wireTopbar() {
+    $('#search-input').oninput = (e) => { query = e.target.value.trim(); renderGrid(); };
+    $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
+    $('#btn-add').onclick = () => openAddModal();
+    $('#btn-add-empty').onclick = () => openAddModal();
+  }
+
+  function fillCategorySelect() {
+    $('#meta-category').innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join('');
+  }
+
+  /* ─── نافذة الإضافة / التعديل ─── */
+  function wireAddModal() {
+    const modal = $('#add-modal');
+    modal.querySelectorAll('[data-close]').forEach((b) => (b.onclick = closeAddModal));
+    modal.onclick = (e) => { if (e.target === modal) closeAddModal(); };
+
+    $('#add-tabs').querySelectorAll('button').forEach((btn) => {
+      btn.onclick = () => {
+        $('#add-tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === btn));
+        $('#pane-file').hidden = btn.dataset.tab !== 'file';
+        $('#pane-paste').hidden = btn.dataset.tab !== 'paste';
+      };
+    });
+
+    const dz = $('#dropzone');
+    dz.onclick = () => $('#file-input').click();
+    const takeFiles = (files) => {
+      files = [...files].filter((f) => /\.(pdf|txt|md)$/i.test(f.name) || f.type === 'application/pdf' || f.type.startsWith('text/'));
+      if (!files.length) return toast('الرجاء اختيار ملفات PDF أو TXT');
+      if (files.length > 1) { closeAddModal(); bulkImport(files); }
+      else handleFile(files[0]);
+    };
+    $('#file-input').onchange = (e) => { if (e.target.files.length) takeFiles(e.target.files); e.target.value = ''; };
+    dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('drag'); };
+    dz.ondragleave = () => dz.classList.remove('drag');
+    dz.ondrop = (e) => {
+      e.preventDefault(); dz.classList.remove('drag');
+      if (e.dataTransfer.files.length) takeFiles(e.dataTransfer.files);
+    };
+
+    // غلاف مخصص
+    $('#btn-cover').onclick = () => $('#cover-input').click();
+    $('#cover-input').onchange = async (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (!f || !f.type.startsWith('image/')) return;
+      pendingCover = await imageToCover(f);
+      updateCoverPreview();
+      toast('اختير الغلاف ✓');
+    };
+
+    $('#meta-title').oninput = updateCoverPreview;
+    $('#meta-author').oninput = updateCoverPreview;
+    $('#btn-save-book').onclick = saveBook;
+  }
+
+  function imageToCover(file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const w = 320, h = Math.round(w * img.height / img.width);
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(img.src);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => resolve(null);
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  /* استيراد عدة ملفات دفعة واحدة */
+  async function bulkImport(files) {
+    toast(`⏳ جارٍ استيراد ${files.length} ملفات…`);
+    let n = 0;
+    for (const f of files) {
+      try {
+        const isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+        const title = f.name.replace(/\.(pdf|txt|md)$/i, '').replace(/[_-]+/g, ' ').trim() || 'بدون عنوان';
+        if (isPdf) {
+          const buf = await f.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+          const cover = await renderPdfCover(pdf);
+          await Store.addBook({ title, author: '', category: 'أخرى', type: 'pdf', cover, pages: pdf.numPages },
+            new Blob([buf], { type: 'application/pdf' }));
+        } else {
+          const text = await f.text();
+          if (!text.trim()) continue;
+          await Store.addBook({ title, author: '', category: 'أخرى', type: 'text' }, text);
+        }
+        n++;
+      } catch (err) { console.error('استيراد', f.name, err); }
+    }
+    await refresh();
+    toast(`أُضيف ${n} من ${files.length} كتاباً إلى مكتبتك 📚`, 'gold');
+  }
+
+  /* سحب الملفات وإفلاتها في أي مكان بالمكتبة */
+  function wireGlobalDrop() {
+    const lv = $('#library-view');
+    lv.addEventListener('dragover', (e) => { e.preventDefault(); });
+    lv.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const files = [...e.dataTransfer.files].filter((f) => /\.(pdf|txt|md)$/i.test(f.name) || f.type === 'application/pdf' || f.type.startsWith('text/'));
+      if (!files.length) return;
+      if (files.length === 1) { openAddModal(); handleFile(files[0]); }
+      else bulkImport(files);
+    });
+  }
+
+  function openAddModal(book = null) {
+    editingId = book ? book.id : null;
+    pendingFile = null;
+    pendingCover = null;
+    origText = null;
+    const isTextEdit = !!book && book.type === 'text';
+    $('#add-modal-title').textContent = book ? 'تعديل الكتاب' : 'إضافة كتاب جديد';
+    $('#file-chip').hidden = true;
+    $('#paste-text').value = '';
+    $('#meta-title').value = book ? book.title : '';
+    $('#meta-author').value = book ? book.author || '' : '';
+    $('#meta-category').value = book ? book.category || 'أخرى' : 'رواية';
+    // عند التعديل نخفي ألسنة المصدر؛ وللكتب النصية نعرض النص نفسه للتحرير
+    $('#add-tabs').style.display = book ? 'none' : '';
+    $('#pane-file').hidden = !!book;
+    $('#pane-paste').hidden = !isTextEdit;
+    if (isTextEdit) {
+      $('#paste-text').value = '⏳ جارٍ تحميل نص الكتاب…';
+      Store.getPayload(book.id).then((t) => {
+        origText = typeof t === 'string' ? t : '';
+        $('#paste-text').value = origText;
+      });
+    }
+    if (!book) $('#add-tabs').querySelector('[data-tab="file"]').click();
+    updateCoverPreview(book);
+    $('#add-modal').hidden = false;
+    setTimeout(() => $('#meta-title').focus(), 80);
+  }
+  function closeAddModal() { $('#add-modal').hidden = true; }
+
+  function updateCoverPreview(book) {
+    const prev = $('#cover-preview');
+    if (!book && editingId) book = books.find((x) => x.id === editingId);
+    const existing = book && book.cover;
+    if (pendingCover) { prev.innerHTML = `<img src="${pendingCover}">`; return; }
+    if (pendingFile && pendingFile.cover) { prev.innerHTML = `<img src="${pendingFile.cover}">`; return; }
+    if (existing) { prev.innerHTML = `<img src="${existing}">`; return; }
+    const title = $('#meta-title').value.trim();
+    if (!title) { prev.innerHTML = 'معاينة الغلاف'; return; }
+    prev.innerHTML = coverHTML({ id: title, title, author: $('#meta-author').value.trim(), cover: null });
+  }
+
+  async function handleFile(file) {
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+    const isText = /\.(txt|md)$/i.test(file.name) || file.type.startsWith('text/');
+    if (!isPdf && !isText) return toast('الرجاء اختيار ملف PDF أو TXT');
+    const chip = $('#file-chip');
+    chip.hidden = false;
+    chip.textContent = `⏳ جارٍ تجهيز «${file.name}»…`;
+
+    if (!$('#meta-title').value.trim()) {
+      $('#meta-title').value = file.name.replace(/\.(pdf|txt|md)$/i, '').replace(/[_-]+/g, ' ').trim();
+    }
+
+    if (isPdf) {
+      try {
+        const buf = await file.arrayBuffer();
+        const blob = new Blob([buf], { type: 'application/pdf' });
+        const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+        const cover = await renderPdfCover(pdf);
+        pendingFile = { kind: 'pdf', blob, cover, pages: pdf.numPages };
+        chip.textContent = `✓ ${file.name} — ${pdf.numPages} صفحة`;
+      } catch (err) {
+        console.error(err);
+        chip.textContent = '⚠ تعذّرت قراءة ملف الـ PDF';
+        pendingFile = null;
+        return;
+      }
+    } else {
+      const text = await file.text();
+      pendingFile = { kind: 'text', text };
+      chip.textContent = `✓ ${file.name} — ${Math.round(text.length / 1000)} ألف حرف تقريباً`;
+    }
+    updateCoverPreview();
+  }
+
+  async function renderPdfCover(pdf) {
+    try {
+      const page = await pdf.getPage(1);
+      const vp = page.getViewport({ scale: 1 });
+      const scale = 320 / vp.width;
+      const v2 = page.getViewport({ scale });
+      const c = document.createElement('canvas');
+      c.width = v2.width; c.height = v2.height;
+      await page.render({ canvasContext: c.getContext('2d'), viewport: v2, intent: 'print' }).promise;
+      return c.toDataURL('image/jpeg', 0.82);
+    } catch { return null; }
+  }
+
+  async function saveBook() {
+    const title = $('#meta-title').value.trim();
+    if (!title) return toast('اكتب عنوان الكتاب أولاً');
+    const meta = {
+      title,
+      author: $('#meta-author').value.trim(),
+      category: $('#meta-category').value,
+    };
+    if (pendingCover) meta.cover = pendingCover;
+
+    if (editingId) {
+      const b = books.find((x) => x.id === editingId);
+      // تحديث نص الكتاب النصي إن عُدّل
+      if (b && b.type === 'text' && origText !== null) {
+        const newText = $('#paste-text').value;
+        if (!newText.trim()) return toast('نص الكتاب لا يمكن أن يكون فارغاً');
+        if (newText !== origText) {
+          const st = await Store.getState(editingId);
+          if ((st.highlights || []).length &&
+              !confirm('تعديل النص قد يُزيح مواضع التظليلات والملاحظات الحالية عن أماكنها.\nهل تريد المتابعة؟')) return;
+          await Store.updatePayload(editingId, newText);
+        }
+      }
+      await Store.updateBook(editingId, meta);
+      closeAddModal(); await refresh();
+      return toast('حُدّث الكتاب ✓', 'gold');
+    }
+
+    const pasted = $('#paste-text').value.trim();
+    let payload = null;
+    if (pendingFile && pendingFile.kind === 'pdf') {
+      meta.type = 'pdf'; meta.cover = pendingCover || pendingFile.cover; meta.pages = pendingFile.pages;
+      payload = pendingFile.blob;
+    } else if (pendingFile && pendingFile.kind === 'text') {
+      meta.type = 'text'; payload = pendingFile.text;
+    } else if (pasted) {
+      meta.type = 'text'; payload = pasted;
+    } else {
+      return toast('أضف ملفاً أو الصق نصاً أولاً');
+    }
+
+    await Store.addBook(meta, payload);
+    closeAddModal(); await refresh();
+    toast(`أُضيف «${title}» إلى مكتبتك 📚`, 'gold');
+  }
+
+  /* ─── قائمة المكتبة: إحصائيات + نسخ احتياطي ─── */
+  function wireLibMenu() {
+    $('#btn-lib-menu').onclick = (e) => {
+      closeCardMenu();
+      const menu = document.createElement('div');
+      menu.className = 'bc-menu';
+      menu.innerHTML = `
+        <button data-act="stats">📊 إحصائيات قراءتك</button>
+        <button data-act="backup">📦 تصدير نسخة احتياطية</button>
+        <button data-act="restore">📥 استيراد نسخة احتياطية</button>`;
+      document.body.appendChild(menu);
+      const r = e.currentTarget.getBoundingClientRect();
+      menu.style.top = r.bottom + 8 + 'px';
+      menu.style.left = Math.max(10, r.left - menu.offsetWidth + r.width) + 'px';
+      menu.onclick = (ev) => {
+        const act = ev.target.dataset.act;
+        closeCardMenu();
+        if (act === 'stats') openStats();
+        else if (act === 'backup') exportBackup();
+        else if (act === 'restore') $('#import-input').click();
+      };
+      setTimeout(() => document.addEventListener('pointerdown', (ev) => { if (!menu.contains(ev.target)) closeCardMenu(); }, { once: true }));
+    };
+    $('#import-input').onchange = (e) => {
+      if (e.target.files[0]) importBackup(e.target.files[0]);
+      e.target.value = '';
+    };
+    const sm = $('#stats-modal');
+    sm.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => (sm.hidden = true)));
+    sm.onclick = (e) => { if (e.target === sm) sm.hidden = true; };
+  }
+
+  function openStats() {
+    let totalSec = 0, notes = 0, marks = 0, fin = 0, reading = 0, drawings = 0;
+    const rows = [];
+    for (const b of books) {
+      const s = states[b.id];
+      totalSec += s.seconds || 0;
+      notes += (s.highlights || []).length + (s.pageNotes || []).length;
+      marks += (s.bookmarks || []).length;
+      drawings += Object.values(s.drawings || {}).reduce((a, arr) => a + arr.length, 0);
+      if (s.finished) fin++; else if (s.pct > 0) reading++;
+      if ((s.seconds || 0) > 30) rows.push({ title: b.title, sec: s.seconds, pct: s.pct, fin: s.finished });
+    }
+    rows.sort((a, b) => b.sec - a.sec);
+    $('#stats-body').innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card"><b>${books.length}</b><span>كتاب في المكتبة</span></div>
+        <div class="stat-card"><b>${fin}</b><span>أنهيتها</span></div>
+        <div class="stat-card"><b>${reading}</b><span>قيد القراءة</span></div>
+        <div class="stat-card"><b>${fmtDuration(totalSec)}</b><span>إجمالي وقت القراءة</span></div>
+        <div class="stat-card"><b>${notes}</b><span>تظليل وملاحظة</span></div>
+        <div class="stat-card"><b>${marks}</b><span>علامة مرجعية</span></div>
+      </div>
+      ${rows.length ? `<div class="stats-list"><h4>أكثر الكتب قراءةً</h4>
+        ${rows.slice(0, 6).map((r) => `
+          <div class="stat-row">
+            <span class="sr-title">${r.fin ? '✅ ' : ''}${esc(r.title)}</span>
+            <span class="sr-time">${fmtDuration(r.sec)}</span>
+            <span class="sr-pct">${Math.round(r.pct * 100)}٪</span>
+          </div>`).join('')}</div>` : '<p style="color:#9a92ad;text-align:center">ابدأ القراءة لتتجمع إحصائياتك هنا ✨</p>'}`;
+    $('#stats-modal').hidden = false;
+  }
+
+  const blobToDataURL = (blob) => new Promise((res) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.readAsDataURL(blob);
+  });
+
+  async function exportBackup() {
+    toast('⏳ جارٍ تجهيز النسخة الاحتياطية…');
+    try {
+      const items = [];
+      for (const b of books) {
+        const payload = await Store.getPayload(b.id);
+        const state = await Store.getState(b.id);
+        if (payload instanceof Blob) items.push({ meta: b, state, payloadKind: 'pdf', payload: await blobToDataURL(payload) });
+        else items.push({ meta: b, state, payloadKind: 'text', payload: payload || '' });
+      }
+      const json = JSON.stringify({ app: 'midad', version: 1, exportedAt: Date.now(), books: items });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      a.download = `مِداد - نسخة احتياطية ${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast(`صُدّرت مكتبتك كاملة (${items.length} كتاباً) 📦`, 'gold');
+    } catch (err) { console.error(err); toast('تعذّر إنشاء النسخة الاحتياطية'); }
+  }
+
+  async function importBackup(file) {
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.app !== 'midad' || !Array.isArray(data.books)) throw new Error('bad format');
+      toast(`⏳ جارٍ استيراد ${data.books.length} كتاباً…`);
+      let n = 0;
+      for (const it of data.books) {
+        let payload = it.payload;
+        if (it.payloadKind === 'pdf') payload = await (await fetch(it.payload)).blob();
+        await Store.addBook(it.meta, payload);
+        if (it.state) { it.state.bookId = it.meta.id; await Store.saveState(it.state); }
+        n++;
+      }
+      await refresh();
+      toast(`استُعيد ${n} كتاباً بكل ملاحظاتها وتقدمها ✓`, 'gold');
+    } catch (err) { console.error(err); toast('ملف النسخة الاحتياطية غير صالح'); }
+  }
+
+  /* ─── أدوات عامة ─── */
+  function toast(msg, kind = '') {
+    const t = document.createElement('div');
+    t.className = 'toast ' + kind;
+    t.textContent = msg;
+    $('#toast-wrap').appendChild(t);
+    setTimeout(() => t.classList.add('out'), 2600);
+    setTimeout(() => t.remove(), 3100);
+  }
+
+  function fmtDuration(sec) {
+    if (sec < 60) return 'أقل من دقيقة';
+    const m = Math.round(sec / 60);
+    if (m < 60) return m + ' دقيقة';
+    const h = Math.floor(m / 60);
+    return h + ' ساعة ' + (m % 60 ? (m % 60) + ' د' : '');
+  }
+
+  return { init, refresh, toast, fmtDuration, coverHTML, esc };
+})();
