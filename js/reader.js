@@ -136,9 +136,21 @@ const Reader = (() => {
 
   function paginate() {
     if (isPdf) return;
-    // القرار على عرض النافذة، ثم تتوسع الورقة عبر CSS قبل القياس
+    const reader = $('#reader');
     const spreadOn = settings.spread && settings.flip !== 'scroll' && window.innerWidth >= 900;
-    $('#reader').classList.toggle('spread', spreadOn);
+    reader.classList.toggle('spread', spreadOn);
+
+    // الورقة تتمدد بنسب كتاب حقيقي على الشاشات الكبيرة، والخط يكبر تناسبياً
+    const stageH = $('#r-stage').clientHeight;
+    const idealW = stageH * 0.97 * 0.72;               // نسبة صفحة كتاب ≈ 1 : 1.4
+    const maxW = window.innerWidth - (spreadOn ? 110 : 96);
+    let paperW;
+    if (spreadOn) paperW = Math.min(Math.max(settings.width * 1.85, idealW * 1.35), maxW);
+    else paperW = Math.min(Math.max(settings.width, Math.min(idealW, maxW)), maxW);
+    const perPageW = spreadOn ? paperW / 2 : paperW;
+    const fontScale = Math.max(1, Math.min(perPageW / settings.width, 1.8));
+    reader.style.setProperty('--paper-w', Math.round(paperW) + 'px');
+    reader.style.setProperty('--font-scale', fontScale.toFixed(3));
     if (settings.flip === 'scroll') { pageCount = 1; return; }
     pageW = viewportEl.clientWidth;
     colW = spreadOn ? (pageW - GAP) / 2 : pageW; // عمودان متقابلان = صفحة واحدة منطقياً

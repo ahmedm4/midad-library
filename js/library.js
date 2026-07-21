@@ -262,8 +262,11 @@ const Library = (() => {
         $('#add-tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === btn));
         $('#pane-file').hidden = btn.dataset.tab !== 'file';
         $('#pane-paste').hidden = btn.dataset.tab !== 'paste';
+        $('#pane-url').hidden = btn.dataset.tab !== 'url';
       };
     });
+    $('#btn-fetch-url').onclick = fetchFromUrl;
+    $('#url-input').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); fetchFromUrl(); } };
 
     const dz = $('#dropzone');
     dz.onclick = () => $('#file-input').click();
@@ -295,6 +298,66 @@ const Library = (() => {
     $('#meta-title').oninput = updateCoverPreview;
     $('#meta-author').oninput = updateCoverPreview;
     $('#btn-save-book').onclick = saveBook;
+  }
+
+  /* جلب كتاب من رابط مباشر (PDF أو نص) */
+  async function fetchFromUrl() {
+    const url = $('#url-input').value.trim();
+    if (!/^https?:\/\/.+/i.test(url)) return toast('أدخل رابطاً صحيحاً يبدأ بـ https://');
+    const chip = $('#url-chip');
+    chip.hidden = false;
+    chip.textContent = '⏳ جارٍ جلب الملف…';
+    pendingFile = null;
+
+    const tryFetch = async (u) => {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.arrayBuffer();
+    };
+    let buf = null;
+    try { buf = await tryFetch(url); }
+    catch {
+      // كثير من المواقع تمنع الجلب المباشر (CORS) — نجرب عبر وسيط عام
+      try {
+        chip.textContent = '⏳ الموقع يمنع الجلب المباشر — محاولة عبر وسيط…';
+        buf = await tryFetch('https://corsproxy.io/?url=' + encodeURIComponent(url));
+      } catch {
+        chip.textContent = '⚠ تعذّر الجلب: الموقع يمنع التحميل المباشر. نزّل الملف إلى جهازك ثم أضفه من لسان «ملف»';
+        return;
+      }
+    }
+
+    const nameFromUrl = decodeURIComponent((url.split('/').pop() || '').split('?')[0]) || 'كتاب من الإنترنت';
+    const head = new Uint8Array(buf.slice(0, 5));
+    const isPdf = (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) || /\.pdf$/i.test(nameFromUrl);
+
+    if (!$('#meta-title').value.trim()) {
+      $('#meta-title').value = nameFromUrl.replace(/\.(pdf|txt|md)$/i, '').replace(/[_-]+/g, ' ').trim();
+    }
+
+    if (isPdf) {
+      try {
+        const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+        const cover = await renderPdfCover(pdf);
+        pendingFile = { kind: 'pdf', blob: new Blob([buf], { type: 'application/pdf' }), cover, pages: pdf.numPages };
+        chip.textContent = `✓ ${nameFromUrl} — ${pdf.numPages} صفحة، جاهز للحفظ`;
+      } catch (err) {
+        console.error(err);
+        chip.textContent = '⚠ جُلب الملف لكن تعذّرت قراءته كـ PDF صالح';
+        return;
+      }
+    } else {
+      const text = new TextDecoder('utf-8').decode(buf);
+      // كشف الملفات الثنائية غير النصية (رموز التعويض)
+      const junk = (text.slice(0, 2000).match(/�/g) || []).length;
+      if (!text.trim() || junk > 40) {
+        chip.textContent = '⚠ الرابط لا يشير إلى ملف PDF أو نص صالح';
+        return;
+      }
+      pendingFile = { kind: 'text', text };
+      chip.textContent = `✓ ${nameFromUrl} — ${Math.round(text.length / 1000)} ألف حرف، جاهز للحفظ`;
+    }
+    updateCoverPreview();
   }
 
   function imageToCover(file) {
@@ -360,6 +423,9 @@ const Library = (() => {
     const isTextEdit = !!book && book.type === 'text';
     $('#add-modal-title').textContent = book ? 'تعديل الكتاب' : 'إضافة كتاب جديد';
     $('#file-chip').hidden = true;
+    $('#url-chip').hidden = true;
+    $('#url-input').value = '';
+    $('#pane-url').hidden = true;
     $('#paste-text').value = '';
     $('#meta-title').value = book ? book.title : '';
     $('#meta-author').value = book ? book.author || '' : '';

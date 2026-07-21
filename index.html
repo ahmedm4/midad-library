@@ -79,6 +79,7 @@
     <div class="add-tabs" id="add-tabs">
       <button class="active" data-tab="file">📄 ملف PDF / TXT</button>
       <button data-tab="paste">✍️ لصق نص</button>
+      <button data-tab="url">🔗 من رابط</button>
     </div>
 
     <div class="tab-pane" id="pane-file">
@@ -93,6 +94,16 @@
 
     <div class="tab-pane" id="pane-paste" hidden>
       <textarea id="paste-text" placeholder="الصق نص الكتاب هنا… (يدعم عناوين الفصول بصيغة # العنوان)"></textarea>
+    </div>
+
+    <div class="tab-pane" id="pane-url" hidden>
+      <div class="url-row">
+        <input id="url-input" type="url" placeholder="https://example.com/book.pdf" dir="ltr">
+        <button class="btn-gold" id="btn-fetch-url">جلب الكتاب</button>
+      </div>
+      <div class="file-chip" id="url-chip" hidden></div>
+      <p class="url-hint">الصق رابطاً مباشراً لملف PDF أو TXT (مثل روابط أرشيف الإنترنت archive.org).
+      بعض المواقع تمنع التحميل المباشر من المتصفح — عندها نزّل الملف إلى جهازك ثم أضفه من لسان «ملف».</p>
     </div>
 
     <div class="meta-row">

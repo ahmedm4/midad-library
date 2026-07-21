@@ -49,7 +49,7 @@
   align-items: center; justify-content: center; perspective: 2400px; }
 
 .r-paper { position: relative; background: var(--paper); color: var(--ink-c);
-  width: min(var(--r-width), calc(100vw - 96px)); height: 97%;
+  width: min(var(--paper-w, var(--r-width)), calc(100vw - 96px)); height: 97%;
   border-radius: 4px 14px 14px 4px;
   box-shadow:
     -22px 30px 70px rgba(0,0,0,.55),
@@ -68,9 +68,8 @@
 #reader.mode-pdf .r-paper::before, #reader.mode-pdf .r-paper::after { display: none; }
 #reader.zoomed #r-canvas { max-width: none; max-height: none; }
 
-/* الصفحتان المتقابلتان: ورقة أعرض ككتاب مفتوح */
-#reader.spread .r-paper { width: min(calc(var(--r-width) * 1.85), calc(100vw - 110px));
-  border-radius: 10px 14px 14px 10px; }
+/* الصفحتان المتقابلتان: ورقة أعرض ككتاب مفتوح (العرض يُحسب في paginate) */
+#reader.spread .r-paper { border-radius: 10px 14px 14px 10px; }
 
 /* عمود فقري بين الصفحتين المتقابلتين */
 #reader.spread .r-viewport::after { content: ''; position: absolute; top: 0; bottom: 0;
@@ -111,7 +110,9 @@
 .r-viewport { position: absolute; inset: 44px 54px 52px; overflow: hidden; }
 .r-content { height: 100%; direction: rtl;
   column-fill: auto; column-gap: 64px;
-  font-family: var(--r-font); font-size: var(--r-size); line-height: var(--r-lh);
+  font-family: var(--r-font);
+  font-size: calc(var(--r-size) * var(--font-scale, 1));
+  line-height: var(--r-lh);
   color: var(--ink-c); text-align: justify;
   transition: transform .45s cubic-bezier(.25,.8,.3,1); }
 #reader.no-anim .r-content { transition: none; }
