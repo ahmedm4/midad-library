@@ -49,7 +49,8 @@
   align-items: center; justify-content: center; perspective: 2400px; }
 
 .r-paper { position: relative; background: var(--paper); color: var(--ink-c);
-  width: min(var(--paper-w, var(--r-width)), calc(100vw - 96px)); height: 97%;
+  --pw: var(--paper-w, min(var(--r-width), calc(100vw - 96px)));
+  width: var(--pw); flex: 0 0 var(--pw); height: 97%;
   border-radius: 4px 14px 14px 4px;
   box-shadow:
     -22px 30px 70px rgba(0,0,0,.55),
@@ -63,7 +64,7 @@
 .r-paper::after { inset: 8px -10px -10px 6px; opacity: .7; }
 
 #reader.mode-pdf .r-book { overflow: auto; scrollbar-width: thin; }
-#reader.mode-pdf .r-paper { width: auto; height: auto; margin: auto;
+#reader.mode-pdf .r-paper { width: auto; flex: 0 0 auto; height: auto; margin: auto;
   background: transparent; box-shadow: none; }
 #reader.mode-pdf .r-paper::before, #reader.mode-pdf .r-paper::after { display: none; }
 #reader.zoomed #r-canvas { max-width: none; max-height: none; }
@@ -343,7 +344,7 @@
 
 @media (max-width: 760px) {
   .r-viewport { inset: 30px 22px 40px; }
-  .r-paper { width: calc(100vw - 28px) !important; }
+  .r-paper { width: calc(100vw - 28px) !important; flex-basis: calc(100vw - 28px) !important; }
   .r-drawer { width: 88vw; }
   .r-page-label, .r-time-left { min-width: 0; }
   .r-time-left { display: none; }
