@@ -30,7 +30,105 @@ const Library = (() => {
     wireAddModal();
     wireLibMenu();
     wireGlobalDrop();
+    wireCloud();
     await refresh();
+  }
+
+  /* ─── واجهة المزامنة السحابية ─── */
+  function wireCloud() {
+    if (!window.Cloud) return;
+    const modal = $('#cloud-modal');
+    $('#btn-cloud').onclick = openCloudModal;
+    modal.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => (modal.hidden = true)));
+    modal.onclick = (e) => { if (e.target === modal) modal.hidden = true; };
+
+    fillCloudSteps();
+
+    Cloud.onStatus((state, msg) => {
+      $('#cloud-dot').className = 'cloud-dot ' + state;
+      const line = $('#cloud-status-line');
+      if (line) line.textContent = msg;
+      // إظهار الشاشة المناسبة
+      const configured = Cloud.isConfigured();
+      const signedIn = Cloud.isSignedIn();
+      $('#cloud-setup').hidden = configured;
+      $('#cloud-auth').hidden = !configured || signedIn;
+      $('#cloud-account').hidden = !signedIn;
+      if (signedIn) {
+        $('#cloud-user-email').textContent = Cloud.getUserEmail() || '';
+      }
+    });
+
+    $('#cloud-connect').onclick = async () => {
+      const url = $('#cloud-url').value, key = $('#cloud-key').value;
+      try {
+        $('#cloud-connect').textContent = 'جارٍ الربط…';
+        await Cloud.configure(url, key);
+        toast('تم ربط المشروع ✓ — الآن سجّل الدخول', 'gold');
+      } catch (e) { toast(e.message || 'تعذّر الربط'); }
+      finally { $('#cloud-connect').textContent = 'ربط المشروع'; }
+    };
+    $('#cloud-reconfig').onclick = () => { Cloud.disconnect(); };
+
+    $('#cloud-signin').onclick = () => doAuth('signin');
+    $('#cloud-signup').onclick = () => doAuth('signup');
+    $('#cloud-password').onkeydown = (e) => { if (e.key === 'Enter') doAuth('signin'); };
+    $('#cloud-signout').onclick = async () => { await Cloud.signOut(); toast('سُجّل الخروج من هذا الجهاز'); };
+    $('#cloud-syncnow').onclick = async () => { toast('جارٍ المزامنة…'); await Cloud.syncAll(); };
+  }
+
+  async function doAuth(kind) {
+    const email = $('#cloud-email').value.trim();
+    const pass = $('#cloud-password').value;
+    if (!email || !pass) return toast('أدخل البريد وكلمة المرور');
+    const btn = kind === 'signin' ? $('#cloud-signin') : $('#cloud-signup');
+    const orig = btn.textContent;
+    btn.textContent = '…';
+    try {
+      if (kind === 'signup') {
+        const r = await Cloud.signUp(email, pass);
+        if (r === 'confirm') toast('أُرسل رابط تأكيد إلى بريدك — افتحه ثم سجّل الدخول', 'gold');
+        else toast('أُنشئ حسابك وسُجّل دخولك ✓', 'gold');
+      } else {
+        await Cloud.signIn(email, pass);
+        toast('أهلاً بك 👋 — جارٍ مزامنة مكتبتك', 'gold');
+      }
+    } catch (e) { toast(e.message || 'تعذّر الدخول'); }
+    finally { btn.textContent = orig; }
+  }
+
+  function openCloudModal() { $('#cloud-modal').hidden = false; }
+
+  function fillCloudSteps() {
+    const rls = `-- انسخ هذا كاملاً في SQL Editor واضغط Run
+create table if not exists books (
+  id text primary key,
+  owner uuid references auth.users not null default auth.uid(),
+  meta jsonb, state jsonb, content text,
+  has_file boolean default false,
+  updated_at timestamptz default now()
+);
+alter table books enable row level security;
+create policy "own_books" on books for all
+  using (auth.uid() = owner) with check (auth.uid() = owner);
+insert into storage.buckets (id, name) values ('book-files','book-files')
+  on conflict do nothing;
+create policy "own_files" on storage.objects for all
+  using (bucket_id='book-files' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id='book-files' and (storage.foldername(name))[1] = auth.uid()::text);`;
+    $('#cloud-steps').innerHTML = `
+      <li>افتح <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a> وسجّل دخولاً مجانياً، ثم <b>New project</b> (اختر أي اسم وكلمة مرور لقاعدة البيانات، وانتظر دقيقة حتى يجهز).</li>
+      <li>من القائمة الجانبية: <b>Project Settings → API</b>. انسخ <code>Project URL</code> و<code>anon public</code> والصقهما في الحقلين أدناه.</li>
+      <li>من <b>SQL Editor → New query</b>، الصق الكود التالي واضغط <b>Run</b>:
+        <button class="cloud-copy" id="cloud-copy-sql">📋 نسخ الكود</button>
+        <pre id="cloud-sql-block">${esc(rls)}</pre>
+      </li>
+      <li>من <b>Authentication → Sign In / Providers → Email</b>: أبقِ <b>Email</b> مفعّلاً، ويُستحسن إيقاف <b>Confirm email</b> لتسجيل دخول فوري بلا بريد تأكيد.</li>
+      <li>ارجع هنا، الصق الرابط والمفتاح، اضغط «ربط المشروع»، ثم أنشئ حساباً بالبريد نفسه على كل أجهزتك.</li>`;
+    setTimeout(() => {
+      const cp = $('#cloud-copy-sql');
+      if (cp) cp.onclick = () => { navigator.clipboard.writeText(rls).then(() => toast('نُسخ الكود ✓')); };
+    }, 50);
   }
 
   async function refresh() {
@@ -199,16 +297,16 @@ const Library = (() => {
       const act = e.target.dataset.act;
       closeCardMenu();
       if (act === 'read') Reader.open(id);
-      else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; render(); }
+      else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; if (window.Cloud) Cloud.pushBook(id); render(); }
       else if (act === 'edit') openAddModal(b);
       else if (act === 'export') exportNotes(id);
       else if (act === 'reset') {
         const st = await Store.getState(id);
         Object.assign(st, { pct: 0, page: 0, scrollTop: 0, finished: false, seconds: 0 });
-        await Store.saveState(st); await refresh(); toast('تم تصفير التقدم');
+        await Store.saveState(st); if (window.Cloud) Cloud.pushState(id); await refresh(); toast('تم تصفير التقدم');
       } else if (act === 'delete') {
         if (confirm(`حذف «${b.title}» نهائياً مع ملاحظاته؟`)) {
-          await Store.deleteBook(id); await refresh(); toast('حُذف الكتاب');
+          await Store.deleteBook(id); if (window.Cloud) Cloud.deleteBook(id); await refresh(); toast('حُذف الكتاب');
         }
       }
     };
@@ -388,12 +486,14 @@ const Library = (() => {
           const buf = await f.arrayBuffer();
           const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
           const cover = await renderPdfCover(pdf);
-          await Store.addBook({ title, author: '', category: 'أخرى', type: 'pdf', cover, pages: pdf.numPages },
+          const pid = await Store.addBook({ title, author: '', category: 'أخرى', type: 'pdf', cover, pages: pdf.numPages },
             new Blob([buf], { type: 'application/pdf' }));
+          if (window.Cloud) Cloud.pushBook(pid);
         } else {
           const text = await f.text();
           if (!text.trim()) continue;
-          await Store.addBook({ title, author: '', category: 'أخرى', type: 'text' }, text);
+          const tid = await Store.addBook({ title, author: '', category: 'أخرى', type: 'text' }, text);
+          if (window.Cloud) Cloud.pushBook(tid);
         }
         n++;
       } catch (err) { console.error('استيراد', f.name, err); }
@@ -531,6 +631,7 @@ const Library = (() => {
         }
       }
       await Store.updateBook(editingId, meta);
+      if (window.Cloud) Cloud.pushBook(editingId);
       closeAddModal(); await refresh();
       return toast('حُدّث الكتاب ✓', 'gold');
     }
@@ -548,7 +649,8 @@ const Library = (() => {
       return toast('أضف ملفاً أو الصق نصاً أولاً');
     }
 
-    await Store.addBook(meta, payload);
+    const newId = await Store.addBook(meta, payload);
+    if (window.Cloud) Cloud.pushBook(newId);
     closeAddModal(); await refresh();
     toast(`أُضيف «${title}» إلى مكتبتك 📚`, 'gold');
   }
@@ -654,6 +756,7 @@ const Library = (() => {
         if (it.payloadKind === 'pdf') payload = await (await fetch(it.payload)).blob();
         await Store.addBook(it.meta, payload);
         if (it.state) { it.state.bookId = it.meta.id; await Store.saveState(it.state); }
+        if (window.Cloud) Cloud.pushBook(it.meta.id);
         n++;
       }
       await refresh();
@@ -681,3 +784,4 @@ const Library = (() => {
 
   return { init, refresh, toast, fmtDuration, coverHTML, esc };
 })();
+window.Library = Library;

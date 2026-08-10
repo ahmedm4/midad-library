@@ -32,6 +32,10 @@
 
     <div class="top-actions">
       <div class="lib-stats" id="lib-stats"></div>
+      <button class="icon-btn cloud-btn" id="btn-cloud" title="المزامنة السحابية">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+        <i class="cloud-dot" id="cloud-dot"></i>
+      </button>
       <button class="icon-btn lib-menu-btn" id="btn-lib-menu" title="إحصائيات ونسخ احتياطي">⋮</button>
       <button class="btn-gold" id="btn-add">
         <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
@@ -335,10 +339,64 @@
 </div>
 <input type="file" id="import-input" accept=".json,application/json" hidden>
 
+<!-- نافذة المزامنة السحابية -->
+<div class="modal-backdrop" id="cloud-modal" hidden>
+  <div class="modal">
+    <header>
+      <h3>☁️ المزامنة السحابية</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </header>
+
+    <div class="cloud-status-line" id="cloud-status-line"></div>
+
+    <!-- شاشة الإعداد (قبل ضبط المشروع) -->
+    <div id="cloud-setup">
+      <p class="cloud-intro">لمزامنة كتبك بين كل أجهزتك، اربط التطبيق بمشروع <b>Supabase</b> مجاني خاص بك (لا يحتاج بطاقة ائتمان). بياناتك تبقى ملكك وحدك في مشروعك.</p>
+      <details class="cloud-guide">
+        <summary>📋 خطوات الإعداد لمرة واحدة (اضغط للعرض)</summary>
+        <ol id="cloud-steps"></ol>
+      </details>
+      <label class="cloud-field">رابط المشروع (Project URL)
+        <input id="cloud-url" type="url" dir="ltr" placeholder="https://xxxxx.supabase.co"></label>
+      <label class="cloud-field">مفتاح anon public
+        <input id="cloud-key" type="text" dir="ltr" placeholder="eyJhbGciOi..."></label>
+      <button class="btn-gold" id="cloud-connect" style="width:100%">ربط المشروع</button>
+    </div>
+
+    <!-- شاشة الدخول (بعد الضبط، قبل تسجيل الدخول) -->
+    <div id="cloud-auth" hidden>
+      <p class="cloud-intro">سجّل الدخول بالبريد نفسه على كل أجهزتك لتتزامن مكتبتك.</p>
+      <label class="cloud-field">البريد الإلكتروني
+        <input id="cloud-email" type="email" dir="ltr" placeholder="you@example.com"></label>
+      <label class="cloud-field">كلمة المرور
+        <input id="cloud-password" type="password" dir="ltr" placeholder="٦ أحرف على الأقل"></label>
+      <div class="cloud-auth-btns">
+        <button class="btn-gold" id="cloud-signin">تسجيل الدخول</button>
+        <button class="btn-ghost" id="cloud-signup">إنشاء حساب</button>
+      </div>
+      <button class="cloud-link" id="cloud-reconfig">تغيير مشروع Supabase</button>
+    </div>
+
+    <!-- شاشة المتصل (بعد الدخول) -->
+    <div id="cloud-account" hidden>
+      <div class="cloud-account-card">
+        <div class="cloud-avatar">☁️</div>
+        <div>
+          <b id="cloud-user-email"></b>
+          <span id="cloud-sync-info">مكتبتك متزامنة مع كل أجهزتك</span>
+        </div>
+      </div>
+      <button class="btn-ghost" id="cloud-syncnow" style="width:100%;margin-bottom:10px">🔄 مزامنة الآن</button>
+      <button class="cloud-link" id="cloud-signout">تسجيل الخروج من هذا الجهاز</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast-wrap"></div>
 
 <script src="vendor/pdf.min.js"></script>
 <script src="js/store.js"></script>
+<script src="js/cloud.js"></script>
 <script src="js/library.js"></script>
 <script src="js/reader.js"></script>
 <script src="js/app.js"></script>

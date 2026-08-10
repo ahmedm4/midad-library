@@ -6,6 +6,7 @@
   await seedGuide();
   Reader.wire();
   await Library.init();
+  if (window.Cloud) Cloud.init(); // المزامنة السحابية (اختيارية، لا تعطّل التطبيق)
 })();
 
 /* كتاب ترحيبي يشرح مزايا التطبيق ويستعرض القارئ */

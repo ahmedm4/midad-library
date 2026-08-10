@@ -67,7 +67,9 @@ const Reader = (() => {
     applySettings(false);
 
     if (isPdf) {
-      const blob = await Store.getPayload(id);
+      let blob = await Store.getPayload(id);
+      if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
+      if (!blob) { Library.toast('تعذّر تحميل ملف الكتاب — تأكد من المزامنة'); close(); return; }
       const buf = await blob.arrayBuffer();
       pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
       pageCount = pdfDoc.numPages;
@@ -75,7 +77,9 @@ const Reader = (() => {
       await renderPdf(pdfPage);
       buildPdfToc();
     } else {
-      const text = await Store.getPayload(id) || '';
+      let text = await Store.getPayload(id);
+      if (text == null && window.Cloud) { await Cloud.ensurePayload(id); text = await Store.getPayload(id); }
+      text = text || '';
       pristineHTML = buildHTML(text);
       renderContent();
       setTimeout(() => {
@@ -1071,6 +1075,7 @@ const Reader = (() => {
       state.scrollTop = viewportEl.scrollTop;
     }
     await Store.saveState(state);
+    if (window.Cloud) Cloud.pushState(book.id);
   }
 
   function bump() { lastActivity = Date.now(); }
@@ -1325,3 +1330,4 @@ const Reader = (() => {
 
   return { open, close, wire };
 })();
+window.Reader = Reader;

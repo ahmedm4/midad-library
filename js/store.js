@@ -76,3 +76,4 @@ const Store = (() => {
 
   return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getState, saveState, getSettings, saveSettings, resetSettings };
 })();
+window.Store = Store;
