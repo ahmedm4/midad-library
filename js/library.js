@@ -357,7 +357,13 @@ create policy "midad_own_files" on storage.objects for all
 
   /* ─── الشريط العلوي ─── */
   function wireTopbar() {
-    $('#search-input').oninput = (e) => { query = e.target.value.trim(); renderGrid(); };
+    const si = $('#search-input');
+    // منع الملء التلقائي للبريد في خانة البحث: تبقى readonly حتى يركّز المستخدم فعلاً
+    si.setAttribute('readonly', '');
+    const unlock = () => si.removeAttribute('readonly');
+    si.addEventListener('focus', unlock);
+    si.addEventListener('pointerdown', unlock);
+    si.oninput = (e) => { query = e.target.value.trim(); renderGrid(); };
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
     $('#btn-add').onclick = () => openAddModal();
     $('#btn-add-empty').onclick = () => openAddModal();

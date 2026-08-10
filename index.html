@@ -27,7 +27,9 @@
 
     <div class="search-box">
       <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
-      <input id="search-input" type="search" placeholder="ابحث عن كتاب أو مؤلف…">
+      <input id="search-input" type="search" name="library-search" placeholder="ابحث عن كتاب أو مؤلف…"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        data-form-type="other" data-lpignore="true" data-1p-ignore="true">
     </div>
 
     <div class="top-actions">
@@ -366,14 +368,16 @@
     <!-- شاشة الدخول (بعد الضبط، قبل تسجيل الدخول) -->
     <div id="cloud-auth" hidden>
       <p class="cloud-intro">سجّل الدخول بالبريد نفسه على كل أجهزتك لتتزامن مكتبتك.</p>
-      <label class="cloud-field">البريد الإلكتروني
-        <input id="cloud-email" type="email" dir="ltr" placeholder="you@example.com"></label>
-      <label class="cloud-field">كلمة المرور
-        <input id="cloud-password" type="password" dir="ltr" placeholder="٦ أحرف على الأقل"></label>
-      <div class="cloud-auth-btns">
-        <button class="btn-gold" id="cloud-signin">تسجيل الدخول</button>
-        <button class="btn-ghost" id="cloud-signup">إنشاء حساب</button>
-      </div>
+      <form id="cloud-auth-form" onsubmit="return false">
+        <label class="cloud-field">البريد الإلكتروني
+          <input id="cloud-email" type="email" dir="ltr" placeholder="you@example.com" autocomplete="username" name="email"></label>
+        <label class="cloud-field">كلمة المرور
+          <input id="cloud-password" type="password" dir="ltr" placeholder="٦ أحرف على الأقل" autocomplete="current-password" name="password"></label>
+        <div class="cloud-auth-btns">
+          <button type="button" class="btn-gold" id="cloud-signin">تسجيل الدخول</button>
+          <button type="button" class="btn-ghost" id="cloud-signup">إنشاء حساب</button>
+        </div>
+      </form>
       <button class="cloud-link" id="cloud-reconfig">تغيير مشروع Supabase</button>
     </div>
 
