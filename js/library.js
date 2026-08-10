@@ -107,8 +107,10 @@ create table if not exists midad_books (
   owner uuid references auth.users not null default auth.uid(),
   meta jsonb, state jsonb, content text,
   has_file boolean default false,
+  deleted boolean default false,
   updated_at timestamptz default now()
 );
+alter table midad_books add column if not exists deleted boolean default false;
 alter table midad_books enable row level security;
 drop policy if exists "midad_own_books" on midad_books;
 create policy "midad_own_books" on midad_books for all
@@ -182,7 +184,17 @@ create policy "midad_own_files" on storage.objects for all
         </div>
         <button class="btn-gold cc-btn">استئناف القراءة ←</button>
       </div>`;
-    hero.querySelector('.continue-card').onclick = () => Reader.open(last.id);
+    hero.querySelector('.continue-card').onclick = () => openBook(last.id);
+  }
+
+  // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
+  async function openBook(id) {
+    try { await Reader.open(id); }
+    catch (e) {
+      console.error('فتح الكتاب', e);
+      try { Reader.close(); } catch {}
+      toast('تعذّر فتح الكتاب: ' + ((e && e.message) || 'خطأ غير معروف'));
+    }
   }
 
   function renderChips() {
@@ -245,7 +257,7 @@ create policy "midad_own_files" on storage.objects for all
 
     grid.querySelectorAll('.book-card').forEach((card) => {
       const id = card.dataset.id;
-      card.querySelector('.bk').onclick = () => Reader.open(id);
+      card.querySelector('.bk').onclick = () => openBook(id);
       card.querySelector('.bc-menu-btn').onclick = (e) => {
         e.stopPropagation();
         const r = e.currentTarget.getBoundingClientRect();
@@ -302,7 +314,7 @@ create policy "midad_own_files" on storage.objects for all
     menu.onclick = async (e) => {
       const act = e.target.dataset.act;
       closeCardMenu();
-      if (act === 'read') Reader.open(id);
+      if (act === 'read') openBook(id);
       else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; if (window.Cloud) Cloud.pushBook(id); render(); }
       else if (act === 'edit') openAddModal(b);
       else if (act === 'export') exportNotes(id);

@@ -34,7 +34,7 @@ const Cloud = (() => {
     cfg = getCfg();
     if (!cfg) { emitStatus(); return; }
     try {
-      const { createClient } = await import(SDK_URL);
+      const createClient = window.__midadSbFactory || (await import(SDK_URL)).createClient;
       sb = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
       ready = true;
       const { data } = await sb.auth.getSession();
@@ -100,14 +100,15 @@ const Cloud = (() => {
     syncing = true;
     setStatus('syncing', 'جارٍ المزامنة…');
     try {
-      const { data: rows, error } = await sb.from(TABLE).select('id, meta, state, content, has_file, updated_at');
+      const { data: rows, error } = await sb.from(TABLE).select('*');
       if (error) throw error;
       const cloudById = new Map((rows || []).map((r) => [r.id, r]));
       const localBooks = await Store.getBooks();
       const localById = new Map(localBooks.map((b) => [b.id, b]));
 
-      // سحابة → محلي (كتب جديدة أو أحدث)
+      // سحابة → محلي (كتب جديدة أو أحدث، واحترام الحذف الناعم)
       for (const r of rows || []) {
+        if (r.deleted) { if (localById.has(r.id)) await Store.deleteBook(r.id); continue; }
         const lb = localById.get(r.id);
         const cloudT = new Date(r.updated_at).getTime();
         if (!lb) { await applyCloudRow(r); continue; }
@@ -117,6 +118,7 @@ const Cloud = (() => {
       // محلي → سحابة (كتب لم تُرفع بعد أو أحدث محلياً)
       for (const b of localBooks) {
         const r = cloudById.get(b.id);
+        if (r && r.deleted) { await Store.deleteBook(b.id); continue; } // حُذف من جهاز آخر
         if (!r) { await uploadBook(b.id); continue; }
         const cloudT = new Date(r.updated_at).getTime();
         if ((b.updatedAt || 0) > cloudT + 1500) await uploadBook(b.id);
@@ -139,6 +141,7 @@ const Cloud = (() => {
 
   /* ── تطبيق صف سحابي على المحلي ── */
   async function applyCloudRow(r) {
+    if (r.deleted) { if (await Store.getBook(r.id)) await Store.deleteBook(r.id); return; }
     const meta = { ...(r.meta || {}), id: r.id, updatedAt: new Date(r.updated_at).getTime(), cloudHasFile: r.has_file };
     // نص الكتاب يُخزَّن مباشرة؛ ملف PDF يُنزَّل عند أول فتح
     let payload;
@@ -202,11 +205,14 @@ const Cloud = (() => {
     }, 2500);
   }
 
+  // حذف ناعم (tombstone): لا نحذف الصف فعلياً بل نعلّمه، فينتقل الحذف بأمان
+  // دون الاعتماد على أحداث DELETE الخام (غير الموثوقة والخطرة على البيانات).
   async function deleteBook(id) {
     if (!ready || !user) return;
     try {
       await sb.storage.from(BUCKET).remove([`${user.id}/${id}`]).catch(() => {});
-      await sb.from(TABLE).delete().eq('id', id);
+      recentlyPushed.set(id, Date.now());
+      await sb.from(TABLE).update({ deleted: true, content: null, has_file: false, updated_at: new Date().toISOString() }).eq('id', id);
     } catch (e) { console.error('cloud delete', e); }
   }
 
@@ -236,17 +242,15 @@ const Cloud = (() => {
     if (channel) sb.removeChannel(channel);
     channel = sb.channel('books-' + user.id)
       .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: `owner=eq.${user.id}` }, async (payload) => {
-        const row = payload.new || payload.old;
+        // نتجاهل أحداث الحذف الخام تماماً؛ الحذف المقصود يصل كتحديث deleted=true
+        if (payload.eventType === 'DELETE') return;
+        const row = payload.new;
         if (!row) return;
-        // كتم الصدى: تجاهل ما دفعناه للتو
+        // كتم الصدى: تجاهل ما دفعناه للتو من هذا الجهاز
         const pushedAt = recentlyPushed.get(row.id);
-        const rowT = payload.new ? new Date(payload.new.updated_at).getTime() : 0;
-        if (pushedAt && Math.abs(pushedAt - rowT) < 4000) return;
-        if (payload.eventType === 'DELETE') {
-          if (await Store.getBook(row.id)) await Store.deleteBook(row.id);
-        } else {
-          await applyCloudRow(payload.new);
-        }
+        const rowT = new Date(row.updated_at).getTime();
+        if (pushedAt && Math.abs(pushedAt - rowT) < 5000) return;
+        await applyCloudRow(row); // يعالج deleted داخلياً
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => { if (window.Library) Library.refresh(); }, 400);
       })
