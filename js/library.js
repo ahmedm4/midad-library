@@ -101,21 +101,27 @@ const Library = (() => {
 
   function fillCloudSteps() {
     const rls = `-- انسخ هذا كاملاً في SQL Editor واضغط Run
-create table if not exists books (
+-- (أسماء خاصة بمِداد؛ آمن مع أي تطبيق آخر في نفس المشروع)
+create table if not exists midad_books (
   id text primary key,
   owner uuid references auth.users not null default auth.uid(),
   meta jsonb, state jsonb, content text,
   has_file boolean default false,
   updated_at timestamptz default now()
 );
-alter table books enable row level security;
-create policy "own_books" on books for all
+alter table midad_books enable row level security;
+drop policy if exists "midad_own_books" on midad_books;
+create policy "midad_own_books" on midad_books for all
   using (auth.uid() = owner) with check (auth.uid() = owner);
-insert into storage.buckets (id, name) values ('book-files','book-files')
+do $$ begin
+  alter publication supabase_realtime add table midad_books;
+exception when others then null; end $$;
+insert into storage.buckets (id, name) values ('midad-files','midad-files')
   on conflict do nothing;
-create policy "own_files" on storage.objects for all
-  using (bucket_id='book-files' and (storage.foldername(name))[1] = auth.uid()::text)
-  with check (bucket_id='book-files' and (storage.foldername(name))[1] = auth.uid()::text);`;
+drop policy if exists "midad_own_files" on storage.objects;
+create policy "midad_own_files" on storage.objects for all
+  using (bucket_id='midad-files' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id='midad-files' and (storage.foldername(name))[1] = auth.uid()::text);`;
     $('#cloud-steps').innerHTML = `
       <li>افتح <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a> وسجّل دخولاً مجانياً، ثم <b>New project</b> (اختر أي اسم وكلمة مرور لقاعدة البيانات، وانتظر دقيقة حتى يجهز).</li>
       <li>من القائمة الجانبية: <b>Project Settings → API</b>. انسخ <code>Project URL</code> و<code>anon public</code> والصقهما في الحقلين أدناه.</li>

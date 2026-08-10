@@ -3,7 +3,8 @@
    إن لم تُضبط السحابة، يعمل التطبيق كما هو تماماً دون أي أثر. */
 const Cloud = (() => {
   const CFG_KEY = 'midad-cloud';
-  const BUCKET = 'book-files';
+  const BUCKET = 'midad-files';
+  const TABLE = 'midad_books';
   const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
   let sb = null;          // عميل Supabase
@@ -99,7 +100,7 @@ const Cloud = (() => {
     syncing = true;
     setStatus('syncing', 'جارٍ المزامنة…');
     try {
-      const { data: rows, error } = await sb.from('books').select('id, meta, state, content, has_file, updated_at');
+      const { data: rows, error } = await sb.from(TABLE).select('id, meta, state, content, has_file, updated_at');
       if (error) throw error;
       const cloudById = new Map((rows || []).map((r) => [r.id, r]));
       const localBooks = await Store.getBooks();
@@ -169,7 +170,7 @@ const Cloud = (() => {
     } else if (typeof payload === 'string') {
       row.content = payload;
     }
-    const { error } = await sb.from('books').upsert(row);
+    const { error } = await sb.from(TABLE).upsert(row);
     if (error) throw error;
     recentlyPushed.set(id, Date.now());
   }
@@ -192,7 +193,7 @@ const Cloud = (() => {
       try {
         await touch(id);
         const st = await Store.getState(id);
-        const { error } = await sb.from('books').update({
+        const { error } = await sb.from(TABLE).update({
           state: stripState(st), updated_at: new Date().toISOString(),
         }).eq('id', id);
         if (error) throw error;
@@ -205,7 +206,7 @@ const Cloud = (() => {
     if (!ready || !user) return;
     try {
       await sb.storage.from(BUCKET).remove([`${user.id}/${id}`]).catch(() => {});
-      await sb.from('books').delete().eq('id', id);
+      await sb.from(TABLE).delete().eq('id', id);
     } catch (e) { console.error('cloud delete', e); }
   }
 
@@ -234,7 +235,7 @@ const Cloud = (() => {
     if (!ready || !user) return;
     if (channel) sb.removeChannel(channel);
     channel = sb.channel('books-' + user.id)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'books', filter: `owner=eq.${user.id}` }, async (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: `owner=eq.${user.id}` }, async (payload) => {
         const row = payload.new || payload.old;
         if (!row) return;
         // كتم الصدى: تجاهل ما دفعناه للتو
