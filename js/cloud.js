@@ -16,8 +16,17 @@ const Cloud = (() => {
   const recentlyPushed = new Map(); // كتم صدى اللحظة
   let statusCb = null;
 
-  const getCfg = () => { try { return JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch { return null; } };
+  // الأولوية: إعداد الجهاز المحفوظ، ثم الإعداد المضمّن في التطبيق (config.js)
+  const builtinCfg = () => {
+    const c = window.MIDAD_CONFIG;
+    return (c && c.url && c.anonKey) ? { url: c.url.trim().replace(/\/+$/, ''), anonKey: c.anonKey.trim() } : null;
+  };
+  const getCfg = () => {
+    try { const ls = JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); if (ls && ls.url) return ls; } catch {}
+    return builtinCfg();
+  };
   const isConfigured = () => !!getCfg();
+  const hasBuiltin = () => !!builtinCfg();
   const isSignedIn = () => !!user;
 
   function setStatus(state, msg) { if (statusCb) statusCb(state, msg); }
@@ -262,6 +271,7 @@ const Cloud = (() => {
     signIn, signUp, signOut, syncAll, onStatus,
     pushBook, pushState, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
+    hasBuiltin,
   };
 })();
 window.Cloud = Cloud;

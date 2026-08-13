@@ -54,6 +54,8 @@ const Library = (() => {
       $('#cloud-setup').hidden = configured;
       $('#cloud-auth').hidden = !configured || signedIn;
       $('#cloud-account').hidden = !signedIn;
+      // عند وجود إعداد مضمّن في التطبيق، لا حاجة لرابط «تغيير المشروع»
+      if (Cloud.hasBuiltin && Cloud.hasBuiltin()) $('#cloud-reconfig').hidden = true;
       if (signedIn) {
         $('#cloud-user-email').textContent = Cloud.getUserEmail() || '';
       }
