@@ -3,6 +3,6 @@
    فلا يرى المستخدم على أي جهاز سوى شاشة تسجيل الدخول (بريد + كلمة مرور).
    ملاحظة: مفتاح anon عام بطبيعته وآمن هنا؛ الحماية عبر صلاحيات RLS. */
 window.MIDAD_CONFIG = {
-  url: '',       // رابط المشروع، مثال: https://xxxxxxxx.supabase.co
-  anonKey: '',   // مفتاح anon public
+  url: 'https://xlalrmubtnnwoqprdsuh.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsYWxybXVidG5ud29xcHJkc3VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NzMxNjIsImV4cCI6MjA5NTU0OTE2Mn0.3ktQ3Ja6Z06gM387h1mRdyE_0uQc8Cv-yJmcF1UKSQU',
 };
