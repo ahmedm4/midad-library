@@ -312,6 +312,7 @@ create policy "midad_own_files" on storage.objects for all
         const tc = await page.getTextContent();
         text += tc.items.map((i) => i.str).join(' ') + '\n';
       }
+      try { await pdf.destroy(); } catch {}
       const rec = { text, pageStarts };
       await Store.saveFulltext(id, rec);
       return rec;
@@ -591,6 +592,7 @@ create policy "midad_own_files" on storage.objects for all
       try {
         const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
         const cover = await renderPdfCover(pdf);
+        try { await pdf.destroy(); } catch {}
         pendingFile = { kind: 'pdf', blob: new Blob([buf], { type: 'application/pdf' }), cover, pages: pdf.numPages };
         chip.textContent = `✓ ${nameFromUrl} — ${pdf.numPages} صفحة، جاهز للحفظ`;
       } catch (err) {
@@ -640,6 +642,7 @@ create policy "midad_own_files" on storage.objects for all
           const buf = await f.arrayBuffer();
           const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
           const cover = await renderPdfCover(pdf);
+        try { await pdf.destroy(); } catch {}
           const pid = await Store.addBook({ title, author: '', category: 'أخرى', type: 'pdf', cover, pages: pdf.numPages },
             new Blob([buf], { type: 'application/pdf' }));
           if (window.Cloud) Cloud.pushBook(pid);
@@ -732,6 +735,7 @@ create policy "midad_own_files" on storage.objects for all
         const blob = new Blob([buf], { type: 'application/pdf' });
         const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
         const cover = await renderPdfCover(pdf);
+        try { await pdf.destroy(); } catch {}
         pendingFile = { kind: 'pdf', blob, cover, pages: pdf.numPages };
         chip.textContent = `✓ ${file.name} — ${pdf.numPages} صفحة`;
       } catch (err) {

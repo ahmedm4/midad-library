@@ -78,7 +78,9 @@ const Reader = (() => {
       if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
       if (!blob) { Library.toast('تعذّر تحميل ملف الكتاب — تأكد من المزامنة'); close(); return; }
       const buf = await blob.arrayBuffer();
-      pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
+      if (pdfDoc) { try { await pdfDoc.destroy(); } catch {} pdfDoc = null; } // تنظيف أي مستند سابق
+      // disableFontFace: يرسم الخطوط المضمّنة مباشرةً على الكنفا (أضمن للنصوص العربية)
+      pdfDoc = await pdfjsLib.getDocument({ data: buf, disableFontFace: true }).promise;
       pageCount = pdfDoc.numPages;
       pdfPage = (target && target.page) ? Math.min(Math.max(target.page, 1), pageCount)
                                         : Math.min(Math.max(state.page + 1, 1), pageCount);
@@ -125,6 +127,8 @@ const Reader = (() => {
     ttsStop();
     teardownPdfScroll();
     $('#r-pdf-scroll').innerHTML = '';
+    // إتلاف مستند PDF لتحرير الخطوط والذاكرة (يمنع تبعثر الخطوط عند إعادة الفتح)
+    if (pdfDoc) { try { await pdfDoc.destroy(); } catch {} }
     pdfDoc = null; pristineHTML = ''; contentEl.innerHTML = '';
     Library.refresh();
   }
