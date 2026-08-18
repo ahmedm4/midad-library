@@ -362,3 +362,25 @@
 @media (max-width: 640px) {
   .r-nav { display: none; }
 }
+
+/* ═══════ التمرير العمودي المتصل لملفات PDF ═══════ */
+.r-pdf-scroll { position: absolute; inset: 0; z-index: 25; display: none;
+  flex-direction: column; align-items: center; gap: 20px;
+  overflow-y: auto; overflow-x: hidden; padding: 22px 0 60px;
+  scrollbar-width: thin; scroll-behavior: smooth; }
+#reader.pdf-scroll .r-pdf-scroll { display: flex; }
+#reader.pdf-scroll .r-book { display: none; }
+.pdf-slot { position: relative; flex: 0 0 auto; background: #fff; border-radius: 4px;
+  box-shadow: -8px 12px 30px rgba(0,0,0,.42); overflow: hidden; }
+.pdf-slot canvas { display: block; width: 100%; height: 100%; }
+.pdf-slot .slot-tint { position: absolute; inset: 0; background: var(--paper);
+  mix-blend-mode: multiply; pointer-events: none; transition: background .5s; }
+.pdf-slot .slot-num { position: absolute; bottom: 8px; left: 50%; translate: -50% 0;
+  background: rgba(0,0,0,.55); color: #eee; font-size: 11px; padding: 2px 10px;
+  border-radius: 999px; pointer-events: none; opacity: 0; transition: opacity .3s; }
+.r-pdf-scroll:hover .pdf-slot .slot-num { opacity: 1; }
+.pdf-slot .slot-loading { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: #b7a98a; font-size: 13px; }
+#reader.pdf-dark .pdf-slot { background: #1a1c22; }
+#reader.pdf-dark .pdf-slot canvas { filter: invert(.9) hue-rotate(180deg) contrast(.92); }
+#reader.pdf-dark .pdf-slot .slot-tint { display: none; }

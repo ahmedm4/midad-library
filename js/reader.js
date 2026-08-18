@@ -54,7 +54,7 @@ const Reader = (() => {
     $('#r-canvas-wrap').hidden = !isPdf;
     $('#r-btn-search').style.display = isPdf ? 'none' : '';
     $('#typo-section').style.display = isPdf ? 'none' : '';
-    $('#flip-scroll-btn').style.display = isPdf ? 'none' : '';
+    $('#flip-scroll-btn').style.display = ''; // التمرير المتصل متاح للنصوص و PDF
     $('#r-btn-draw').style.display = isPdf ? '' : 'none';
     state.drawings = state.drawings || {};
     setDrawMode(false);
@@ -74,7 +74,8 @@ const Reader = (() => {
       pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
       pageCount = pdfDoc.numPages;
       pdfPage = Math.min(Math.max(state.page + 1, 1), pageCount);
-      await renderPdf(pdfPage);
+      if (pdfScrollActive()) await buildPdfScroll();
+      else await renderPdf(pdfPage);
       buildPdfToc();
     } else {
       let text = await Store.getPayload(id);
@@ -110,6 +111,8 @@ const Reader = (() => {
     closeDrawers(); hideHlPopup(); $('#r-search').hidden = true;
     setDrawMode(false);
     ttsStop();
+    teardownPdfScroll();
+    $('#r-pdf-scroll').innerHTML = '';
     pdfDoc = null; pristineHTML = ''; contentEl.innerHTML = '';
     Library.refresh();
   }
@@ -195,6 +198,11 @@ const Reader = (() => {
 
   function go(dir) {
     if (!isOpen || flipping) return;
+    if (pdfScrollActive()) {
+      const cont = $('#r-pdf-scroll');
+      cont.scrollBy({ top: dir * cont.clientHeight * 0.9, behavior: 'smooth' });
+      return;
+    }
     if (!isPdf && settings.flip === 'scroll') {
       viewportEl.scrollBy({ top: dir * viewportEl.clientHeight * 0.9, behavior: 'smooth' });
       return;
@@ -213,7 +221,8 @@ const Reader = (() => {
   }
 
   function jumpTo(n) { // فهرس الصفحات (نصي: رقم صفحة، PDF: رقم صفحة 1-based)
-    if (isPdf) { pdfPage = Math.max(1, Math.min(n, pageCount)); renderPdf(pdfPage, true); state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
+    if (pdfScrollActive()) { pdfScrollTo(Math.max(1, Math.min(n, pageCount))); }
+    else if (isPdf) { pdfPage = Math.max(1, Math.min(n, pageCount)); renderPdf(pdfPage, true); state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
     else if (settings.flip === 'scroll') { /* يُعالَج خارجياً */ }
     else setPage(n, false);
   }
@@ -279,14 +288,22 @@ const Reader = (() => {
     };
 
     if (dir > 0) {
-      setLeafFrom(main, pdfPage);
+      setLeafFrom(main, pdfPage);       // الورقة المتحركة تحمل الصفحة الحالية وتغطّي الكنفا
       layer.appendChild(leaf);
       leaf.classList.add('turning');
       pdfPage = target;
-      renderPdf(target);
       state.pct = pageCount > 1 ? (target - 1) / (pageCount - 1) : 1;
       afterNavigate();
-      setTimeout(() => { leaf.remove(); flipping = false; }, 570);
+      // ارسم الصفحة الجديدة خارج الشاشة ثم انقلها للكنفا دفعةً واحدة —
+      // فلا يظهر الكنفا فارغاً (أبيض) أثناء دوران الورقة
+      const off = document.createElement('canvas');
+      await renderPdf(target, false, off);
+      const ctx = main.getContext('2d');
+      main.width = off.width; main.height = off.height;
+      main.style.width = off.style.width; main.style.height = off.style.height;
+      ctx.drawImage(off, 0, 0);
+      syncDrawLayer();
+      setTimeout(() => { leaf.remove(); flipping = false; }, 400);
     } else {
       const off = document.createElement('canvas');
       await renderPdf(target, false, off);
@@ -330,6 +347,133 @@ const Reader = (() => {
       if (fade && !targetCanvas) setTimeout(() => (canvas.style.opacity = '1'), 30);
       if (!targetCanvas) syncDrawLayer();
     } catch (e) { console.error('pdf render', e); }
+  }
+
+  /* ═══════ التمرير العمودي المتصل لـ PDF ═══════ */
+  let pdfObserver = null, pdfSlots = [], pdfAspect = 1.414, pdfScrollRAF = 0;
+  const pdfScrollActive = () => isPdf && settings.flip === 'scroll';
+
+  async function buildPdfScroll() {
+    const cont = $('#r-pdf-scroll');
+    teardownPdfScroll();
+    cont.innerHTML = '';
+    // نسبة أبعاد الصفحة الأولى (افتراض موحّد، ويُصحَّح عند رسم كل صفحة)
+    try {
+      const p1 = await pdfDoc.getPage(1);
+      const v = p1.getViewport({ scale: 1 });
+      pdfAspect = v.width / v.height;
+    } catch {}
+    const baseW = pdfSlotWidth();
+    for (let n = 1; n <= pageCount; n++) {
+      const slot = document.createElement('div');
+      slot.className = 'pdf-slot';
+      slot.dataset.page = n;
+      slot.style.width = baseW + 'px';
+      slot.style.height = Math.round(baseW / pdfAspect) + 'px';
+      slot.innerHTML = `<div class="slot-tint"></div><div class="slot-loading">…</div><div class="slot-num">${n} / ${pageCount}</div>`;
+      cont.appendChild(slot);
+      pdfSlots.push({ el: slot, page: n, rendered: false, rendering: false });
+    }
+    pdfObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const s = pdfSlots[+e.target.dataset.page - 1];
+        if (!s) continue;
+        if (e.isIntersecting) renderSlot(s);
+        else clearSlot(s); // تفريغ البعيدة لتوفير الذاكرة
+      }
+    }, { root: cont, rootMargin: '900px 0px' });
+    pdfSlots.forEach((s) => pdfObserver.observe(s.el));
+
+    cont.onscroll = () => {
+      if (pdfScrollRAF) return;
+      pdfScrollRAF = requestAnimationFrame(() => {
+        pdfScrollRAF = 0;
+        updatePdfScrollPage();
+      });
+    };
+    // اذهب لموضع القراءة المحفوظ
+    requestAnimationFrame(() => { pdfScrollTo(pdfPage, false); renderVisibleSlots(); });
+  }
+
+  function pdfSlotWidth() {
+    const stageW = $('#r-stage').clientWidth;
+    return Math.round(Math.min(stageW - 40, 860) * pdfZoom);
+  }
+
+  function teardownPdfScroll() {
+    if (pdfObserver) { pdfObserver.disconnect(); pdfObserver = null; }
+    const cont = $('#r-pdf-scroll');
+    if (cont) cont.onscroll = null;
+    pdfSlots = [];
+  }
+
+  async function renderSlot(s) {
+    if (s.rendered || s.rendering) return;
+    s.rendering = true;
+    try {
+      const page = await pdfDoc.getPage(s.page);
+      const v1 = page.getViewport({ scale: 1 });
+      const aspect = v1.width / v1.height;
+      const cssW = parseFloat(s.el.style.width);
+      const cssH = Math.round(cssW / aspect);
+      s.el.style.height = cssH + 'px';
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      const vp = page.getViewport({ scale: (cssW / v1.width) * dpr });
+      const canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+      // رسم الكتابات المحفوظة (عرض فقط في وضع التمرير)
+      drawStrokesTo(canvas.getContext('2d'), state.drawings[s.page] || [], canvas.width, canvas.height);
+      const old = s.el.querySelector('canvas'); if (old) old.remove();
+      const ld = s.el.querySelector('.slot-loading'); if (ld) ld.remove();
+      s.el.insertBefore(canvas, s.el.firstChild);
+      s.rendered = true;
+    } catch (e) { console.error('slot render', e); }
+    finally { s.rendering = false; }
+  }
+
+  function renderVisibleSlots() {
+    const cont = $('#r-pdf-scroll');
+    const top = cont.scrollTop - 900, bot = cont.scrollTop + cont.clientHeight + 900;
+    for (const s of pdfSlots) {
+      const sTop = s.el.offsetTop, sBot = sTop + s.el.offsetHeight;
+      if (sBot >= top && sTop <= bot) renderSlot(s);
+    }
+  }
+
+  function clearSlot(s) {
+    if (!s.rendered) return;
+    const c = s.el.querySelector('canvas');
+    if (c) c.remove();
+    if (!s.el.querySelector('.slot-loading')) {
+      const ld = document.createElement('div'); ld.className = 'slot-loading'; ld.textContent = '…';
+      s.el.insertBefore(ld, s.el.firstChild);
+    }
+    s.rendered = false;
+  }
+
+  function pdfScrollTo(pageNum, smooth = true) {
+    const s = pdfSlots[Math.max(0, Math.min(pageNum, pageCount) - 1)];
+    if (!s) return;
+    const cont = $('#r-pdf-scroll');
+    cont.scrollTo({ top: s.el.offsetTop - 12, behavior: smooth ? 'smooth' : 'auto' });
+  }
+
+  function updatePdfScrollPage() {
+    const cont = $('#r-pdf-scroll');
+    const mid = cont.scrollTop + cont.clientHeight * 0.35;
+    let cur = pdfPage;
+    for (const s of pdfSlots) {
+      if (s.el.offsetTop <= mid && s.el.offsetTop + s.el.offsetHeight > mid) { cur = s.page; break; }
+    }
+    pdfPage = cur;
+    const max = cont.scrollHeight - cont.clientHeight;
+    state.pct = max > 0 ? cont.scrollTop / max : 1;
+    state.page = pdfPage - 1;
+    state.lastRead = Date.now();
+    if (state.pct >= 0.995 && !state.finished) { state.finished = true; if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب', 'gold'); } }
+    updateHUD();
+    schedulePersist();
   }
 
   /* ═══════ الكتابة على الصفحة (PDF) ═══════ */
@@ -472,7 +616,18 @@ const Reader = (() => {
     pdfZoom = Math.min(2.4, Math.max(1, Math.round(z * 10) / 10));
     $('#zoom-val').textContent = Math.round(pdfZoom * 100) + '٪';
     $('#reader').classList.toggle('zoomed', pdfZoom > 1.001);
-    renderPdf(pdfPage);
+    if (pdfScrollActive()) {
+      // أعد قياس الشرائح ورسم المرئية منها بالعرض الجديد
+      const cont = $('#r-pdf-scroll');
+      const anchorPage = pdfPage;
+      const w = pdfSlotWidth();
+      for (const s of pdfSlots) {
+        s.el.style.width = w + 'px';
+        s.el.style.height = Math.round(w / pdfAspect) + 'px';
+        clearSlot(s);
+      }
+      requestAnimationFrame(() => { pdfScrollTo(anchorPage, false); renderVisibleSlots(); });
+    } else renderPdf(pdfPage);
   }
 
   /* ═══════ القراءة الصوتية ═══════ */
@@ -591,11 +746,18 @@ const Reader = (() => {
       b.onclick = () => { settings.bg = b.dataset.bg; applySettings(); };
     });
     $('#flip-row').querySelectorAll('button').forEach((b) => {
-      b.onclick = () => {
+      b.onclick = async () => {
         const was = settings.flip;
         settings.flip = b.dataset.flip;
+        const scrollChanged = (was === 'scroll') !== (settings.flip === 'scroll');
         applySettings();
-        if (!isPdf && (was === 'scroll') !== (settings.flip === 'scroll')) {
+        if (isPdf) {
+          if (scrollChanged) {
+            if (pdfScrollActive()) { await buildPdfScroll(); }
+            else { teardownPdfScroll(); await renderPdf(pdfPage); }
+            updateHUD();
+          }
+        } else if (scrollChanged) {
           const pct = state.pct;
           setTimeout(() => {
             paginate();
@@ -632,6 +794,13 @@ const Reader = (() => {
     const dark = settings.theme === 'custom' ? luminance(paper) <= 0.45 : DARK_THEMES.includes(settings.theme);
     r.classList.toggle('pdf-dark', isPdf && dark);
     r.classList.toggle('mode-scroll', !isPdf && settings.flip === 'scroll');
+    r.classList.toggle('pdf-scroll', pdfScrollActive());
+    // في وضع التمرير لـ PDF نخفي الكنفا المفرد وأداة الكتابة (العرض عبر الشرائح)
+    if (isPdf) {
+      $('#r-canvas-wrap').hidden = pdfScrollActive();
+      $('#r-btn-draw').style.display = pdfScrollActive() ? 'none' : '';
+      $('#zoom-pill').hidden = false;
+    }
 
     // تفعيل الأزرار
     $('#theme-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.theme === settings.theme));
@@ -673,7 +842,7 @@ const Reader = (() => {
     const label = $('#r-page-label');
     const slider = $('#r-slider');
     let cur, total, pct;
-    if (isPdf) { cur = pdfPage; total = pageCount; pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; }
+    if (isPdf) { cur = pdfPage; total = pageCount; pct = pdfScrollActive() ? state.pct : (pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1); }
     else if (settings.flip === 'scroll') {
       const max = viewportEl.scrollHeight - viewportEl.clientHeight;
       pct = max > 0 ? viewportEl.scrollTop / max : 1;
@@ -1258,8 +1427,8 @@ const Reader = (() => {
           showHlPopup(mark.getBoundingClientRect(), true);
           return;
         }
-        if (e.target.closest('.r-nav, .r-ribbon, button, #r-draw')) return;
-        const paged = isPdf || settings.flip !== 'scroll';
+        if (e.target.closest('.r-nav, .r-ribbon, button, #r-draw, #r-pdf-scroll')) return;
+        const paged = settings.flip !== 'scroll';
         // سحب أفقي = تقليب (سحب لليمين يقدّم الصفحة كما في الكتاب العربي)
         if (paged && Math.abs(dx) > 60) { if (dx > 0) next(); else prev(); return; }
         if (Math.abs(dx) > 12) return; // سحب قصير — لا شيء
@@ -1307,7 +1476,11 @@ const Reader = (() => {
       if (!isOpen) return;
       clearTimeout(rzT);
       rzT = setTimeout(() => {
-        if (isPdf) renderPdf(pdfPage);
+        if (pdfScrollActive()) {
+          const w = pdfSlotWidth(), anchor = pdfPage;
+          for (const s of pdfSlots) { s.el.style.width = w + 'px'; s.el.style.height = Math.round(w / pdfAspect) + 'px'; clearSlot(s); }
+          requestAnimationFrame(() => { pdfScrollTo(anchor, false); renderVisibleSlots(); });
+        } else if (isPdf) renderPdf(pdfPage);
         else { scheduleRepaginate(); }
       }, 200);
     });
@@ -1322,7 +1495,7 @@ const Reader = (() => {
       // لا تقليب أثناء تحديد نص للتظليل أو أثناء الكتابة على الصفحة
       const sel = getSelection();
       if ((sel && !sel.isCollapsed) || drawMode) return;
-      if (Math.abs(dx) > 60 && (isPdf || settings.flip !== 'scroll')) {
+      if (Math.abs(dx) > 60 && settings.flip !== 'scroll') {
         if (dx > 0) next(); else prev(); // سحب لليمين = التالية (RTL)
       }
     }, { passive: true });
