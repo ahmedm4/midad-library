@@ -1,5 +1,5 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v2';
+const VERSION = 'midad-v3';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',
@@ -46,15 +46,18 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // أصول التطبيق (نفس الأصل): من الكاش أولاً مع تحديث بالخلفية
+  // أصول التطبيق (نفس الأصل): الشبكة أولاً لضمان تطابق كل الملفات معاً،
+  // ثم الكاش عند انقطاع الإنترنت فقط (يمنع خلط نسخة قديمة بأخرى جديدة)
   if (sameOrigin) {
     e.respondWith((async () => {
-      const cached = await caches.match(req);
-      const net = fetch(req).then((res) => {
-        if (res && res.ok) caches.open(VERSION).then((c) => c.put(req, res.clone()));
-        return res;
-      }).catch(() => null);
-      return cached || (await net) || new Response('', { status: 504 });
+      try {
+        const net = await fetch(req);
+        if (net && net.ok) { const c = await caches.open(VERSION); c.put(req, net.clone()); }
+        return net;
+      } catch {
+        const cached = await caches.match(req);
+        return cached || new Response('', { status: 504 });
+      }
     })());
     return;
   }

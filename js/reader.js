@@ -58,9 +58,13 @@ const Reader = (() => {
     $('#r-btn-draw').style.display = isPdf ? '' : 'none';
     state.drawings = state.drawings || {};
     setDrawMode(false);
-    // تصفير محادثة المساعد الذكي لكل كتاب
-    $('#ai-modal').hidden = true; $('#r-btn-ai').classList.remove('on');
-    $('#ai-body').innerHTML = '<div class="ai-hint">اطلب تلخيصاً، أو اسأل أي سؤال عن الكتاب — أو ظلّل مقطعاً ثم اضغط «✨ اشرح».</div>';
+    // تصفير محادثة المساعد الذكي لكل كتاب (آمن ضد عدم تطابق النسخ)
+    const aiModalEl = $('#ai-modal');
+    if (aiModalEl) {
+      aiModalEl.hidden = true;
+      const aiBtnEl = $('#r-btn-ai'); if (aiBtnEl) aiBtnEl.classList.remove('on');
+      const aiBodyEl = $('#ai-body'); if (aiBodyEl) aiBodyEl.innerHTML = '<div class="ai-hint">اطلب تلخيصاً، أو اسأل أي سؤال عن الكتاب — أو ظلّل مقطعاً ثم اضغط «✨ اشرح».</div>';
+    }
     pdfZoom = 1;
     $('#zoom-pill').hidden = !isPdf;
     $('#zoom-val').textContent = '100٪';
@@ -116,7 +120,7 @@ const Reader = (() => {
     $('#reader').hidden = true;
     document.body.style.overflow = '';
     closeDrawers(); hideHlPopup(); $('#r-search').hidden = true;
-    $('#ai-modal').hidden = true;
+    { const m = $('#ai-modal'); if (m) m.hidden = true; }
     setDrawMode(false);
     ttsStop();
     teardownPdfScroll();
@@ -1479,7 +1483,7 @@ const Reader = (() => {
         case '+': case '=': if (isPdf) setZoom(pdfZoom + 0.2); break;
         case '-': if (isPdf) setZoom(pdfZoom - 0.2); break;
         case 'Escape':
-          if (!$('#ai-modal').hidden) { $('#ai-modal').hidden = true; $('#r-btn-ai').classList.remove('on'); }
+          if ($('#ai-modal') && !$('#ai-modal').hidden) { $('#ai-modal').hidden = true; const ab = $('#r-btn-ai'); if (ab) ab.classList.remove('on'); }
           else if (!$('#hl-popup').hidden) hideHlPopup();
           else if (ttsOn) ttsStop();
           else if (drawMode) setDrawMode(false);
@@ -1555,21 +1559,22 @@ const Reader = (() => {
         hideHlPopup(); rebuildText(); renderDrawerPanes(); schedulePersist();
       }
     };
-    $('#hl-explain-btn').onclick = () => {
-      let txt = '';
-      if (pendingSel) txt = pendingSel.text;
-      else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
-      hideHlPopup();
-      if (txt) { openAI(); runAI('explain', { selection: txt }); }
-    };
-
-    // مساعد الذكاء
-    $('#r-btn-ai').onclick = openAI;
-    $('#ai-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#ai-modal').hidden = true)));
-    $('#ai-modal').onclick = (e) => { if (e.target.id === 'ai-modal') $('#ai-modal').hidden = true; };
-    $('#ai-quick').querySelectorAll('[data-ai]').forEach((b) => (b.onclick = () => runAI(b.dataset.ai)));
-    $('#ai-send').onclick = () => runAI('ask');
-    $('#ai-input').onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') runAI('ask'); };
+    // مساعد الذكاء (محمي: لا يتعطّل إن كانت عناصر الـHTML غير متطابقة مع النسخة)
+    if ($('#r-btn-ai') && $('#ai-modal')) {
+      $('#hl-explain-btn').onclick = () => {
+        let txt = '';
+        if (pendingSel) txt = pendingSel.text;
+        else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
+        hideHlPopup();
+        if (txt) { openAI(); runAI('explain', { selection: txt }); }
+      };
+      $('#r-btn-ai').onclick = openAI;
+      $('#ai-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#ai-modal').hidden = true)));
+      $('#ai-modal').onclick = (e) => { if (e.target.id === 'ai-modal') $('#ai-modal').hidden = true; };
+      $('#ai-quick').querySelectorAll('[data-ai]').forEach((b) => (b.onclick = () => runAI(b.dataset.ai)));
+      $('#ai-send').onclick = () => runAI('ask');
+      $('#ai-input').onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') runAI('ask'); };
+    }
 
     // نافذة الملاحظة
     $('#note-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#note-modal').hidden = true)));

@@ -4,9 +4,10 @@
 
   await Store.init();
   await seedGuide();
-  Reader.wire();
-  await Library.init();
-  if (window.Cloud) Cloud.init(); // المزامنة السحابية (اختيارية، لا تعطّل التطبيق)
+  // المكتبة يجب أن تظهر دائماً حتى لو فشل ربط القارئ (مثلاً عند عدم تطابق نسخ الملفات)
+  try { Reader.wire(); } catch (e) { console.error('reader wire', e); }
+  try { await Library.init(); } catch (e) { console.error('library init', e); }
+  try { if (window.Cloud) Cloud.init(); } catch (e) { console.error('cloud init', e); }
 
   // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت)
   if ('serviceWorker' in navigator) {
