@@ -7,6 +7,11 @@
   Reader.wire();
   await Library.init();
   if (window.Cloud) Cloud.init(); // المزامنة السحابية (اختيارية، لا تعطّل التطبيق)
+
+  // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت)
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
 })();
 
 /* كتاب ترحيبي يشرح مزايا التطبيق ويستعرض القارئ */

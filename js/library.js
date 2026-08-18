@@ -190,8 +190,8 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
-  async function openBook(id) {
-    try { await Reader.open(id); }
+  async function openBook(id, target) {
+    try { await Reader.open(id, target); }
     catch (e) {
       console.error('فتح الكتاب', e);
       try { Reader.close(); } catch {}
@@ -274,6 +274,128 @@ create policy "midad_own_files" on storage.objects for all
       };
       // الزر الأيمن على البطاقة يفتح القائمة أيضاً
       card.oncontextmenu = (e) => { e.preventDefault(); openCardMenu(e.clientX, e.clientY, id); };
+    });
+  }
+
+  /* ─── البحث الشامل داخل كل الكتب ─── */
+  let deepTimer = null, deepToken = 0;
+
+  const normSpace = (s) => s.replace(/\s+/g, ' ').trim();
+  // تنظيف مقتطف للعرض: يوحّد المسافات دون قصّ الحواف الملاصقة، ويزيل علامات #
+  const snippetClean = (s) => s.replace(/\s+/g, ' ').replace(/#+\s?/g, '');
+
+  // نص الكتاب القابل للبحث: نصي → المحتوى؛ PDF → نص مُستخرج ومُخزَّن ({text, pageStarts})
+  async function searchableOf(b, allowIndex) {
+    if (b.type === 'text') {
+      const t = await Store.getPayload(b.id);
+      return typeof t === 'string' ? { text: t } : null;
+    }
+    const cached = await Store.getFulltext(b.id);
+    if (cached && cached.text != null) return cached;
+    if (!allowIndex) return null;
+    return await extractPdfText(b.id);
+  }
+
+  async function extractPdfText(id) {
+    const b = books.find((x) => x.id === id);
+    if (!b) return null;
+    let blob = await Store.getPayload(id);
+    if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
+    if (!blob) return null;
+    try {
+      const buf = await blob.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      let text = ''; const pageStarts = [];
+      for (let n = 1; n <= pdf.numPages; n++) {
+        pageStarts.push(text.length);
+        const page = await pdf.getPage(n);
+        const tc = await page.getTextContent();
+        text += tc.items.map((i) => i.str).join(' ') + '\n';
+      }
+      const rec = { text, pageStarts };
+      await Store.saveFulltext(id, rec);
+      return rec;
+    } catch (e) { console.error('extract pdf', e); return null; }
+  }
+
+  function findHits(text, q, max = 4) {
+    const hay = text.toLowerCase(), needle = q.toLowerCase();
+    const hits = []; let idx = 0;
+    while (hits.length < max && (idx = hay.indexOf(needle, idx)) !== -1) {
+      const a = Math.max(0, idx - 45), b2 = Math.min(text.length, idx + q.length + 55);
+      hits.push({ off: idx, before: text.slice(a, idx), hit: text.slice(idx, idx + q.length), after: text.slice(idx + q.length, b2) });
+      idx += q.length;
+    }
+    return hits;
+  }
+
+  async function deepSearch(q) {
+    const token = ++deepToken;
+    const panel = $('#deep-results'), list = $('#deep-list');
+    // فهرسة كسولة لملفات PDF غير المفهرسة
+    const pdfsToIndex = [];
+    for (const b of books) {
+      if (b.type === 'pdf' && !(await Store.getFulltext(b.id))) pdfsToIndex.push(b);
+    }
+    if (token !== deepToken) return;
+    panel.hidden = false;
+    if (pdfsToIndex.length) {
+      list.innerHTML = `<div class="deep-indexing">⏳ تجهيز ${pdfsToIndex.length} كتاب PDF للبحث لأول مرة…<div class="di-bar"><i id="di-fill" style="width:0%"></i></div></div>`;
+      $('#deep-count').textContent = '';
+      let done = 0;
+      for (const b of pdfsToIndex) {
+        await extractPdfText(b.id);
+        done++;
+        if (token !== deepToken) return;
+        const fill = $('#di-fill'); if (fill) fill.style.width = Math.round((done / pdfsToIndex.length) * 100) + '%';
+      }
+    }
+    if (token !== deepToken) return;
+
+    // اجمع النتائج من كل الكتب
+    const results = [];
+    for (const b of books) {
+      const s = await searchableOf(b, false);
+      if (token !== deepToken) return;
+      if (!s || !s.text) continue;
+      const hits = findHits(s.text, q, 4);
+      if (hits.length) results.push({ book: b, src: s, hits });
+    }
+    if (token !== deepToken) return;
+
+    const total = results.reduce((n, r) => n + r.hits.length, 0);
+    $('#deep-count').textContent = total ? `${total} نتيجة في ${results.length} كتاب` : '';
+    if (!results.length) {
+      list.innerHTML = `<div class="deep-indexing">لا توجد نتائج داخل الكتب عن «${esc(q)}»</div>`;
+      return;
+    }
+    list.innerHTML = results.map((r) => `
+      <div class="deep-book">
+        <div class="deep-book-title">${esc(r.book.title)}<span class="db-badge">${r.book.type === 'pdf' ? 'PDF' : 'نص'}${r.book.author ? ' · ' + esc(r.book.author) : ''}</span></div>
+        ${r.hits.map((h, i) => {
+          let loc = '';
+          if (r.book.type === 'pdf' && r.src.pageStarts) {
+            let pg = 1; for (let k = 0; k < r.src.pageStarts.length; k++) if (r.src.pageStarts[k] <= h.off) pg = k + 1;
+            loc = `<span class="dh-loc">ص ${pg}</span>`;
+          }
+          return `<button class="deep-hit" data-bid="${r.book.id}" data-off="${h.off}">…${esc(snippetClean(h.before))}<b>${esc(h.hit)}</b>${esc(snippetClean(h.after))}…${loc}</button>`;
+        }).join('')}
+      </div>`).join('');
+
+    list.querySelectorAll('.deep-hit').forEach((btn) => {
+      btn.onclick = () => {
+        const b = books.find((x) => x.id === btn.dataset.bid);
+        const off = +btn.dataset.off;
+        if (b.type === 'pdf') {
+          const rec = results.find((r) => r.book.id === b.id).src;
+          let pg = 1; for (let k = 0; k < rec.pageStarts.length; k++) if (rec.pageStarts[k] <= off) pg = k + 1;
+          openBook(b.id, { page: pg });
+        } else {
+          const rec = results.find((r) => r.book.id === b.id).src;
+          const phrase = normSpace(rec.text.substr(off, q.length + 30)).replace(/^#+\s*/, '');
+          openBook(b.id, { find: phrase });
+        }
+      };
     });
   }
 
@@ -365,7 +487,13 @@ create policy "midad_own_files" on storage.objects for all
     const unlock = () => si.removeAttribute('readonly');
     si.addEventListener('focus', unlock);
     si.addEventListener('pointerdown', unlock);
-    si.oninput = (e) => { query = e.target.value.trim(); renderGrid(); };
+    si.oninput = (e) => {
+      query = e.target.value.trim();
+      renderGrid();
+      clearTimeout(deepTimer);
+      if (query.length >= 2) deepTimer = setTimeout(() => deepSearch(query), 350);
+      else { $('#deep-results').hidden = true; }
+    };
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
     $('#btn-add').onclick = () => openAddModal();
     $('#btn-add-empty').onclick = () => openAddModal();

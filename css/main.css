@@ -385,3 +385,27 @@ input, select, textarea { font-family: inherit; }
   .brand h1 { font-size: 28px; }
   .search-box { order: 3; max-width: none; flex-basis: 100%; }
 }
+
+/* ─── نتائج البحث الشامل ─── */
+.deep-results { margin-top: 34px; }
+.deep-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--card-line); }
+.deep-head h3 { font-family: 'Amiri', serif; font-size: 22px; }
+.deep-head span { font-size: 13px; color: var(--muted); }
+.deep-book { margin-bottom: 22px; }
+.deep-book-title { display: flex; align-items: center; gap: 10px; font-size: 15px;
+  font-weight: 700; color: var(--gold-soft); margin-bottom: 10px; }
+.deep-book-title .db-badge { font-size: 10.5px; font-weight: 500; color: var(--muted);
+  background: rgba(255,255,255,.06); padding: 2px 8px; border-radius: 999px; }
+.deep-hit { display: block; width: 100%; text-align: start; padding: 11px 14px;
+  border-radius: 11px; background: var(--card); border: 1px solid var(--card-line);
+  margin-bottom: 8px; font-size: 14px; line-height: 1.9; color: #cfc8dd; transition: .15s; }
+.deep-hit:hover { background: rgba(255,255,255,.07); border-color: rgba(217,169,79,.4); }
+.deep-hit b { color: #ffd76e; font-weight: 700; background: rgba(217,169,79,.14);
+  padding: 0 3px; border-radius: 4px; }
+.deep-hit .dh-loc { color: #877fa0; font-size: 11.5px; margin-inline-start: 8px; }
+.deep-indexing { text-align: center; color: var(--muted); font-size: 13.5px; padding: 20px; }
+.deep-indexing .di-bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.1);
+  max-width: 260px; margin: 10px auto 0; overflow: hidden; }
+.deep-indexing .di-bar i { display: block; height: 100%;
+  background: linear-gradient(90deg, var(--gold), var(--gold-soft)); transition: width .3s; }

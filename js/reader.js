@@ -33,7 +33,7 @@ const Reader = (() => {
   let celebrated = false;
 
   /* ═══════ فتح وإغلاق ═══════ */
-  async function open(id) {
+  async function open(id, target) {
     book = await Store.getBook(id);
     if (!book) return;
     state = await Store.getState(id);
@@ -73,10 +73,12 @@ const Reader = (() => {
       const buf = await blob.arrayBuffer();
       pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
       pageCount = pdfDoc.numPages;
-      pdfPage = Math.min(Math.max(state.page + 1, 1), pageCount);
+      pdfPage = (target && target.page) ? Math.min(Math.max(target.page, 1), pageCount)
+                                        : Math.min(Math.max(state.page + 1, 1), pageCount);
       if (pdfScrollActive()) await buildPdfScroll();
       else await renderPdf(pdfPage);
       buildPdfToc();
+      if (target && target.page) { state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
     } else {
       let text = await Store.getPayload(id);
       if (text == null && window.Cloud) { await Cloud.ensurePayload(id); text = await Store.getPayload(id); }
@@ -85,11 +87,13 @@ const Reader = (() => {
       renderContent();
       setTimeout(() => {
         paginate();
-        const target = state.pct ? Math.round(state.pct * (pageCount - 1)) : 0;
-        if (settings.flip === 'scroll') {
-          viewportEl.scrollTop = state.pct * (viewportEl.scrollHeight - viewportEl.clientHeight);
-        } else setPage(target, false);
         buildTextToc();
+        if (target && target.find) { jumpToPhrase(target.find); }
+        else {
+          const startPage = state.pct ? Math.round(state.pct * (pageCount - 1)) : 0;
+          if (settings.flip === 'scroll') viewportEl.scrollTop = state.pct * (viewportEl.scrollHeight - viewportEl.clientHeight);
+          else setPage(startPage, false);
+        }
         updateHUD();
       }, 30);
     }
@@ -1229,6 +1233,18 @@ const Reader = (() => {
       }
       pos += node.data.length;
     }
+  }
+
+  // قفزة إلى أول ظهور لعبارة (من البحث الشامل)
+  function jumpToPhrase(phrase) {
+    const hay = contentEl.textContent;
+    let off = hay.indexOf(phrase);
+    if (off < 0) { // جرّب أول بضع كلمات إن لم تتطابق العبارة كاملة
+      const words = phrase.split(' ').slice(0, 4).join(' ');
+      off = hay.indexOf(words);
+    }
+    if (off < 0) { setPage(0, false); return; }
+    jumpToOffset(off);
   }
 
   /* ═══════ الحفظ والمؤقتات ═══════ */
