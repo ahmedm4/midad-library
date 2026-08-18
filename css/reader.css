@@ -384,3 +384,36 @@
 #reader.pdf-dark .pdf-slot { background: #1a1c22; }
 #reader.pdf-dark .pdf-slot canvas { filter: invert(.9) hue-rotate(180deg) contrast(.92); }
 #reader.pdf-dark .pdf-slot .slot-tint { display: none; }
+
+/* ═══════ مساعد القراءة الذكي ═══════ */
+.r-btn-ai { font-size: 18px; }
+.r-btn-ai.on { color: var(--gold, #d9a94f); background: rgba(217,169,79,.14); }
+.ai-modal { width: min(620px, 100%); display: flex; flex-direction: column; max-height: 88vh; }
+.ai-quick { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ai-quick button { padding: 9px 16px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
+  border: 1px solid rgba(217,169,79,.4); background: rgba(217,169,79,.1); color: #ffe9bd; transition: .2s; }
+.ai-quick button:hover { background: rgba(217,169,79,.2); }
+.ai-body { flex: 1; overflow-y: auto; min-height: 180px; max-height: 52vh; padding: 6px 2px;
+  display: flex; flex-direction: column; gap: 14px; }
+.ai-hint { color: #9a92ad; text-align: center; font-size: 13.5px; line-height: 2; padding: 30px 10px; }
+.ai-msg { max-width: 90%; padding: 12px 16px; border-radius: 16px; font-size: 14.5px; line-height: 1.95; }
+.ai-msg.user { align-self: flex-start; background: rgba(217,169,79,.16); color: #ffe9bd;
+  border-bottom-right-radius: 4px; }
+.ai-msg.ai { align-self: flex-end; background: rgba(255,255,255,.05); border: 1px solid var(--card-line, rgba(255,255,255,.09));
+  color: #e5deee; border-bottom-left-radius: 4px; }
+.ai-msg.ai h4 { font-family: 'Amiri', serif; color: #ffe9bd; font-size: 16px; margin: 10px 0 6px; }
+.ai-msg.ai ul { margin: 6px 20px; }
+.ai-msg.ai li { margin-bottom: 5px; }
+.ai-msg.ai b { color: #ffe9bd; }
+.ai-msg.ai p { margin-bottom: 8px; }
+.ai-msg.loading { color: #b6aecb; }
+.ai-msg.err { background: rgba(231,76,60,.14); border-color: rgba(231,76,60,.4); color: #ffb4ab; align-self: stretch; max-width: 100%; }
+.ai-typing { display: inline-flex; gap: 4px; }
+.ai-typing i { width: 7px; height: 7px; border-radius: 50%; background: #b6aecb; animation: aidot 1s infinite; }
+.ai-typing i:nth-child(2) { animation-delay: .2s; } .ai-typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes aidot { 0%,60%,100% { opacity: .3; } 30% { opacity: 1; } }
+.ai-input-row { display: flex; gap: 10px; margin-top: 14px; }
+.ai-input-row input { flex: 1; padding: 12px 16px; border-radius: 12px; font-size: 14.5px;
+  border: 1px solid var(--card-line, rgba(255,255,255,.09)); background: rgba(0,0,0,.28); color: #f5efe2; outline: none; }
+.ai-input-row input:focus { border-color: rgba(217,169,79,.5); }
+.ai-foot { text-align: center; font-size: 11px; color: #6b6478; margin-top: 10px; }

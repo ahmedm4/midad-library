@@ -272,6 +272,23 @@ const Cloud = (() => {
     pushBook, pushState, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
     hasBuiltin,
+    aiReady: () => ready && !!user,
+    aiInvoke,
   };
+
+  /* ── نداء دالة الذكاء الطرفية ── */
+  async function aiInvoke(body) {
+    if (!ready) throw new Error('المزامنة غير مفعّلة على هذا الجهاز');
+    if (!user) throw new Error('سجّل الدخول أولاً لاستخدام المساعد الذكي');
+    const { data, error } = await sb.functions.invoke('ai', { body });
+    if (error) {
+      let msg = error.message || 'تعذّر الاتصال بالمساعد';
+      try { const ctx = await error.context.json(); if (ctx && ctx.error) msg = ctx.error; } catch {}
+      if (/not found|404/i.test(msg)) msg = 'دالة الذكاء غير منشورة بعد في مشروعك — راجع خطوات الإعداد';
+      throw new Error(msg);
+    }
+    if (data && data.error) throw new Error(data.error);
+    return (data && data.text) || '';
+  }
 })();
 window.Cloud = Cloud;

@@ -178,6 +178,7 @@
       <button class="icon-btn" id="r-btn-tts" title="القراءة الصوتية">
         <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
       </button>
+      <button class="icon-btn r-btn-ai" id="r-btn-ai" title="مساعد القراءة الذكي">✨</button>
       <button class="icon-btn" id="r-btn-settings" title="إعدادات القراءة">
         <span class="aA">ع</span>
       </button>
@@ -332,7 +333,30 @@
       <button data-color="#faa2c1" style="--c:#faa2c1"></button>
     </div>
     <button class="hl-note-btn" id="hl-note-btn">📝 تظليل + ملاحظة</button>
+    <button class="hl-note-btn" id="hl-explain-btn">✨ اشرح</button>
     <button class="hl-del-btn" id="hl-del-btn" hidden>🗑 إزالة التظليل</button>
+  </div>
+
+  <!-- مساعد القراءة الذكي -->
+  <div class="modal-backdrop" id="ai-modal" hidden>
+    <div class="modal ai-modal">
+      <header>
+        <h3>✨ مساعد القراءة</h3>
+        <button class="icon-btn" data-close>✕</button>
+      </header>
+      <div class="ai-quick" id="ai-quick">
+        <button data-ai="summarize">📄 لخّص الكتاب</button>
+        <button data-ai="keypoints">💡 أبرز النقاط</button>
+      </div>
+      <div class="ai-body" id="ai-body">
+        <div class="ai-hint">اطلب تلخيصاً، أو اسأل أي سؤال عن الكتاب — أو ظلّل مقطعاً ثم اضغط «✨ اشرح».</div>
+      </div>
+      <div class="ai-input-row">
+        <input id="ai-input" placeholder="اسأل عن الكتاب…" autocomplete="off">
+        <button class="btn-gold" id="ai-send">إرسال</button>
+      </div>
+      <div class="ai-foot">قد يخطئ المساعد أحياناً — راجع المعلومات المهمة.</div>
+    </div>
   </div>
 
   <!-- محرر الملاحظة -->

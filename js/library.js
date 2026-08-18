@@ -936,6 +936,15 @@ create policy "midad_own_files" on storage.objects for all
     return h + ' ساعة ' + (m % 60 ? (m % 60) + ' د' : '');
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc };
+  // نص الكتاب القابل للتحليل (يُستخدمه المساعد الذكي) — يفهرس PDF عند الحاجة
+  async function getBookText(id) {
+    const b = books.find((x) => x.id === id) || (await Store.getBook(id));
+    if (!b) return '';
+    if (b.type === 'text') { const t = await Store.getPayload(id); return typeof t === 'string' ? t : ''; }
+    const s = await searchableOf(b, true);
+    return (s && s.text) || '';
+  }
+
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText };
 })();
 window.Library = Library;

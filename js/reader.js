@@ -58,6 +58,9 @@ const Reader = (() => {
     $('#r-btn-draw').style.display = isPdf ? '' : 'none';
     state.drawings = state.drawings || {};
     setDrawMode(false);
+    // تصفير محادثة المساعد الذكي لكل كتاب
+    $('#ai-modal').hidden = true; $('#r-btn-ai').classList.remove('on');
+    $('#ai-body').innerHTML = '<div class="ai-hint">اطلب تلخيصاً، أو اسأل أي سؤال عن الكتاب — أو ظلّل مقطعاً ثم اضغط «✨ اشرح».</div>';
     pdfZoom = 1;
     $('#zoom-pill').hidden = !isPdf;
     $('#zoom-val').textContent = '100٪';
@@ -113,6 +116,7 @@ const Reader = (() => {
     $('#reader').hidden = true;
     document.body.style.overflow = '';
     closeDrawers(); hideHlPopup(); $('#r-search').hidden = true;
+    $('#ai-modal').hidden = true;
     setDrawMode(false);
     ttsStop();
     teardownPdfScroll();
@@ -709,6 +713,75 @@ const Reader = (() => {
     if (contentEl) contentEl.querySelectorAll('.tts-now').forEach((e) => e.classList.remove('tts-now'));
     $('#r-btn-tts').classList.remove('on');
     if (finished) Library.toast('انتهت القراءة الصوتية ✓');
+  }
+
+  /* ═══════ مساعد القراءة الذكي ═══════ */
+  let aiBusy = false;
+
+  function openAI() {
+    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
+      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
+      Library.toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام المساعد الذكي' : 'المساعد الذكي يحتاج تفعيل المزامنة السحابية');
+      return;
+    }
+    $('#ai-modal').hidden = false;
+    $('#r-btn-ai').classList.add('on');
+    setTimeout(() => $('#ai-input').focus(), 80);
+  }
+
+  function addAiMsg(kind, html) {
+    const el = document.createElement('div');
+    el.className = 'ai-msg ' + kind;
+    el.innerHTML = html;
+    const hint = $('#ai-body').querySelector('.ai-hint'); if (hint) hint.remove();
+    $('#ai-body').appendChild(el);
+    $('#ai-body').scrollTop = $('#ai-body').scrollHeight;
+    return el;
+  }
+
+  // تحويل ماركداون مبسّط إلى HTML آمن
+  function mdToHtml(md) {
+    const esc2 = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const lines = esc2(md).split(/\r?\n/);
+    let html = '', inList = false;
+    const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+    for (let ln of lines) {
+      const t = ln.trim();
+      if (/^#{1,4}\s+/.test(t)) { if (inList) { html += '</ul>'; inList = false; } html += '<h4>' + inline(t.replace(/^#{1,4}\s+/, '')) + '</h4>'; }
+      else if (/^([-*•]|\d+\.)\s+/.test(t)) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(t.replace(/^([-*•]|\d+\.)\s+/, '')) + '</li>'; }
+      else if (!t) { if (inList) { html += '</ul>'; inList = false; } }
+      else { if (inList) { html += '</ul>'; inList = false; } html += '<p>' + inline(t) + '</p>'; }
+    }
+    if (inList) html += '</ul>';
+    return html || '<p></p>';
+  }
+
+  async function runAI(action, extra = {}) {
+    if (aiBusy) return;
+    if (action === 'ask') {
+      const q = $('#ai-input').value.trim();
+      if (!q) return;
+      $('#ai-input').value = '';
+      addAiMsg('user', esc(q));
+      extra.question = q;
+    } else if (action === 'summarize') addAiMsg('user', '📄 لخّص الكتاب');
+    else if (action === 'keypoints') addAiMsg('user', '💡 أبرز نقاط الكتاب');
+    else if (action === 'explain') addAiMsg('user', '✨ اشرح: «' + esc((extra.selection || '').slice(0, 120)) + (extra.selection && extra.selection.length > 120 ? '…' : '') + '»');
+
+    const loading = addAiMsg('ai loading', '<span class="ai-typing"><i></i><i></i><i></i></span>');
+    aiBusy = true;
+    try {
+      const body = { action, title: book.title, question: extra.question || '' };
+      if (action === 'explain') body.text = extra.selection || '';
+      else body.text = await Library.getBookText(book.id);
+      const res = await Cloud.aiInvoke(body);
+      loading.classList.remove('loading');
+      loading.innerHTML = mdToHtml(res);
+    } catch (e) {
+      loading.classList.remove('loading');
+      loading.classList.add('err');
+      loading.innerHTML = '⚠ ' + esc((e && e.message) || 'تعذّر الحصول على رد');
+    } finally { aiBusy = false; $('#ai-body').scrollTop = $('#ai-body').scrollHeight; }
   }
 
   /* ═══════ الإعدادات ═══════ */
@@ -1406,7 +1479,8 @@ const Reader = (() => {
         case '+': case '=': if (isPdf) setZoom(pdfZoom + 0.2); break;
         case '-': if (isPdf) setZoom(pdfZoom - 0.2); break;
         case 'Escape':
-          if (!$('#hl-popup').hidden) hideHlPopup();
+          if (!$('#ai-modal').hidden) { $('#ai-modal').hidden = true; $('#r-btn-ai').classList.remove('on'); }
+          else if (!$('#hl-popup').hidden) hideHlPopup();
           else if (ttsOn) ttsStop();
           else if (drawMode) setDrawMode(false);
           else if (!$('#r-search').hidden) $('#r-search').hidden = true;
@@ -1481,6 +1555,21 @@ const Reader = (() => {
         hideHlPopup(); rebuildText(); renderDrawerPanes(); schedulePersist();
       }
     };
+    $('#hl-explain-btn').onclick = () => {
+      let txt = '';
+      if (pendingSel) txt = pendingSel.text;
+      else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
+      hideHlPopup();
+      if (txt) { openAI(); runAI('explain', { selection: txt }); }
+    };
+
+    // مساعد الذكاء
+    $('#r-btn-ai').onclick = openAI;
+    $('#ai-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#ai-modal').hidden = true)));
+    $('#ai-modal').onclick = (e) => { if (e.target.id === 'ai-modal') $('#ai-modal').hidden = true; };
+    $('#ai-quick').querySelectorAll('[data-ai]').forEach((b) => (b.onclick = () => runAI(b.dataset.ai)));
+    $('#ai-send').onclick = () => runAI('ask');
+    $('#ai-input').onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') runAI('ask'); };
 
     // نافذة الملاحظة
     $('#note-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#note-modal').hidden = true)));
