@@ -221,8 +221,16 @@ const Cloud = (() => {
     try {
       await sb.storage.from(BUCKET).remove([`${user.id}/${id}`]).catch(() => {});
       recentlyPushed.set(id, Date.now());
-      await sb.from(TABLE).update({ deleted: true, content: null, has_file: false, updated_at: new Date().toISOString() }).eq('id', id);
-    } catch (e) { console.error('cloud delete', e); }
+      const { error } = await sb.from(TABLE).update({ deleted: true, content: null, has_file: false, updated_at: new Date().toISOString() }).eq('id', id);
+      // إن فشل الحذف الناعم (غالباً عمود deleted غير موجود) نحذف الصف فعلياً حتى لا يعود الكتاب
+      if (error) {
+        console.warn('tombstone failed → hard delete:', error.message);
+        await sb.from(TABLE).delete().eq('id', id);
+      }
+    } catch (e) {
+      console.error('cloud delete', e);
+      try { await sb.from(TABLE).delete().eq('id', id); } catch {}
+    }
   }
 
   // ختم الطابع الزمني محلياً حتى تصحّ المقارنة لاحقاً
