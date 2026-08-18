@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
   try {
     const KEY = Deno.env.get("GEMINI_API_KEY");
     if (!KEY) return json({ error: "مفتاح Gemini غير مضبوط في الخادم (GEMINI_API_KEY)" }, 500);
-    const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
+    const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
 
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "ask");
