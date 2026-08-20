@@ -792,6 +792,73 @@ const Reader = (() => {
     } finally { aiBusy = false; $('#ai-body').scrollTop = $('#ai-body').scrollHeight; }
   }
 
+  /* ═══════ مشاركة الاقتباس كبطاقة صورة ═══════ */
+  async function shareQuote(text) {
+    text = (text || '').trim();
+    if (!text) return;
+    if (text.length > 320) text = text.slice(0, 317).trim() + '…';
+    Library.toast('🖼 جارٍ إنشاء البطاقة…');
+    try { await document.fonts.load("700 60px 'Amiri'"); await document.fonts.load("400 30px 'Tajawal'"); } catch {}
+    const W = 1080, H = 1350, dpr = 1;
+    const c = document.createElement('canvas');
+    c.width = W * dpr; c.height = H * dpr;
+    const x = c.getContext('2d');
+    x.scale(dpr, dpr);
+    // خلفية متدرجة فاخرة
+    const g = x.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, '#241a38'); g.addColorStop(0.55, '#171226'); g.addColorStop(1, '#0e0b16');
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    // توهّج علوي
+    const rg = x.createRadialGradient(W / 2, 120, 40, W / 2, 120, 600);
+    rg.addColorStop(0, 'rgba(75,45,127,.5)'); rg.addColorStop(1, 'rgba(75,45,127,0)');
+    x.fillStyle = rg; x.fillRect(0, 0, W, H);
+    // إطار ذهبي
+    x.strokeStyle = 'rgba(217,169,79,.5)'; x.lineWidth = 3;
+    x.strokeRect(46, 46, W - 92, H - 92);
+    x.direction = 'rtl'; x.textAlign = 'center';
+    // زخرفة
+    x.fillStyle = '#d9a94f'; x.font = "60px 'Amiri', serif";
+    x.fillText('❝', W / 2, 250);
+    // نص الاقتباس مع لفّ الأسطر
+    x.fillStyle = '#f3ecd9';
+    let fs = text.length > 180 ? 46 : text.length > 90 ? 56 : 64;
+    x.font = `700 ${fs}px 'Amiri', serif`;
+    const maxW = W - 260, lh = fs * 1.65, words = text.split(/\s+/);
+    const lines = []; let line = '';
+    for (const w of words) {
+      const t = line ? line + ' ' + w : w;
+      if (x.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+    }
+    if (line) lines.push(line);
+    const blockH = lines.length * lh;
+    let y = Math.max(360, H / 2 - blockH / 2);
+    for (const ln of lines) { x.fillText(ln, W / 2, y); y += lh; }
+    // فاصل
+    x.strokeStyle = 'rgba(217,169,79,.6)'; x.lineWidth = 2;
+    x.beginPath(); x.moveTo(W / 2 - 60, y + 24); x.lineTo(W / 2 + 60, y + 24); x.stroke();
+    // الكتاب والمؤلف
+    x.fillStyle = '#e9c887'; x.font = "600 40px 'Amiri', serif";
+    x.fillText(book.title, W / 2, y + 90);
+    if (book.author) { x.fillStyle = '#9a92ad'; x.font = "400 30px 'Tajawal', sans-serif"; x.fillText(book.author, W / 2, y + 140); }
+    // العلامة السفلية
+    x.fillStyle = '#d9a94f'; x.font = "700 44px 'Aref Ruqaa', 'Amiri', serif";
+    x.fillText('مِداد', W / 2, H - 90);
+    x.fillStyle = 'rgba(154,146,173,.7)'; x.font = "400 22px 'Tajawal', sans-serif";
+    x.fillText('مكتبتي الرقمية', W / 2, H - 55);
+
+    const blob = await new Promise((res) => c.toBlob(res, 'image/png', 0.95));
+    const file = new File([blob], `اقتباس - ${book.title}.png`, { type: 'image/png' });
+    // مشاركة أصلية إن دعمها الجهاز، وإلا تنزيل
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'اقتباس من ' + book.title }); return; } catch {}
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = file.name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    Library.toast('حُفظت بطاقة الاقتباس 🖼', 'gold');
+  }
+
   /* ═══════ الإعدادات ═══════ */
   function buildSettingsUI() {
     const themeRow = $('#theme-row');
@@ -1353,6 +1420,7 @@ const Reader = (() => {
       if (!isOpen || document.hidden) return;
       if (Date.now() - lastActivity < 90000) {
         state.seconds = (state.seconds || 0) + 5;
+        Store.logAddSeconds(5); // سجلّ القراءة اليومي (سلسلة الأيام والهدف)
         if (state.seconds % 30 === 0) { schedulePersist(); updateReadStat(); }
       }
     }, 5000);
@@ -1571,6 +1639,13 @@ const Reader = (() => {
         else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
         hideHlPopup();
         if (txt) { openAI(); runAI('explain', { selection: txt }); }
+      };
+      $('#hl-share-btn').onclick = () => {
+        let txt = '';
+        if (pendingSel) txt = pendingSel.text;
+        else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
+        hideHlPopup();
+        if (txt) shareQuote(txt);
       };
       $('#r-btn-ai').onclick = openAI;
       $('#ai-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#ai-modal').hidden = true)));

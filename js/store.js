@@ -78,6 +78,32 @@ const Store = (() => {
   function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
   function resetSettings() { localStorage.removeItem(SETTINGS_KEY); return { ...DEFAULT_SETTINGS }; }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getState, saveState, getSettings, saveSettings, resetSettings };
+  /* ── سجلّ القراءة اليومي (سلسلة أيام + هدف) ── */
+  const LOG_KEY = 'midad-log', GOAL_KEY = 'midad-goal';
+  const todayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  function getLog() { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '{}'); } catch { return {}; } }
+  function logAddSeconds(sec) {
+    const log = getLog();
+    const k = todayKey();
+    log[k] = (log[k] || 0) + sec;
+    // احتفظ بآخر ٤٠٠ يوم فقط
+    const keys = Object.keys(log).sort();
+    while (keys.length > 400) delete log[keys.shift()];
+    localStorage.setItem(LOG_KEY, JSON.stringify(log));
+  }
+  function getGoal() { return parseInt(localStorage.getItem(GOAL_KEY) || '20', 10); }
+  function setGoal(min) { localStorage.setItem(GOAL_KEY, String(Math.max(1, min | 0))); }
+  function getStreak() {
+    const log = getLog();
+    const thr = 60; // ثانية واحدة على الأقل تُعدّ… نعدّ من قرأ ولو دقيقة
+    let streak = 0;
+    const d = new Date();
+    // اسمح بأن يبدأ العدّ من اليوم أو أمس (كي لا تنكسر السلسلة قبل قراءة اليوم)
+    if (!(log[todayKey(d)] >= 1)) d.setDate(d.getDate() - 1);
+    while ((log[todayKey(d)] || 0) >= 1) { streak++; d.setDate(d.getDate() - 1); }
+    return streak;
+  }
+
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey };
 })();
 window.Store = Store;

@@ -328,9 +328,10 @@
 .r-search-results b { color: #ffd76e; font-weight: 700; }
 
 /* ─── منبثقة التظليل ─── */
-.hl-popup { position: fixed; z-index: 500; display: flex; align-items: center; gap: 10px;
-  background: #241c3d; border: 1px solid rgba(255,255,255,.14); border-radius: 999px;
-  padding: 8px 12px; box-shadow: 0 16px 40px rgba(0,0,0,.55);
+.hl-popup { position: fixed; z-index: 500; display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; justify-content: center; max-width: min(94vw, 420px);
+  background: #241c3d; border: 1px solid rgba(255,255,255,.14); border-radius: 22px;
+  padding: 9px 12px; box-shadow: 0 16px 40px rgba(0,0,0,.55);
   animation: pop .2s cubic-bezier(.2,1.4,.4,1); }
 .hl-colors { display: flex; gap: 7px; }
 .hl-colors button { width: 26px; height: 26px; border-radius: 50%; background: var(--c);

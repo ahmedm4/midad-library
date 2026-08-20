@@ -163,6 +163,14 @@ create policy "midad_own_files" on storage.objects for all
       <span><b>${books.length}</b>كتاب</span>
       <span><b>${reading}</b>قيد القراءة</span>
       <span><b>${done}</b>مكتمل</span>`;
+    const streak = Store.getStreak ? Store.getStreak() : 0;
+    const chip = $('#streak-chip');
+    if (chip) {
+      chip.hidden = false;
+      chip.className = 'streak-chip' + (streak > 0 ? '' : ' zero');
+      chip.innerHTML = `🔥 ${streak}`;
+      chip.onclick = () => openStats();
+    }
   }
 
   function renderHero() {
@@ -247,7 +255,10 @@ create policy "midad_own_files" on storage.objects for all
           <button class="bc-fav ${b.fav ? 'on' : ''}" title="${b.fav ? 'إزالة من المفضلة' : 'أضف إلى المفضلة'}">${b.fav ? '★' : '☆'}</button>
           ${st.finished ? '<span class="done-badge">✓ مكتمل</span>' : ''}
           <span class="type-badge">${b.type === 'pdf' ? 'PDF' : 'نص'}</span>
-          ${pct > 0 && !st.finished ? `<div class="prog"><i style="width:${pct}%"></i></div>` : ''}
+          ${pct > 0 && !st.finished ? `<div class="prog-ring" title="${pct}٪">
+            <svg viewBox="0 0 36 36"><circle class="pr-bg" cx="18" cy="18" r="15.5"/><circle class="pr-fg" cx="18" cy="18" r="15.5" stroke-dasharray="${(pct * 0.974).toFixed(1)} 100"/></svg>
+            <span>${pct}<i>٪</i></span>
+          </div>` : ''}
         </div>
         <div class="bc-meta">
           <b>${esc(b.title)}</b>
@@ -858,7 +869,50 @@ create policy "midad_own_files" on storage.objects for all
       if ((s.seconds || 0) > 30) rows.push({ title: b.title, sec: s.seconds, pct: s.pct, fin: s.finished });
     }
     rows.sort((a, b) => b.sec - a.sec);
+
+    // ── لوحة الإنجاز: السلسلة + الهدف اليومي + خريطة النشاط ──
+    const log = Store.getLog();
+    const goal = Store.getGoal();
+    const streak = Store.getStreak();
+    const todaySec = log[Store.todayKey()] || 0;
+    const todayMin = Math.round(todaySec / 60);
+    const goalPct = Math.min(100, Math.round((todayMin / goal) * 100));
+    const daysRead = Object.values(log).filter((s) => s >= 1).length;
+    // خريطة نشاط آخر ٣٥ يوماً
+    const heat = [];
+    const dref = new Date();
+    for (let i = 34; i >= 0; i--) {
+      const d = new Date(dref); d.setDate(d.getDate() - i);
+      const sec = log[Store.todayKey(d)] || 0;
+      const min = sec / 60;
+      let lvl = 0;
+      if (min >= 1) lvl = 1; if (min >= goal * 0.5) lvl = 2; if (min >= goal) lvl = 3; if (min >= goal * 2) lvl = 4;
+      heat.push({ lvl, min: Math.round(min), label: Store.todayKey(d) });
+    }
+    const ring = (pct) => {
+      const R = 34, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
+      return `<svg class="goal-ring" viewBox="0 0 80 80"><circle cx="40" cy="40" r="${R}" class="gr-bg"/><circle cx="40" cy="40" r="${R}" class="gr-fg" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg>`;
+    };
+
     $('#stats-body').innerHTML = `
+      <div class="dash-hero">
+        <div class="dash-streak">
+          <div class="ds-flame ${streak > 0 ? 'lit' : ''}">🔥</div>
+          <div><b>${streak}</b><span>${streak === 1 ? 'يوم متتابع' : 'يوماً متتابعاً'}</span></div>
+        </div>
+        <div class="dash-goal">
+          <div class="goal-ring-wrap">${ring(goalPct)}<div class="gr-label"><b>${todayMin}</b><span>من ${goal} د</span></div></div>
+          <label class="goal-set">هدفي اليومي
+            <span class="goal-stepper"><button id="goal-minus">−</button><i id="goal-val">${goal}</i><button id="goal-plus">+</button><em>دقيقة</em></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="heat-wrap">
+        <h4>نشاط آخر ٥ أسابيع <small>${daysRead} يوم قراءة إجمالاً</small></h4>
+        <div class="heat-grid">${heat.map((h) => `<i class="heat-cell l${h.lvl}" title="${h.label}: ${h.min} د"></i>`).join('')}</div>
+      </div>
+
       <div class="stats-grid">
         <div class="stat-card"><b>${books.length}</b><span>كتاب في المكتبة</span></div>
         <div class="stat-card"><b>${fin}</b><span>أنهيتها</span></div>
@@ -874,6 +928,10 @@ create policy "midad_own_files" on storage.objects for all
             <span class="sr-time">${fmtDuration(r.sec)}</span>
             <span class="sr-pct">${Math.round(r.pct * 100)}٪</span>
           </div>`).join('')}</div>` : '<p style="color:#9a92ad;text-align:center">ابدأ القراءة لتتجمع إحصائياتك هنا ✨</p>'}`;
+
+    const setG = (v) => { Store.setGoal(v); openStats(); };
+    $('#goal-minus').onclick = () => setG(Math.max(1, goal - 5));
+    $('#goal-plus').onclick = () => setG(goal + 5);
     $('#stats-modal').hidden = false;
   }
 
