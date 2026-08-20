@@ -140,20 +140,57 @@ const Reader = (() => {
   }
 
   /* ═══════ بناء نص الكتاب ═══════ */
+  // تنسيق داخل السطر: **عريض** و_مائل_ و==تظليل==
+  function inlineFmt(s) {
+    return esc(s)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/_(\S[^_\n]*?\S|\S)_/g, '<em>$1</em>')
+      .replace(/==(.+?)==/g, '<mark class="static-hl">$1</mark>');
+  }
+
   function buildHTML(text) {
     const lines = text.split(/\r?\n/);
-    let html = '', para = [];
-    const flush = () => { if (para.length) { html += '<p>' + esc(para.join(' ')) + '</p>'; para = []; } };
+    let html = '', para = [], list = null, quote = [], poem = [];
+    const flushPara = () => { if (para.length) { html += '<p>' + inlineFmt(para.join(' ')) + '</p>'; para = []; } };
+    const flushList = () => { if (list) { html += `<${list.tag}>` + list.items.map((i) => '<li>' + inlineFmt(i) + '</li>').join('') + `</${list.tag}>`; list = null; } };
+    const flushQuote = () => { if (quote.length) { html += '<blockquote>' + inlineFmt(quote.join(' ')) + '</blockquote>'; quote = []; } };
+    const flushPoem = () => {
+      if (poem.length) {
+        html += '<div class="poem">' + poem.map((v) => `<div class="verse"><span>${inlineFmt(v[0] || '')}</span><span>${inlineFmt(v[1] || '')}</span></div>`).join('') + '</div>';
+        poem = [];
+      }
+    };
+    const flushAll = () => { flushPara(); flushList(); flushQuote(); flushPoem(); };
+
     for (const raw of lines) {
       const line = raw.trim();
-      if (!line) { flush(); continue; }
+      if (!line) { flushAll(); continue; }
       let m;
-      if ((m = line.match(/^#\s+(.+)/))) { flush(); html += '<h2>' + esc(m[1]) + '</h2>'; }
-      else if ((m = line.match(/^#{2,4}\s+(.+)/))) { flush(); html += '<h3>' + esc(m[1]) + '</h3>'; }
-      else if (/^(الفصل|الباب|المقدمة|الخاتمة|القسم|الجزء)\s/.test(line) && line.length < 60) { flush(); html += '<h2>' + esc(line) + '</h2>'; }
-      else para.push(line);
+      // فاصل زخرفي
+      if (/^([-*_]\s?){3,}$/.test(line)) { flushAll(); html += '<hr class="orn">'; continue; }
+      // عناوين
+      if ((m = line.match(/^#\s+(.+)/))) { flushAll(); html += '<h2>' + inlineFmt(m[1]) + '</h2>'; continue; }
+      if ((m = line.match(/^##\s+(.+)/))) { flushAll(); html += '<h3>' + inlineFmt(m[1]) + '</h3>'; continue; }
+      if ((m = line.match(/^#{3,4}\s+(.+)/))) { flushAll(); html += '<h4>' + inlineFmt(m[1]) + '</h4>'; continue; }
+      // توسيط:  ~ نص
+      if ((m = line.match(/^~\s+(.+)/))) { flushAll(); html += '<p class="center">' + inlineFmt(m[1]) + '</p>'; continue; }
+      // بيت شعر:  / شطر | شطر   (أو مفصولان بتاب/عدة مسافات)
+      if ((m = line.match(/^\/\s*(.+)/))) {
+        flushPara(); flushList(); flushQuote();
+        const parts = m[1].split(/\s*\|\s*|\t+|\s{3,}/);
+        poem.push([parts[0] || '', parts[1] || '']); continue;
+      } else flushPoem();
+      // اقتباس:  > نص
+      if ((m = line.match(/^>\s+(.+)/))) { flushPara(); flushList(); quote.push(m[1]); continue; } else flushQuote();
+      // قوائم
+      if ((m = line.match(/^[-•*]\s+(.+)/))) { flushPara(); if (!list || list.tag !== 'ul') { flushList(); list = { tag: 'ul', items: [] }; } list.items.push(m[1]); continue; }
+      if ((m = line.match(/^\d+[.)]\s+(.+)/))) { flushPara(); if (!list || list.tag !== 'ol') { flushList(); list = { tag: 'ol', items: [] }; } list.items.push(m[1]); continue; }
+      flushList();
+      // كشف تلقائي لعناوين الفصول
+      if (/^(الفصل|الباب|المقدمة|الخاتمة|القسم|الجزء|تمهيد|مدخل)\b/.test(line) && line.length < 60) { flushAll(); html += '<h2>' + inlineFmt(line) + '</h2>'; continue; }
+      para.push(line);
     }
-    flush();
+    flushAll();
     return html || '<p>(كتاب فارغ)</p>';
   }
 
@@ -1742,6 +1779,6 @@ const Reader = (() => {
     }, { passive: true });
   }
 
-  return { open, close, wire };
+  return { open, close, wire, previewHTML: buildHTML };
 })();
 window.Reader = Reader;

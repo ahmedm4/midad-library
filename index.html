@@ -117,7 +117,33 @@
     </div>
 
     <div class="tab-pane" id="pane-paste" hidden>
-      <textarea id="paste-text" placeholder="الصق نص الكتاب هنا… (يدعم عناوين الفصول بصيغة # العنوان)"></textarea>
+      <div class="fmt-toolbar" id="fmt-toolbar">
+        <button type="button" data-fmt="h1" title="عنوان فصل"># عنوان</button>
+        <button type="button" data-fmt="h2" title="عنوان فرعي">## فرعي</button>
+        <button type="button" data-fmt="bold" title="عريض"><b>ب</b></button>
+        <button type="button" data-fmt="italic" title="مائل"><i>م</i></button>
+        <button type="button" data-fmt="mark" title="تظليل">🖍</button>
+        <button type="button" data-fmt="quote" title="اقتباس">❝</button>
+        <button type="button" data-fmt="center" title="توسيط">◈</button>
+        <button type="button" data-fmt="list" title="قائمة نقطية">•</button>
+        <button type="button" data-fmt="hr" title="فاصل زخرفي">❦</button>
+        <button type="button" data-fmt="verse" title="بيت شعر">🪶</button>
+        <span class="fmt-sep"></span>
+        <button type="button" data-fmt="clean" class="fmt-special" title="تنظيف تلقائي للأسطر المكسورة وأرقام الصفحات">✨ تنظيف</button>
+        <button type="button" data-fmt="preview" class="fmt-special" title="معاينة الشكل النهائي">👁 معاينة</button>
+      </div>
+      <textarea id="paste-text" placeholder="الصق نص الكتاب هنا…
+
+استخدم شريط الأدوات أعلاه، أو اكتب مباشرةً:
+# عنوان الفصل
+## عنوان فرعي
+**عريض**  و  _مائل_  و  ==تظليل==
+> سطر اقتباس
+~ سطر موسّط
+- عنصر قائمة
+/ صدر البيت | عجز البيت
+--- فاصل"></textarea>
+      <div class="fmt-preview-pane" id="fmt-preview-pane" hidden></div>
     </div>
 
     <div class="tab-pane" id="pane-url" hidden>

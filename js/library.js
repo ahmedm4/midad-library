@@ -562,6 +562,82 @@ create policy "midad_own_files" on storage.objects for all
     $('#meta-title').oninput = updateCoverPreview;
     $('#meta-author').oninput = updateCoverPreview;
     $('#btn-save-book').onclick = saveBook;
+    wireFmtToolbar();
+  }
+
+  /* ─── شريط أدوات تنسيق النص + معاينة + تنظيف ─── */
+  function wireFmtToolbar() {
+    const ta = $('#paste-text');
+    const preview = $('#fmt-preview-pane');
+    const refreshPreview = () => { if (!preview.hidden && window.Reader) preview.innerHTML = Reader.previewHTML(ta.value); };
+
+    const linePrefix = (prefix) => {
+      const val = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+      const lineStart = val.lastIndexOf('\n', s - 1) + 1;
+      let lineEnd = val.indexOf('\n', e); if (lineEnd === -1) lineEnd = val.length;
+      const block = val.slice(lineStart, lineEnd)
+        .split('\n').map((l) => prefix + l.replace(/^(#{1,4}\s+|>\s+|~\s+|[-•]\s+)/, '')).join('\n');
+      ta.value = val.slice(0, lineStart) + block + val.slice(lineEnd);
+      ta.focus(); ta.setSelectionRange(lineStart, lineStart + block.length);
+    };
+    const wrap = (a, b, ph) => {
+      const val = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+      const sel = val.slice(s, e) || ph;
+      ta.value = val.slice(0, s) + a + sel + b + val.slice(e);
+      ta.focus(); ta.setSelectionRange(s + a.length, s + a.length + sel.length);
+    };
+    const insert = (txt) => {
+      const val = ta.value, s = ta.selectionStart;
+      ta.value = val.slice(0, s) + txt + val.slice(ta.selectionEnd);
+      ta.focus(); ta.setSelectionRange(s + txt.length, s + txt.length);
+    };
+
+    $('#fmt-toolbar').querySelectorAll('[data-fmt]').forEach((btn) => {
+      btn.onclick = () => {
+        switch (btn.dataset.fmt) {
+          case 'h1': linePrefix('# '); break;
+          case 'h2': linePrefix('## '); break;
+          case 'bold': wrap('**', '**', 'نص عريض'); break;
+          case 'italic': wrap('_', '_', 'نص مائل'); break;
+          case 'mark': wrap('==', '==', 'نص مظلّل'); break;
+          case 'quote': linePrefix('> '); break;
+          case 'center': linePrefix('~ '); break;
+          case 'list': linePrefix('- '); break;
+          case 'hr': insert('\n---\n'); break;
+          case 'verse': insert('\n/ صدر البيت | عجز البيت\n'); break;
+          case 'clean': ta.value = autoCleanText(ta.value); ta.focus(); toast('نُظّف النص ✨'); break;
+          case 'preview': {
+            preview.hidden = !preview.hidden;
+            btn.classList.toggle('on', !preview.hidden);
+            refreshPreview();
+            return;
+          }
+        }
+        refreshPreview();
+      };
+    });
+    ta.addEventListener('input', () => { if (!preview.hidden) refreshPreview(); });
+  }
+
+  // تنظيف تلقائي: يجمع الأسطر المكسورة في فقرات، ويزيل أرقام الصفحات والفراغات الزائدة
+  function autoCleanText(t) {
+    let text = t.replace(/\r/g, '');
+    text = text.split('\n').filter((l) => !/^\s*\d{1,4}\s*$/.test(l)).join('\n'); // أرقام صفحات معزولة
+    const blocks = text.split(/\n\s*\n/);
+    const out = blocks.map((b) => {
+      const lines = b.split('\n').map((x) => x.trim()).filter(Boolean);
+      if (!lines.length) return '';
+      const joined = []; let para = '';
+      const isHeadingLine = (l) => /^(#{1,4}\s|>\s|~\s|[-•]\s|\d+[.)]\s|\/|[-*_]{3,}$)/.test(l)
+        || (/^(الفصل|الباب|المقدمة|الخاتمة|القسم|الجزء|تمهيد|مدخل|الوصية|المبحث|الفَصل)\b/.test(l) && l.length < 50);
+      for (const l of lines) {
+        if (isHeadingLine(l)) { if (para) { joined.push(para); para = ''; } joined.push(l); }
+        else para = para ? para + ' ' + l : l;
+      }
+      if (para) joined.push(para);
+      return joined.join('\n');
+    });
+    return out.filter((x) => x !== '').join('\n\n').trim();
   }
 
   /* جلب كتاب من رابط مباشر (PDF أو نص) */
