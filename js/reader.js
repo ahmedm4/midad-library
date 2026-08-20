@@ -76,7 +76,13 @@ const Reader = (() => {
     if (isPdf) {
       let blob = await Store.getPayload(id);
       if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
-      if (!blob) { Library.toast('تعذّر تحميل ملف الكتاب — تأكد من المزامنة'); close(); return; }
+      if (!blob) {
+        const notUploaded = book.cloudHasFile === false;
+        Library.toast(notUploaded
+          ? 'ملف هذا الكتاب لم يُرفع للسحابة — افتح التطبيق على الجهاز الذي أضفته فيه وزامِن (سيُرفع تلقائياً)'
+          : 'تعذّر تنزيل ملف الكتاب — تحقّق من الاتصال ثم أعد المحاولة');
+        close(); return;
+      }
       const buf = await blob.arrayBuffer();
       if (pdfDoc) { try { await pdfDoc.destroy(); } catch {} pdfDoc = null; } // تنظيف أي مستند سابق
       // disableFontFace: يرسم الخطوط المضمّنة مباشرةً على الكنفا (أضمن للنصوص العربية)

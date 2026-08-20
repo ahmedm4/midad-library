@@ -129,8 +129,13 @@ const Cloud = (() => {
         const r = cloudById.get(b.id);
         if (r && r.deleted) { await Store.deleteBook(b.id); continue; } // حُذف من جهاز آخر
         if (!r) { await uploadBook(b.id); continue; }
+        // إعادة رفع ملف PDF ناقص في السحابة (فشل رفع سابق) إن كان موجوداً محلياً
+        if (b.type === 'pdf' && !r.has_file) {
+          const pl = await Store.getPayload(b.id);
+          if (pl instanceof Blob) { await uploadBook(b.id, { silent: true }); continue; }
+        }
         const cloudT = new Date(r.updated_at).getTime();
-        if ((b.updatedAt || 0) > cloudT + 1500) await uploadBook(b.id);
+        if ((b.updatedAt || 0) > cloudT + 1500) await uploadBook(b.id, { silent: true });
       }
       setStatus('synced', 'متزامن — ' + (user.email || ''));
       if (window.Library) Library.refresh();
@@ -164,7 +169,7 @@ const Cloud = (() => {
   }
 
   /* ── رفع كتاب كامل (بيانات + ملف) ── */
-  async function uploadBook(id) {
+  async function uploadBook(id, opts = {}) {
     if (!ready || !user) return;
     const b = await Store.getBook(id);
     if (!b) return;
@@ -177,8 +182,16 @@ const Cloud = (() => {
       updated_at: new Date(b.updatedAt || Date.now()).toISOString(),
     };
     if (b.type === 'pdf' && payload instanceof Blob) {
-      await sb.storage.from(BUCKET).upload(`${user.id}/${id}`, payload, { upsert: true, contentType: 'application/pdf' });
-      row.has_file = true;
+      // نتحقق من نجاح الرفع فعلاً؛ لا نزعم has_file إلا إذا نجح (يمنع «كتاب لا يفتح» على الأجهزة الأخرى)
+      const { error: upErr } = await sb.storage.from(BUCKET).upload(`${user.id}/${id}`, payload, { upsert: true, contentType: 'application/pdf' });
+      if (upErr) {
+        row.has_file = false;
+        console.error('storage upload failed', upErr);
+        if (!opts.silent && window.Library) {
+          const big = /size|large|exceed|maximum|payload/i.test(upErr.message || '');
+          Library.toast(`تعذّر رفع ملف «${b.title || ''}» للسحابة${big ? ' — الملف كبير جداً على حدّ المخزن' : ''}`);
+        }
+      } else row.has_file = true;
     } else if (typeof payload === 'string') {
       row.content = payload;
     }
@@ -247,9 +260,18 @@ const Cloud = (() => {
       setStatus('syncing', 'جارٍ تنزيل الكتاب…');
       const { data, error } = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);
       if (error) throw error;
+      if (!data || data.size === 0) throw new Error('empty file');
       await Store.updatePayload(id, data); // Blob
       setStatus('synced', 'متزامن — ' + (user.email || ''));
-    } catch (e) { console.error('download payload', e); setStatus('error', 'تعذّر تنزيل ملف الكتاب'); }
+    } catch (e) {
+      console.error('download payload', e);
+      const notFound = /not.?found|does not exist|empty file|400|404/i.test((e && e.message) || '') || (e && (e.statusCode === '404' || e.status === 404));
+      if (notFound) {
+        // الملف غير موجود في المخزن — علّم السحابة كي يعيد الجهاز الأصلي رفعه تلقائياً عند مزامنته
+        try { await sb.from(TABLE).update({ has_file: false }).eq('id', id); } catch {}
+        setStatus('error', 'ملف الكتاب لم يُرفع للسحابة');
+      } else setStatus('error', 'تعذّر تنزيل ملف الكتاب — تحقق من الاتصال');
+    }
   }
 
   /* ── اشتراك اللحظة (تغييرات من أجهزة أخرى) ── */
