@@ -13,6 +13,25 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
+
+  // زر التثبيت بنقرة واحدة (يظهر عندما يسمح المتصفح)
+  let deferredPrompt = null;
+  const installBtn = () => document.getElementById('btn-install');
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    const b = installBtn();
+    if (b) {
+      b.hidden = false;
+      b.onclick = async () => {
+        b.hidden = true;
+        deferredPrompt.prompt();
+        try { await deferredPrompt.userChoice; } catch {}
+        deferredPrompt = null;
+      };
+    }
+  });
+  window.addEventListener('appinstalled', () => { const b = installBtn(); if (b) b.hidden = true; });
 })();
 
 /* كتاب ترحيبي يشرح مزايا التطبيق ويستعرض القارئ */

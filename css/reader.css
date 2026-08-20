@@ -453,3 +453,16 @@
   float: right; line-height: .8; margin: .06em .12em 0 .12em; color: color-mix(in srgb, var(--ink-c) 75%, var(--paper));
   -webkit-text-stroke: 0; }
 @media (max-width: 620px) { .r-content .verse { gap: 4%; font-size: .96em; } .r-content .verse span { flex-basis: 46%; } }
+
+/* ═══════ فهرس بفصول قابلة للطيّ ═══════ */
+.toc-group { margin-bottom: 2px; }
+.toc-head { display: flex; align-items: center; gap: 2px; }
+.toc-head .toc-item { flex: 1; }
+.toc-chev { flex-shrink: 0; width: 26px; height: 30px; display: flex; align-items: center; justify-content: center;
+  color: #877fa0; font-size: 12px; cursor: pointer; border-radius: 8px; transition: .2s; user-select: none; }
+.toc-chev:hover { background: rgba(255,255,255,.08); color: #ffe9bd; }
+.toc-chev.collapsed { transform: rotate(-90deg); }
+.toc-chev.empty { pointer-events: none; }
+.toc-children { overflow: hidden; transition: max-height .25s ease; max-height: 1200px; }
+.toc-children.collapsed { max-height: 0; }
+.toc-children .toc-item { padding-inline-start: 30px; }

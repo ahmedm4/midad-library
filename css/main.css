@@ -507,3 +507,9 @@ input, select, textarea { font-family: inherit; }
 .fmt-preview-pane .verse span { flex: 0 1 42%; }
 .fmt-preview-pane .verse span:first-child { text-align: left; }
 .fmt-preview-pane .verse span:last-child { text-align: right; }
+
+/* زر تثبيت التطبيق */
+.btn-install { display: inline-flex; align-items: center; gap: 6px; padding: 9px 15px; border-radius: 999px;
+  background: linear-gradient(135deg, rgba(233,200,135,.22), rgba(217,169,79,.16)); border: 1px solid rgba(217,169,79,.5);
+  color: var(--gold-soft); font-size: 13.5px; font-weight: 700; transition: .2s; }
+.btn-install:hover { background: rgba(217,169,79,.28); transform: translateY(-1px); }

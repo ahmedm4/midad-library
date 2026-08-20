@@ -535,7 +535,7 @@ create policy "midad_own_files" on storage.objects for all
     const dz = $('#dropzone');
     dz.onclick = () => $('#file-input').click();
     const takeFiles = (files) => {
-      files = [...files].filter((f) => /\.(pdf|txt|md)$/i.test(f.name) || f.type === 'application/pdf' || f.type.startsWith('text/'));
+      files = [...files].filter((f) => /\.(pdf|txt|md|epub)$/i.test(f.name) || f.type === 'application/pdf' || f.type === 'application/epub+zip' || f.type.startsWith('text/'));
       if (!files.length) return toast('الرجاء اختيار ملفات PDF أو TXT');
       if (files.length > 1) { closeAddModal(); bulkImport(files); }
       else handleFile(files[0]);
@@ -724,19 +724,24 @@ create policy "midad_own_files" on storage.objects for all
     for (const f of files) {
       try {
         const isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
-        const title = f.name.replace(/\.(pdf|txt|md)$/i, '').replace(/[_-]+/g, ' ').trim() || 'بدون عنوان';
-        if (isPdf) {
+        const isEpub = /\.epub$/i.test(f.name) || f.type === 'application/epub+zip';
+        const fname = f.name.replace(/\.(pdf|txt|md|epub)$/i, '').replace(/[_-]+/g, ' ').trim() || 'بدون عنوان';
+        if (isEpub) {
+          const p = await parseEpub(await f.arrayBuffer());
+          const tid = await Store.addBook({ title: p.title || fname, author: p.author || '', category: 'أخرى', type: 'text', cover: p.cover || undefined }, p.text);
+          if (window.Cloud) Cloud.pushBook(tid);
+        } else if (isPdf) {
           const buf = await f.arrayBuffer();
           const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
           const cover = await renderPdfCover(pdf);
-        try { await pdf.destroy(); } catch {}
-          const pid = await Store.addBook({ title, author: '', category: 'أخرى', type: 'pdf', cover, pages: pdf.numPages },
+          try { await pdf.destroy(); } catch {}
+          const pid = await Store.addBook({ title: fname, author: '', category: 'أخرى', type: 'pdf', cover, pages: pdf.numPages },
             new Blob([buf], { type: 'application/pdf' }));
           if (window.Cloud) Cloud.pushBook(pid);
         } else {
           const text = await f.text();
           if (!text.trim()) continue;
-          const tid = await Store.addBook({ title, author: '', category: 'أخرى', type: 'text' }, text);
+          const tid = await Store.addBook({ title: fname, author: '', category: 'أخرى', type: 'text' }, text);
           if (window.Cloud) Cloud.pushBook(tid);
         }
         n++;
@@ -752,7 +757,7 @@ create policy "midad_own_files" on storage.objects for all
     lv.addEventListener('dragover', (e) => { e.preventDefault(); });
     lv.addEventListener('drop', (e) => {
       e.preventDefault();
-      const files = [...e.dataTransfer.files].filter((f) => /\.(pdf|txt|md)$/i.test(f.name) || f.type === 'application/pdf' || f.type.startsWith('text/'));
+      const files = [...e.dataTransfer.files].filter((f) => /\.(pdf|txt|md|epub)$/i.test(f.name) || f.type === 'application/pdf' || f.type === 'application/epub+zip' || f.type.startsWith('text/'));
       if (!files.length) return;
       if (files.length === 1) { openAddModal(); handleFile(files[0]); }
       else bulkImport(files);
@@ -806,14 +811,32 @@ create policy "midad_own_files" on storage.objects for all
 
   async function handleFile(file) {
     const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+    const isEpub = /\.epub$/i.test(file.name) || file.type === 'application/epub+zip';
     const isText = /\.(txt|md)$/i.test(file.name) || file.type.startsWith('text/');
-    if (!isPdf && !isText) return toast('الرجاء اختيار ملف PDF أو TXT');
+    if (!isPdf && !isText && !isEpub) return toast('الرجاء اختيار ملف PDF أو EPUB أو TXT');
     const chip = $('#file-chip');
     chip.hidden = false;
     chip.textContent = `⏳ جارٍ تجهيز «${file.name}»…`;
 
     if (!$('#meta-title').value.trim()) {
-      $('#meta-title').value = file.name.replace(/\.(pdf|txt|md)$/i, '').replace(/[_-]+/g, ' ').trim();
+      $('#meta-title').value = file.name.replace(/\.(pdf|txt|md|epub)$/i, '').replace(/[_-]+/g, ' ').trim();
+    }
+
+    if (isEpub) {
+      try {
+        const parsed = await parseEpub(await file.arrayBuffer());
+        if (parsed.title) $('#meta-title').value = parsed.title;
+        if (parsed.author && !$('#meta-author').value.trim()) $('#meta-author').value = parsed.author;
+        pendingFile = { kind: 'text', text: parsed.text, cover: parsed.cover };
+        const chapters = (parsed.text.match(/(^|\n)# /g) || []).length;
+        chip.textContent = `✓ ${file.name} — كتاب EPUB${chapters ? ` · ${chapters} فصل` : ''} جاهز`;
+      } catch (err) {
+        console.error('epub', err);
+        chip.textContent = '⚠ تعذّرت قراءة ملف EPUB';
+        pendingFile = null; return;
+      }
+      updateCoverPreview();
+      return;
     }
 
     if (isPdf) {
@@ -837,6 +860,90 @@ create policy "midad_own_files" on storage.objects for all
       chip.textContent = `✓ ${file.name} — ${Math.round(text.length / 1000)} ألف حرف تقريباً`;
     }
     updateCoverPreview();
+  }
+
+  /* ─── تحويل كتاب EPUB إلى نص غني ─── */
+  async function parseEpub(ab) {
+    if (!window.fflate) throw new Error('fflate missing');
+    const files = fflate.unzipSync(new Uint8Array(ab));
+    const dec = (name) => (files[name] ? fflate.strFromU8(files[name]) : null);
+    const norm = (p) => { const parts = []; p.split('/').forEach((s) => { if (s === '..') parts.pop(); else if (s !== '.' && s !== '') parts.push(s); }); return parts.join('/'); };
+
+    // مسار OPF من container.xml
+    const container = dec('META-INF/container.xml') || '';
+    let opfPath = (container.match(/full-path="([^"]+)"/) || [])[1] || Object.keys(files).find((f) => /\.opf$/i.test(f));
+    if (!opfPath) throw new Error('no opf');
+    opfPath = norm(opfPath);
+    const opfDir = opfPath.includes('/') ? opfPath.replace(/[^/]+$/, '') : '';
+    const resolve = (href) => norm(opfDir + decodeURIComponent(href));
+
+    const xml = new DOMParser().parseFromString(dec(opfPath) || '', 'application/xml');
+    const byLocal = (ln) => { for (const e of xml.getElementsByTagName('*')) if (e.localName === ln) return e; return null; };
+    const title = (byLocal('title') || {}).textContent ? byLocal('title').textContent.trim() : '';
+    const author = (byLocal('creator') || {}).textContent ? byLocal('creator').textContent.trim() : '';
+
+    const manifest = {};
+    for (const it of xml.getElementsByTagName('item')) manifest[it.getAttribute('id')] = { href: it.getAttribute('href'), type: it.getAttribute('media-type') || '', props: it.getAttribute('properties') || '' };
+    const spine = [...xml.getElementsByTagName('itemref')].map((ir) => ir.getAttribute('idref'));
+
+    // الغلاف
+    let cover = null, coverItem = null;
+    for (const m of xml.getElementsByTagName('meta')) if (m.getAttribute('name') === 'cover') coverItem = manifest[m.getAttribute('content')];
+    if (!coverItem) for (const id in manifest) if (/cover-image/.test(manifest[id].props)) { coverItem = manifest[id]; break; }
+    if (coverItem && /image/.test(coverItem.type)) {
+      const p = resolve(coverItem.href);
+      if (files[p]) { try { cover = await imageToCover(new Blob([files[p]], { type: coverItem.type })); } catch {} }
+    }
+
+    // الفصول بترتيب القراءة
+    const chapters = [];
+    for (const idref of spine) {
+      const item = manifest[idref];
+      if (!item || !/(html|xml)/i.test(item.type)) continue;
+      const html = dec(resolve(item.href));
+      if (!html) continue;
+      const md = xhtmlToMarkup(html);
+      if (md.trim()) chapters.push(md.trim());
+    }
+    return { title, author, cover, text: chapters.join('\n\n---\n\n') || '(كتاب فارغ)' };
+  }
+
+  function xhtmlToMarkup(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const body = doc.body;
+    if (!body) return '';
+    const lines = [];
+    const inline = (el) => {
+      let s = '';
+      el.childNodes.forEach((n) => {
+        if (n.nodeType === 3) s += n.textContent;
+        else if (n.nodeType === 1) {
+          const tag = n.tagName.toLowerCase(), inner = inline(n);
+          if (tag === 'b' || tag === 'strong') s += inner.trim() ? '**' + inner.trim() + '**' : '';
+          else if (tag === 'i' || tag === 'em') s += inner.trim() ? '_' + inner.trim() + '_' : '';
+          else if (tag === 'br') s += ' ';
+          else s += inner;
+        }
+      });
+      return s.replace(/\s+/g, ' ');
+    };
+    const walk = (el) => {
+      el.childNodes.forEach((n) => {
+        if (n.nodeType === 3) { const t = n.textContent.trim(); if (t) lines.push(t); return; }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName.toLowerCase();
+        if (/^h[1-6]$/.test(tag)) { const t = inline(n).trim(); if (t) lines.push((tag === 'h1' ? '# ' : tag === 'h2' ? '## ' : '### ') + t); }
+        else if (tag === 'p') { const t = inline(n).trim(); if (t) lines.push(t); }
+        else if (tag === 'blockquote') { const t = inline(n).trim(); if (t) lines.push('> ' + t); }
+        else if (tag === 'li') { const t = inline(n).trim(); if (t) lines.push('- ' + t); }
+        else if (tag === 'hr') lines.push('---');
+        else if (['script', 'style', 'head', 'nav'].includes(tag)) { /* تجاهل */ }
+        else if (['div', 'section', 'article', 'ul', 'ol', 'main', 'header', 'footer', 'span', 'a', 'figure'].includes(tag)) walk(n);
+        else { const t = inline(n).trim(); if (t) lines.push(t); }
+      });
+    };
+    walk(body);
+    return lines.join('\n');
   }
 
   async function renderPdfCover(pdf) {
@@ -888,6 +995,7 @@ create policy "midad_own_files" on storage.objects for all
       payload = pendingFile.blob;
     } else if (pendingFile && pendingFile.kind === 'text') {
       meta.type = 'text'; payload = pendingFile.text;
+      if (pendingFile.cover && !pendingCover) meta.cover = pendingFile.cover; // غلاف EPUB
     } else if (pasted) {
       meta.type = 'text'; payload = pasted;
     } else {

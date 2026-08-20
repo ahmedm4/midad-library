@@ -1250,10 +1250,23 @@ const Reader = (() => {
       pane.innerHTML = '<div class="drawer-empty">لا يحتوي هذا الكتاب على فهرس<br>💡 في الكتب النصية ابدأ سطر العنوان بعلامة #</div>';
       return;
     }
-    pane.innerHTML = tocItems.map((t, i) =>
-      `<button class="toc-item ${t.lvl === 2 ? 'lvl2' : ''}" data-i="${i}">
-        <span>${esc(t.label)}</span>${t.page ? `<small>ص ${t.page}</small>` : ''}
-      </button>`).join('');
+    // جمّع في فصول: كل عنوان رئيسي يبدأ فصلاً، والعناوين الفرعية تحته قابلة للطيّ
+    const groups = [];
+    tocItems.forEach((t, i) => {
+      if (t.lvl === 1 || !groups.length) groups.push({ head: t, headIdx: i, children: [] });
+      else groups[groups.length - 1].children.push({ t, i });
+    });
+    const anySub = groups.some((g) => g.children.length);
+    const jumpAttr = (i) => `data-i="${i}"`;
+    const row = (t, i, sub) => `<button class="toc-item ${sub ? 'lvl2' : ''}" ${jumpAttr(i)}>
+        <span>${esc(t.label)}</span>${t.page ? `<small>ص ${t.page}</small>` : ''}</button>`;
+    pane.innerHTML = groups.map((g, gi) => {
+      const chev = g.children.length ? `<i class="toc-chev" data-g="${gi}">▾</i>` : (anySub ? '<i class="toc-chev empty"></i>' : '');
+      const head = `<div class="toc-head">${chev}${row(g.head, g.headIdx, g.head.lvl === 2)}</div>`;
+      const kids = g.children.length ? `<div class="toc-children" data-gc="${gi}">${g.children.map((c) => row(c.t, c.i, true)).join('')}</div>` : '';
+      return `<div class="toc-group">${head}${kids}</div>`;
+    }).join('');
+
     pane.querySelectorAll('.toc-item').forEach((btn) => {
       btn.onclick = () => {
         const t = tocItems[+btn.dataset.i];
@@ -1263,13 +1276,20 @@ const Reader = (() => {
         closeDrawers();
       };
     });
+    pane.querySelectorAll('.toc-chev[data-g]').forEach((ch) => {
+      ch.onclick = (e) => {
+        e.stopPropagation();
+        const kids = pane.querySelector(`.toc-children[data-gc="${ch.dataset.g}"]`);
+        if (kids) { kids.classList.toggle('collapsed'); ch.classList.toggle('collapsed'); }
+      };
+    });
   }
 
   function highlightCurrentToc() {
     if (isPdf || !tocItems.length || settings.flip === 'scroll') return;
     let curIdx = -1;
     tocItems.forEach((t, i) => { if (t.el && elementPage(t.el) <= curPage) curIdx = i; });
-    document.querySelectorAll('#pane-toc .toc-item').forEach((b, i) => b.classList.toggle('current', i === curIdx));
+    document.querySelectorAll('#pane-toc .toc-item').forEach((b) => b.classList.toggle('current', +b.dataset.i === curIdx));
   }
 
   function renderDrawerPanes() {
