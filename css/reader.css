@@ -418,3 +418,7 @@
   border: 1px solid var(--card-line, rgba(255,255,255,.09)); background: rgba(0,0,0,.28); color: #f5efe2; outline: none; }
 .ai-input-row input:focus { border-color: rgba(217,169,79,.5); }
 .ai-foot { text-align: center; font-size: 11px; color: #6b6478; margin-top: 10px; }
+
+/* منع تكبير المتصفح لتفعيل القرص المخصص (pinch) على مناطق القراءة */
+#reader.mode-pdf:not(.pdf-scroll) .r-canvas-wrap { touch-action: none; }
+#reader:not(.mode-pdf):not(.mode-scroll) .r-viewport { touch-action: none; }

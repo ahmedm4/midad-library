@@ -1674,16 +1674,62 @@ const Reader = (() => {
       }, 200);
     });
 
-    // سحب باللمس
-    let touchX = null;
-    $('#r-stage').addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
-    $('#r-stage').addEventListener('touchend', (e) => {
+    // سحب باللمس + تكبير بإصبعين (pinch)
+    let touchX = null, pinch = null;
+    const twoDist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const stage = $('#r-stage');
+
+    stage.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        touchX = null; // ألغِ السحب أثناء القرص
+        pinch = { d0: twoDist(e.touches), z0: pdfZoom, f0: settings.fontSize, target: pdfZoom, targetFont: settings.fontSize };
+      } else if (e.touches.length === 1) {
+        touchX = e.touches[0].clientX;
+      }
+    }, { passive: true });
+
+    stage.addEventListener('touchmove', (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault(); // امنع تكبير المتصفح والتمرير أثناء القرص
+      const ratio = twoDist(e.touches) / pinch.d0;
+      if (isPdf) {
+        const target = Math.min(2.4, Math.max(1, pinch.z0 * ratio));
+        pinch.target = target;
+        if (!pdfScrollActive()) {
+          // معاينة حيّة سلسة عبر تحويل CSS، ثم رسم واضح عند الانتهاء
+          const cv = $('#r-canvas');
+          cv.style.transformOrigin = 'center center';
+          cv.style.transform = `scale(${(target / (pinch.z0 || 1)).toFixed(3)})`;
+          $('#reader').classList.add('zoomed');
+        }
+        $('#zoom-val').textContent = Math.round(target * 100) + '٪';
+        $('#zoom-pill').hidden = false;
+      } else {
+        pinch.targetFont = Math.min(30, Math.max(14, Math.round(pinch.f0 * ratio)));
+      }
+    }, { passive: false });
+
+    stage.addEventListener('touchend', (e) => {
+      // إنهاء القرص
+      if (pinch && e.touches.length < 2) {
+        if (isPdf) {
+          const cv = $('#r-canvas'); cv.style.transform = '';
+          setZoom(pinch.target);
+        } else if (pinch.targetFont !== settings.fontSize) {
+          settings.fontSize = pinch.targetFont;
+          $('#set-fontsize').value = settings.fontSize;
+          applySettings(); scheduleRepaginate();
+        }
+        pinch = null; touchX = null;
+        return;
+      }
+      if (pinch) return; // ما زال إصبع على الشاشة
       if (touchX == null) return;
       const dx = e.changedTouches[0].clientX - touchX;
       touchX = null;
-      // لا تقليب أثناء تحديد نص للتظليل أو أثناء الكتابة على الصفحة
+      // لا تقليب أثناء تحديد نص للتظليل أو أثناء الكتابة أو عند التكبير
       const sel = getSelection();
-      if ((sel && !sel.isCollapsed) || drawMode) return;
+      if ((sel && !sel.isCollapsed) || drawMode || (isPdf && pdfZoom > 1.01)) return;
       if (Math.abs(dx) > 60 && settings.flip !== 'scroll') {
         if (dx > 0) next(); else prev(); // سحب لليمين = التالية (RTL)
       }
