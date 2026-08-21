@@ -513,3 +513,11 @@ input, select, textarea { font-family: inherit; }
   background: linear-gradient(135deg, rgba(233,200,135,.22), rgba(217,169,79,.16)); border: 1px solid rgba(217,169,79,.5);
   color: var(--gold-soft); font-size: 13.5px; font-weight: 700; transition: .2s; }
 .btn-install:hover { background: rgba(217,169,79,.28); transform: translateY(-1px); }
+
+/* صف رابط الغلاف */
+.cover-url-row { display: flex; gap: 6px; width: 130px; margin-top: 4px; }
+.cover-url-row input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 9px; font-size: 12px;
+  border: 1px solid var(--card-line); background: rgba(0,0,0,.28); color: var(--cream); outline: none; }
+.cover-url-row input:focus { border-color: rgba(217,169,79,.5); }
+.cover-url-row .btn-gold { padding: 8px 12px; font-size: 12.5px; }
+.btn-cover { font-size: 11.5px; padding: 7px 10px; width: 130px; }

@@ -558,6 +558,14 @@ create policy "midad_own_files" on storage.objects for all
       updateCoverPreview();
       toast('اختير الغلاف ✓');
     };
+    // غلاف من رابط
+    $('#btn-cover-url').onclick = () => {
+      const row = $('#cover-url-row');
+      row.hidden = !row.hidden;
+      if (!row.hidden) setTimeout(() => $('#cover-url-input').focus(), 60);
+    };
+    $('#cover-url-go').onclick = fetchCoverFromUrl;
+    $('#cover-url-input').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); fetchCoverFromUrl(); } };
 
     $('#meta-title').oninput = updateCoverPreview;
     $('#meta-author').oninput = updateCoverPreview;
@@ -717,6 +725,25 @@ create policy "midad_own_files" on storage.objects for all
     });
   }
 
+  async function fetchCoverFromUrl() {
+    const url = $('#cover-url-input').value.trim();
+    if (!/^https?:\/\/.+/i.test(url)) return toast('أدخل رابط صورة صحيحاً يبدأ بـ https://');
+    const go = $('#cover-url-go'); const orig = go.textContent; go.textContent = '⏳';
+    const tryFetch = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); };
+    let blob = null;
+    try { blob = await tryFetch(url); }
+    catch { try { blob = await tryFetch('https://corsproxy.io/?url=' + encodeURIComponent(url)); } catch {} }
+    go.textContent = orig;
+    if (!blob) return toast('تعذّر جلب الصورة — قد يمنع الموقع التحميل المباشر');
+    const cover = await imageToCover(blob);
+    if (!cover) return toast('الرابط لا يشير إلى صورة صالحة');
+    pendingCover = cover;
+    updateCoverPreview();
+    $('#cover-url-row').hidden = true;
+    $('#cover-url-input').value = '';
+    toast('اختير الغلاف من الرابط ✓', 'gold');
+  }
+
   /* استيراد عدة ملفات دفعة واحدة */
   async function bulkImport(files) {
     toast(`⏳ جارٍ استيراد ${files.length} ملفات…`);
@@ -772,6 +799,7 @@ create policy "midad_own_files" on storage.objects for all
     const isTextEdit = !!book && book.type === 'text';
     $('#add-modal-title').textContent = book ? 'تعديل الكتاب' : 'إضافة كتاب جديد';
     $('#file-chip').hidden = true;
+    $('#cover-url-row').hidden = true; $('#cover-url-input').value = '';
     $('#url-chip').hidden = true;
     $('#url-input').value = '';
     $('#pane-url').hidden = true;
