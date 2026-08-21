@@ -1,5 +1,5 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v13';
+const VERSION = 'midad-v14';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',

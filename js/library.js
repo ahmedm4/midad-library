@@ -570,6 +570,13 @@ create policy "midad_own_files" on storage.objects for all
     $('#meta-title').oninput = updateCoverPreview;
     $('#meta-author').oninput = updateCoverPreview;
     $('#btn-save-book').onclick = saveBook;
+    // استبدال ملف الكتاب في وضع التعديل
+    $('#btn-replace-file').onclick = () => {
+      $('#pane-file').hidden = false;
+      $('#pane-paste').hidden = true;
+      $('#replace-hint').hidden = false;
+      $('#file-input').click();
+    };
     wireFmtToolbar();
   }
 
@@ -809,6 +816,8 @@ create policy "midad_own_files" on storage.objects for all
     $('#meta-category').value = book ? book.category || 'أخرى' : 'رواية';
     // عند التعديل نخفي ألسنة المصدر؛ وللكتب النصية نعرض النص نفسه للتحرير
     $('#add-tabs').style.display = book ? 'none' : '';
+    $('#replace-bar').hidden = !book;
+    $('#replace-hint').hidden = true;
     $('#pane-file').hidden = !!book;
     $('#pane-paste').hidden = !isTextEdit;
     if (isTextEdit) {
@@ -999,7 +1008,29 @@ create policy "midad_own_files" on storage.objects for all
 
     if (editingId) {
       const b = books.find((x) => x.id === editingId);
-      // تحديث نص الكتاب النصي إن عُدّل
+      // (أ) استبدال ملف الكتاب بصيغة جديدة (PDF / EPUB / نص)
+      if (pendingFile) {
+        if (!confirm('استبدال محتوى الكتاب بالملف الجديد سيصفّر موضع القراءة والتظليلات والملاحظات.\nهل تريد المتابعة؟')) return;
+        if (pendingFile.kind === 'pdf') {
+          meta.type = 'pdf'; meta.pages = pendingFile.pages;
+          if (!pendingCover) meta.cover = pendingFile.cover;
+          await Store.updatePayload(editingId, pendingFile.blob);
+        } else { // نص (يشمل EPUB المحوّل)
+          meta.type = 'text'; meta.pages = undefined;
+          if (pendingFile.cover && !pendingCover) meta.cover = pendingFile.cover;
+          await Store.updatePayload(editingId, pendingFile.text);
+        }
+        // تصفير حالة القراءة لأن المحتوى تغيّر
+        const st = await Store.getState(editingId);
+        Object.assign(st, { pct: 0, page: 0, scrollTop: 0, finished: false, highlights: [], pageNotes: [], drawings: {}, bookmarks: [] });
+        await Store.saveState(st);
+        try { await Store.saveFulltext(editingId, undefined); } catch {}
+        await Store.updateBook(editingId, meta);
+        if (window.Cloud) { Cloud.pushBook(editingId); Cloud.pushState(editingId); }
+        closeAddModal(); await refresh();
+        return toast('استُبدل ملف الكتاب ✓', 'gold');
+      }
+      // (ب) تحديث نص الكتاب النصي إن عُدّل
       if (b && b.type === 'text' && origText !== null) {
         const newText = $('#paste-text').value;
         if (!newText.trim()) return toast('نص الكتاب لا يمكن أن يكون فارغاً');
