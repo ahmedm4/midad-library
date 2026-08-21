@@ -8,11 +8,16 @@ const Reader = (() => {
     cream: { paper: '#f9f0dc', ink: '#3c2f1d', label: 'كريمي' },
     sepia: { paper: '#f4e4c9', ink: '#43301a', label: 'سيبيا' },
     aged:  { paper: '#e6d2aa', ink: '#3d2c15', label: 'عتيق' },
+    rose:  { paper: '#f6e6e0', ink: '#4a2f2a', label: 'وردي' },
+    mint:  { paper: '#e3efe6', ink: '#26382e', label: 'نعناعي' },
+    kraft: { paper: '#dcc4a0', ink: '#3a2a15', label: 'كرافت' },
+    azure: { paper: '#e5ecf3', ink: '#26333f', label: 'لازوردي' },
     gray:  { paper: '#2e3036', ink: '#d5d8de', label: 'رمادي' },
     night: { paper: '#171920', ink: '#c6cad2', label: 'ليلي' },
+    ocean: { paper: '#122029', ink: '#bcd0da', label: 'بحري' },
     black: { paper: '#0a0a0c', ink: '#b7bbc3', label: 'أسود' },
   };
-  const DARK_THEMES = ['gray', 'night', 'black'];
+  const DARK_THEMES = ['gray', 'night', 'ocean', 'black'];
   const FONTS = [
     { css: "'Noto Naskh Arabic', serif", label: 'نسخ' },
     { css: "'Amiri', serif", label: 'أميري' },
@@ -347,22 +352,16 @@ const Reader = (() => {
     };
 
     if (dir > 0) {
-      setLeafFrom(main, pdfPage);       // الورقة المتحركة تحمل الصفحة الحالية وتغطّي الكنفا
+      setLeafFrom(main, pdfPage);       // الورقة المتحركة تحمل الصفحة الحالية وتغطّي الكنفا تماماً
       layer.appendChild(leaf);
-      leaf.classList.add('turning');
       pdfPage = target;
       state.pct = pageCount > 1 ? (target - 1) / (pageCount - 1) : 1;
       afterNavigate();
-      // ارسم الصفحة الجديدة خارج الشاشة ثم انقلها للكنفا دفعةً واحدة —
-      // فلا يظهر الكنفا فارغاً (أبيض) أثناء دوران الورقة
-      const off = document.createElement('canvas');
-      await renderPdf(target, false, off);
-      const ctx = main.getContext('2d');
-      main.width = off.width; main.height = off.height;
-      main.style.width = off.style.width; main.style.height = off.style.height;
-      ctx.drawImage(off, 0, 0);
-      syncDrawLayer();
-      setTimeout(() => { leaf.remove(); flipping = false; }, 400);
+      // ارسم الصفحة الجديدة في الكنفا الرئيسي بينما الورقة تغطّيه (غير مرئي)،
+      // ثم ابدأ الدوران لتكشف الصفحة الجاهزة — متماثل مع التقليب للخلف
+      await renderPdf(target);
+      leaf.classList.add('turning');
+      setTimeout(() => { leaf.remove(); flipping = false; }, 560);
     } else {
       const off = document.createElement('canvas');
       await renderPdf(target, false, off);
@@ -940,6 +939,9 @@ const Reader = (() => {
     $('#bgmode-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.bg = b.dataset.bg; applySettings(); };
     });
+    $('#fx-row').querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { settings.paperFx = b.dataset.fx; applySettings(); };
+    });
     $('#flip-row').querySelectorAll('button').forEach((b) => {
       b.onclick = async () => {
         const was = settings.flip;
@@ -985,6 +987,8 @@ const Reader = (() => {
     $('#r-stage').style.filter = `brightness(${settings.brightness / 100})`;
     $('#r-warmth').style.opacity = settings.warmth / 100;
     $('#r-ambient').className = 'r-ambient bg-' + settings.bg;
+    r.classList.remove('fx-aged', 'fx-grain', 'fx-vignette');
+    if (settings.paperFx && settings.paperFx !== 'none') r.classList.add('fx-' + settings.paperFx);
 
     const dark = settings.theme === 'custom' ? luminance(paper) <= 0.45 : DARK_THEMES.includes(settings.theme);
     r.classList.toggle('pdf-dark', isPdf && dark);
@@ -1001,6 +1005,7 @@ const Reader = (() => {
     $('#theme-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.theme === settings.theme));
     $('#font-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', FONTS[+b.dataset.i].css === settings.font));
     $('#bgmode-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.bg === settings.bg));
+    $('#fx-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fx === (settings.paperFx || 'none')));
     $('#flip-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.flip === settings.flip));
     $('#spread-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.spread === '1') === !!settings.spread));
     $('#set-ttsrate').value = settings.ttsRate || 100;
