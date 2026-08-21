@@ -515,11 +515,11 @@ input, select, textarea { font-family: inherit; }
 .btn-install:hover { background: rgba(217,169,79,.28); transform: translateY(-1px); }
 
 /* صف رابط الغلاف */
-.cover-url-row { display: flex; gap: 6px; width: 130px; margin-top: 4px; }
-.cover-url-row input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 9px; font-size: 12px;
+.cover-url-row { display: flex; gap: 10px; width: 100%; margin-top: 16px; }
+.cover-url-row input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 11px; font-size: 14px;
   border: 1px solid var(--card-line); background: rgba(0,0,0,.28); color: var(--cream); outline: none; }
 .cover-url-row input:focus { border-color: rgba(217,169,79,.5); }
-.cover-url-row .btn-gold { padding: 8px 12px; font-size: 12.5px; }
+.cover-url-row .btn-gold { padding: 12px 18px; font-size: 14px; white-space: nowrap; }
 .btn-cover { font-size: 11.5px; padding: 7px 10px; width: 130px; }
 
 /* شريط استبدال الملف في التعديل */

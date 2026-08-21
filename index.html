@@ -169,10 +169,6 @@
         <button class="btn-ghost btn-cover" id="btn-cover">🖼 من ملف</button>
         <button class="btn-ghost btn-cover" id="btn-cover-url">🔗 من رابط</button>
         <input type="file" id="cover-input" accept="image/*" hidden>
-        <div class="cover-url-row" id="cover-url-row" hidden>
-          <input id="cover-url-input" type="url" dir="ltr" placeholder="https://…/image.jpg">
-          <button class="btn-gold" id="cover-url-go">جلب</button>
-        </div>
       </div>
       <div class="meta-fields">
         <label>عنوان الكتاب<input id="meta-title" placeholder="مثال: البداية والنهاية"></label>
@@ -181,6 +177,11 @@
           <select id="meta-category"></select>
         </label>
       </div>
+    </div>
+
+    <div class="cover-url-row" id="cover-url-row" hidden>
+      <input id="cover-url-input" type="url" dir="ltr" placeholder="https://…/image.jpg">
+      <button class="btn-gold" id="cover-url-go">جلب الغلاف</button>
     </div>
 
     <footer>
