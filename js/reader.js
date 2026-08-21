@@ -696,9 +696,23 @@ const Reader = (() => {
     return vs.find((v) => /^ar/i.test(v.lang)) || null;
   }
 
-  function ttsToggle() {
+  async function pdfHasReadableText() {
+    for (let p = pdfPage; p <= Math.min(pageCount, pdfPage + 4); p++) {
+      try {
+        const page = await pdfDoc.getPage(p);
+        const tc = await page.getTextContent();
+        if (tc.items.map((i) => i.str).join('').trim().length > 15) return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  async function ttsToggle() {
     if (ttsOn) return ttsStop();
     if (!('speechSynthesis' in window)) return Library.toast('القراءة الصوتية غير مدعومة في متصفحك');
+    if (isPdf && !(await pdfHasReadableText())) {
+      return Library.toast('هذا الكتاب صفحاته مصوّرة — لا يحتوي نصاً قابلاً للقراءة الصوتية');
+    }
     if (!isPdf) {
       ttsEls = [...contentEl.querySelectorAll('p, h2, h3')].filter((el) => el.textContent.trim());
       if (!ttsEls.length) return Library.toast('لا يوجد نص للقراءة');

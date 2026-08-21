@@ -132,7 +132,7 @@
 @keyframes hl-flash { 0%, 40% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 70%, transparent); } }
 
 /* وضع التمرير المتصل */
-#reader.mode-scroll .r-viewport { overflow-y: auto; scrollbar-width: thin; }
+#reader.mode-scroll .r-viewport { overflow-y: auto; scrollbar-width: thin; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
 #reader.mode-scroll .r-content { column-width: auto !important; column-gap: 0;
   height: auto; transform: none !important; padding-bottom: 40px; }
 
@@ -368,7 +368,7 @@
 .r-pdf-scroll { position: absolute; inset: 0; z-index: 25; display: none;
   flex-direction: column; align-items: center; gap: 20px;
   overflow-y: auto; overflow-x: hidden; padding: 22px 0 60px;
-  scrollbar-width: thin; scroll-behavior: smooth; }
+  scrollbar-width: thin; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
 #reader.pdf-scroll .r-pdf-scroll { display: flex; }
 #reader.pdf-scroll .r-book { display: none; }
 .pdf-slot { position: relative; flex: 0 0 auto; background: #fff; border-radius: 4px;
