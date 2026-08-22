@@ -424,6 +424,30 @@ create policy "midad_own_files" on storage.objects for all
     } finally { overlay.remove(); }
   }
 
+  /* ─── إنشاء كتاب نصي من النص المُستخرَج (OCR) ─── */
+  async function createTextFromOcr(id) {
+    const b = books.find((x) => x.id === id) || (await Store.getBook(id));
+    if (!b) return;
+    const ft = await Store.getFulltext(id);
+    if (!ft || !(ft.text || '').trim()) {
+      return toast('لا يوجد نص مُستخرَج بعد — استخدم «🔎 استخراج النص (OCR)» أولاً');
+    }
+    const pages = (ft.pageStarts || []).length;
+    if (!confirm(`إنشاء نسخة نصية من النص المُستخرَج${pages ? ` (${pages} صفحة)` : ''}؟ ستظهر ككتاب نصّي مستقل بكامل مميزات التنسيق والقراءة، مع بقاء الأصل كما هو.`)) return;
+    // نظّف النص قليلاً: أزل الأسطر الفارغة الزائدة
+    const text = ft.text.replace(/\n{3,}/g, '\n\n').trim();
+    const meta = {
+      title: b.title + ' — نص', author: b.author || '', category: b.category || 'أخرى',
+      type: 'text', shelves: (b.shelves || []).slice(),
+    };
+    if (b.cover) meta.cover = b.cover;
+    const newId = await Store.addBook(meta, text);
+    if (window.Cloud) Cloud.pushBook(newId);
+    await refresh();
+    toast('أُنشئت النسخة النصية ✓ يمكنك تنسيقها وتحريرها', 'gold');
+    openBook(newId);
+  }
+
   function findHits(text, q, max = 4) {
     const hay = text.toLowerCase(), needle = q.toLowerCase();
     const hits = []; let idx = 0;
@@ -536,6 +560,7 @@ create policy "midad_own_files" on storage.objects for all
       <button data-act="fav">${b.fav ? '☆ إزالة من المفضلة' : '⭐ أضف إلى المفضلة'}</button>
       <button data-act="shelves">📚 الرفوف…</button>
       ${b.type === 'pdf' ? '<button data-act="ocr">🔎 استخراج النص (OCR)</button>' : ''}
+      ${b.type === 'pdf' ? '<button data-act="totext">📄 أنشئ نسخة نصية</button>' : ''}
       <button data-act="edit">✏️ تعديل البيانات</button>
       <button data-act="export">⬇️ تصدير الملاحظات</button>
       <button data-act="reset">↺ تصفير التقدم</button>
@@ -550,6 +575,7 @@ create policy "midad_own_files" on storage.objects for all
       else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; if (window.Cloud) Cloud.pushBook(id); render(); }
       else if (act === 'shelves') openShelvesModal(b);
       else if (act === 'ocr') ocrBook(id);
+      else if (act === 'totext') createTextFromOcr(id);
       else if (act === 'edit') openAddModal(b);
       else if (act === 'export') exportNotes(id);
       else if (act === 'reset') {
