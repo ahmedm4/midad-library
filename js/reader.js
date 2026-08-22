@@ -1860,6 +1860,9 @@ const Reader = (() => {
       }
     }, { passive: true });
 
+    const pinchBadge = $('#pinch-badge');
+    const showPinchBadge = (html) => { pinchBadge.innerHTML = html; pinchBadge.hidden = false; };
+
     stage.addEventListener('touchmove', (e) => {
       if (!pinch || e.touches.length !== 2) return;
       e.preventDefault(); // امنع تكبير المتصفح والتمرير أثناء القرص
@@ -1876,21 +1879,32 @@ const Reader = (() => {
         }
         $('#zoom-val').textContent = Math.round(target * 100) + '٪';
         $('#zoom-pill').hidden = false;
+        showPinchBadge(`${Math.round(target * 100)}٪`);
       } else {
-        pinch.targetFont = Math.min(30, Math.max(14, Math.round(pinch.f0 * ratio)));
+        // كتاب نصي: معاينة حيّة فورية عبر تحويل CSS بدل انتظار إعادة الترقيم
+        const targetFont = Math.min(30, Math.max(14, Math.round(pinch.f0 * ratio)));
+        pinch.targetFont = targetFont;
+        const scale = targetFont / (pinch.f0 || targetFont);
+        viewportEl.style.transformOrigin = 'center center';
+        viewportEl.style.transform = `scale(${scale.toFixed(3)})`;
+        showPinchBadge(`${targetFont}<small>حجم الخط</small>`);
       }
     }, { passive: false });
 
     stage.addEventListener('touchend', (e) => {
       // إنهاء القرص
       if (pinch && e.touches.length < 2) {
+        pinchBadge.hidden = true;
         if (isPdf) {
           const cv = $('#r-canvas'); cv.style.transform = '';
           setZoom(pinch.target);
-        } else if (pinch.targetFont !== settings.fontSize) {
-          settings.fontSize = pinch.targetFont;
-          $('#set-fontsize').value = settings.fontSize;
-          applySettings(); scheduleRepaginate();
+        } else {
+          viewportEl.style.transform = ''; // أزل معاينة التحويل قبل الترقيم الحقيقي
+          if (pinch.targetFont !== settings.fontSize) {
+            settings.fontSize = pinch.targetFont;
+            $('#set-fontsize').value = settings.fontSize;
+            applySettings(); scheduleRepaginate();
+          }
         }
         pinch = null; touchX = null;
         return;
@@ -1905,6 +1919,12 @@ const Reader = (() => {
       if (Math.abs(dx) > 60 && settings.flip !== 'scroll') {
         if (dx > 0) next(); else prev(); // سحب لليمين = التالية (RTL)
       }
+    }, { passive: true });
+
+    stage.addEventListener('touchcancel', () => {
+      // إلغاء القرص: أزل المعاينة والشارة دون تثبيت أي تغيير
+      if (pinch) { pinchBadge.hidden = true; viewportEl.style.transform = ''; $('#r-canvas').style.transform = ''; }
+      pinch = null; touchX = null;
     }, { passive: true });
   }
 
