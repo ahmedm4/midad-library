@@ -91,6 +91,11 @@ const Store = (() => {
     while (keys.length > 400) delete log[keys.shift()];
     localStorage.setItem(LOG_KEY, JSON.stringify(log));
   }
+  /* ── الرفوف/المجموعات المخصصة (أسماء فقط؛ عضوية الكتب تُحفظ في meta.shelves) ── */
+  const SHELVES_KEY = 'midad-shelves';
+  function getShelves() { try { const a = JSON.parse(localStorage.getItem(SHELVES_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } }
+  function saveShelves(arr) { localStorage.setItem(SHELVES_KEY, JSON.stringify([...new Set((arr || []).map((s) => String(s).trim()).filter(Boolean))])); }
+
   function getGoal() { return parseInt(localStorage.getItem(GOAL_KEY) || '20', 10); }
   function setGoal(min) { localStorage.setItem(GOAL_KEY, String(Math.max(1, min | 0))); }
   function getStreak() {
@@ -104,6 +109,6 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey };
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves };
 })();
 window.Store = Store;

@@ -134,6 +134,54 @@ input, select, textarea { font-family: inherit; }
 .chips button:hover { color: var(--cream); border-color: rgba(255,255,255,.25); }
 .chips button.active { background: linear-gradient(135deg, rgba(233,200,135,.2), rgba(217,169,79,.14));
   border-color: rgba(217,169,79,.6); color: var(--gold-soft); font-weight: 700; }
+.chips .chip-sep { width: 1px; align-self: center; height: 20px; background: var(--card-line); margin: 0 2px; }
+.chips button.shelf-chip { border-style: dashed; }
+.chips button.shelf-chip i { font-style: normal; font-size: 11px; opacity: .7; background: rgba(255,255,255,.08);
+  padding: 1px 6px; border-radius: 999px; margin-inline-start: 4px; }
+.chips button.shelf-chip.active i { background: rgba(217,169,79,.25); opacity: 1; }
+
+/* نافذة إدارة الرفوف */
+.shelf-modal { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,8,18,.6); backdrop-filter: blur(4px); padding: 20px; }
+.shelf-modal .sm-box { width: min(440px, 100%); max-height: 82vh; display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--card-line); border-radius: 20px; overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+.shelf-modal .sm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 16px 18px; border-bottom: 1px solid var(--card-line); }
+.shelf-modal .sm-head h3 { font-family: 'Amiri', serif; font-size: 19px; font-weight: 700; }
+.shelf-modal .sm-close { width: 32px; height: 32px; border-radius: 50%; color: var(--muted); font-size: 15px;
+  border: 1px solid var(--card-line); display: flex; align-items: center; justify-content: center; }
+.shelf-modal .sm-close:hover { color: var(--cream); background: rgba(255,255,255,.08); }
+.shelf-modal .sm-list { padding: 10px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.shelf-modal .sm-empty { color: var(--muted); font-size: 14px; text-align: center; padding: 22px 8px; }
+.shelf-modal .sm-row { display: flex; align-items: center; gap: 11px; padding: 11px 12px; border-radius: 12px; cursor: pointer; }
+.shelf-modal .sm-row:hover { background: rgba(255,255,255,.05); }
+.shelf-modal .sm-row input[type="checkbox"] { width: 19px; height: 19px; accent-color: var(--gold); cursor: pointer; flex: none; }
+.shelf-modal .sm-row span { flex: 1; font-size: 15px; color: var(--cream); }
+.shelf-modal .sm-del { opacity: 0; font-size: 14px; padding: 4px 6px; border-radius: 8px; color: var(--muted); transition: .15s; }
+.shelf-modal .sm-row:hover .sm-del { opacity: .8; }
+.shelf-modal .sm-del:hover { opacity: 1; background: rgba(224,49,49,.16); color: #ff8a8a; }
+.shelf-modal .sm-add { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--card-line); }
+.shelf-modal .sm-input { flex: 1; background: var(--ink-2, rgba(0,0,0,.25)); border: 1px solid var(--card-line);
+  color: var(--cream); padding: 10px 13px; border-radius: 12px; font-size: 14px; outline: none; font-family: inherit; }
+.shelf-modal .sm-input:focus { border-color: rgba(217,169,79,.6); }
+.shelf-modal .sm-add-btn { padding: 10px 16px; border-radius: 12px; font-size: 14px; white-space: nowrap; }
+
+/* نافذة تقدّم استخراج النص (OCR) */
+.ocr-modal { position: fixed; inset: 0; z-index: 1300; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,8,18,.66); backdrop-filter: blur(5px); padding: 20px; }
+.ocr-modal .om-box { width: min(440px, 100%); background: var(--card); border: 1px solid var(--card-line);
+  border-radius: 20px; padding: 24px 22px; box-shadow: 0 24px 70px rgba(0,0,0,.55); text-align: center; }
+.ocr-modal h3 { font-family: 'Amiri', serif; font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+.ocr-modal .om-hint { color: var(--muted); font-size: 13.5px; line-height: 1.7; margin-bottom: 18px; }
+.ocr-modal .om-bar { height: 10px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; margin-bottom: 12px; }
+.ocr-modal .om-bar i { display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-soft, #e9c887)); transition: width .3s ease; }
+.ocr-modal .om-status { color: var(--cream); font-size: 14px; font-variant-numeric: tabular-nums; margin-bottom: 18px; }
+.ocr-modal .om-actions { display: flex; justify-content: center; }
+.ocr-modal .om-cancel { padding: 9px 22px; border-radius: 12px; font-size: 14px; color: var(--muted);
+  border: 1px solid var(--card-line); }
+.ocr-modal .om-cancel:hover { color: var(--cream); background: rgba(255,255,255,.06); }
 
 .grid-head { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 20px; }
 .grid-head h2 { font-family: 'Amiri', serif; font-size: 24px; font-weight: 700; }

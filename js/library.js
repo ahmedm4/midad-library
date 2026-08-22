@@ -19,6 +19,7 @@ const Library = (() => {
   let editingId = null;
   let origText = null;      // النص الأصلي عند تحرير كتاب نصي (لكشف التغيير)
   const STATUS_FAV = '⭐ المفضلة', STATUS_READING = '📖 قيد القراءة', STATUS_DONE = '✅ مكتملة';
+  const SHELF_PREFIX = 'shelf:'; // قيمة data-cat للرفوف المخصصة
 
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -145,6 +146,8 @@ create policy "midad_own_files" on storage.objects for all
     books = await Store.getBooks();
     states = {};
     for (const b of books) states[b.id] = await Store.getState(b.id);
+    // ثبّت أسماء الرفوف المكتشفة من الكتب محلياً (تدعم استمرارها والمزامنة عبر الأجهزة)
+    if (Store.saveShelves) Store.saveShelves(allShelves());
     render();
   }
 
@@ -207,6 +210,13 @@ create policy "midad_own_files" on storage.objects for all
     }
   }
 
+  // اتحاد أسماء الرفوف: المحفوظة محلياً + المكتشفة من عضوية الكتب (تدعم المزامنة عبر الأجهزة)
+  function allShelves() {
+    const set = new Set(Store.getShelves ? Store.getShelves() : []);
+    for (const b of books) for (const s of (b.shelves || [])) set.add(s);
+    return [...set];
+  }
+
   function renderChips() {
     const used = new Set(books.map((b) => b.category).filter(Boolean));
     const status = [];
@@ -214,9 +224,20 @@ create policy "midad_own_files" on storage.objects for all
     if (books.some((b) => states[b.id].pct > 0 && !states[b.id].finished)) status.push(STATUS_READING);
     if (books.some((b) => states[b.id].finished)) status.push(STATUS_DONE);
     const cats = ['الكل', ...status, ...CATEGORIES.filter((c) => used.has(c))];
-    $('#cat-chips').innerHTML = cats
+    const shelves = allShelves();
+    let html = cats
       .map((c) => `<button class="${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`)
       .join('');
+    // رفوف مخصّصة (تظهر مميّزة بأيقونة ولها فاصل بسيط قبلها)
+    if (shelves.length) {
+      html += '<span class="chip-sep"></span>';
+      html += shelves.map((s) => {
+        const val = SHELF_PREFIX + s;
+        const n = books.filter((b) => (b.shelves || []).includes(s)).length;
+        return `<button class="shelf-chip ${val === activeCat ? 'active' : ''}" data-cat="${esc(val)}">📚 ${esc(s)}${n ? ` <i>${n}</i>` : ''}</button>`;
+      }).join('');
+    }
+    $('#cat-chips').innerHTML = html;
     $('#cat-chips').querySelectorAll('button').forEach((btn) => {
       btn.onclick = () => { activeCat = btn.dataset.cat; render(); };
     });
@@ -227,6 +248,7 @@ create policy "midad_own_files" on storage.objects for all
     if (activeCat === STATUS_FAV) list = list.filter((b) => b.fav);
     else if (activeCat === STATUS_READING) list = list.filter((b) => states[b.id].pct > 0 && !states[b.id].finished);
     else if (activeCat === STATUS_DONE) list = list.filter((b) => states[b.id].finished);
+    else if (activeCat.startsWith(SHELF_PREFIX)) { const sh = activeCat.slice(SHELF_PREFIX.length); list = list.filter((b) => (b.shelves || []).includes(sh)); }
     else if (activeCat !== 'الكل') list = list.filter((b) => b.category === activeCat);
     if (query) {
       const q = query.toLowerCase();
@@ -244,7 +266,8 @@ create policy "midad_own_files" on storage.objects for all
     const list = visibleBooks();
     const grid = $('#book-grid');
     $('#empty-state').hidden = books.length > 0;
-    $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب' : activeCat;
+    $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب'
+      : activeCat.startsWith(SHELF_PREFIX) ? '📚 ' + activeCat.slice(SHELF_PREFIX.length) : activeCat;
     grid.innerHTML = list.map((b) => {
       const st = states[b.id];
       const pct = Math.round(st.pct * 100);
@@ -328,6 +351,77 @@ create policy "midad_own_files" on storage.objects for all
       await Store.saveFulltext(id, rec);
       return rec;
     } catch (e) { console.error('extract pdf', e); return null; }
+  }
+
+  /* ─── استخراج النص من الكتب المصوّرة (OCR عبر الذكاء الاصطناعي) ─── */
+  async function ocrBook(id) {
+    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
+      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
+      return toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام استخراج النص' : 'استخراج النص يحتاج تفعيل المزامنة السحابية');
+    }
+    const b = books.find((x) => x.id === id) || (await Store.getBook(id));
+    if (!b || b.type !== 'pdf') return;
+    const existing = await Store.getFulltext(id);
+    if (existing && existing.ocr) {
+      if (!confirm('سبق استخراج نص هذا الكتاب. إعادة الاستخراج قد تستغرق وقتاً وتستهلك من حصّتك. المتابعة؟')) return;
+    }
+    let blob = await Store.getPayload(id);
+    if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
+    if (!blob) return toast('تعذّر تحميل ملف الكتاب');
+
+    // نافذة التقدّم
+    document.querySelectorAll('.ocr-modal').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ocr-modal';
+    overlay.innerHTML = `
+      <div class="om-box" role="dialog" aria-label="استخراج النص">
+        <h3>🔎 استخراج نص «${esc(b.title)}»</h3>
+        <p class="om-hint">يُحوّل صفحات الكتاب المصوّر إلى نص عبر الذكاء الاصطناعي، فيعمل معه البحث والتلخيص والقاموس والقراءة الصوتية.</p>
+        <div class="om-bar"><i id="om-fill" style="width:0%"></i></div>
+        <div class="om-status" id="om-status">جارٍ التحضير…</div>
+        <div class="om-actions"><button class="om-cancel">إيقاف</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    let cancelled = false;
+    overlay.querySelector('.om-cancel').onclick = () => { cancelled = true; overlay.querySelector('.om-cancel').textContent = 'جارٍ الإيقاف…'; };
+
+    const fill = overlay.querySelector('#om-fill');
+    const status = overlay.querySelector('#om-status');
+    try {
+      const buf = await blob.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const N = pdf.numPages;
+      let text = ''; const pageStarts = []; let done = 0, empties = 0;
+      for (let n = 1; n <= N; n++) {
+        if (cancelled) break;
+        pageStarts.push(text.length);
+        status.textContent = `استخراج الصفحة ${n} من ${N}…`;
+        try {
+          const page = await pdf.getPage(n);
+          const v1 = page.getViewport({ scale: 1 });
+          const scale = Math.min(2.2, 1600 / Math.max(v1.width, v1.height)); // دقّة كافية للـOCR دون تضخيم
+          const vp = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = vp.width; canvas.height = vp.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+          const base64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+          const pageText = await Cloud.aiInvoke({ action: 'ocr', image: base64, mimeType: 'image/jpeg' });
+          const t = (pageText || '').trim();
+          if (!t) empties++;
+          text += t + '\n\n';
+        } catch (e) { console.error('ocr page', n, e); text += '\n\n'; }
+        done++;
+        fill.style.width = Math.round((done / N) * 100) + '%';
+      }
+      try { await pdf.destroy(); } catch {}
+      if (cancelled && !text.trim()) { toast('أُلغي الاستخراج'); return; }
+      await Store.saveFulltext(id, { text, pageStarts, ocr: true });
+      if (empties === done) toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة');
+      else toast(cancelled ? `حُفظ نص ${done} صفحة ✓` : 'اكتمل استخراج النص ✓ الآن يعمل البحث والتلخيص والقاموس', 'gold');
+    } catch (e) {
+      console.error('ocr', e);
+      toast('تعذّر الاستخراج: ' + ((e && e.message) || 'خطأ'));
+    } finally { overlay.remove(); }
   }
 
   function findHits(text, q, max = 4) {
@@ -440,6 +534,8 @@ create policy "midad_own_files" on storage.objects for all
     menu.innerHTML = `
       <button data-act="read">📖 قراءة</button>
       <button data-act="fav">${b.fav ? '☆ إزالة من المفضلة' : '⭐ أضف إلى المفضلة'}</button>
+      <button data-act="shelves">📚 الرفوف…</button>
+      ${b.type === 'pdf' ? '<button data-act="ocr">🔎 استخراج النص (OCR)</button>' : ''}
       <button data-act="edit">✏️ تعديل البيانات</button>
       <button data-act="export">⬇️ تصدير الملاحظات</button>
       <button data-act="reset">↺ تصفير التقدم</button>
@@ -452,6 +548,8 @@ create policy "midad_own_files" on storage.objects for all
       closeCardMenu();
       if (act === 'read') openBook(id);
       else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; if (window.Cloud) Cloud.pushBook(id); render(); }
+      else if (act === 'shelves') openShelvesModal(b);
+      else if (act === 'ocr') ocrBook(id);
       else if (act === 'edit') openAddModal(b);
       else if (act === 'export') exportNotes(id);
       else if (act === 'reset') {
@@ -469,15 +567,99 @@ create policy "midad_own_files" on storage.objects for all
   }
   function closeCardMenu() { document.querySelectorAll('.bc-menu').forEach((m) => m.remove()); }
 
+  /* ─── إدارة رفوف الكتاب ─── */
+  function openShelvesModal(b) {
+    document.querySelectorAll('.shelf-modal').forEach((m) => m.remove());
+    b.shelves = Array.isArray(b.shelves) ? b.shelves : [];
+    const overlay = document.createElement('div');
+    overlay.className = 'shelf-modal';
+    overlay.innerHTML = `
+      <div class="sm-box" role="dialog" aria-label="الرفوف">
+        <div class="sm-head"><h3>📚 رفوف «${esc(b.title)}»</h3><button class="sm-close" title="إغلاق">✕</button></div>
+        <div class="sm-list"></div>
+        <div class="sm-add">
+          <input type="text" class="sm-input" placeholder="اسم رفّ جديد…" maxlength="40" autocomplete="off">
+          <button class="sm-add-btn btn-gold">➕ إنشاء</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const listEl = overlay.querySelector('.sm-list');
+    const renderList = () => {
+      const shelves = Store.getShelves();
+      if (!shelves.length) { listEl.innerHTML = '<div class="sm-empty">لا رفوف بعد — أنشئ رفّك الأول أدناه.</div>'; return; }
+      listEl.innerHTML = shelves.map((s) => {
+        const on = b.shelves.includes(s);
+        return `<label class="sm-row"><input type="checkbox" data-shelf="${esc(s)}" ${on ? 'checked' : ''}><span>${esc(s)}</span><button class="sm-del" data-del="${esc(s)}" title="حذف الرفّ">🗑</button></label>`;
+      }).join('');
+      listEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.onchange = async () => {
+          const name = cb.dataset.shelf;
+          if (cb.checked) { if (!b.shelves.includes(name)) b.shelves.push(name); }
+          else b.shelves = b.shelves.filter((x) => x !== name);
+          await Store.updateBook(b.id, { shelves: b.shelves });
+          if (window.Cloud) Cloud.pushBook(b.id);
+          render();
+        };
+      });
+      listEl.querySelectorAll('.sm-del').forEach((btn) => {
+        btn.onclick = async (e) => {
+          e.preventDefault();
+          const name = btn.dataset.del;
+          if (!confirm(`حذف الرفّ «${name}»؟ (لن تُحذف الكتب، فقط الرفّ)`)) return;
+          Store.saveShelves(Store.getShelves().filter((x) => x !== name));
+          // أزل العضوية من كل الكتب
+          for (const bk of books) {
+            if ((bk.shelves || []).includes(name)) {
+              bk.shelves = bk.shelves.filter((x) => x !== name);
+              await Store.updateBook(bk.id, { shelves: bk.shelves });
+              if (window.Cloud) Cloud.pushBook(bk.id);
+            }
+          }
+          if (activeCat === SHELF_PREFIX + name) activeCat = 'الكل';
+          renderList(); render();
+        };
+      });
+    };
+    renderList();
+
+    const input = overlay.querySelector('.sm-input');
+    const addShelf = async () => {
+      const name = input.value.trim();
+      if (!name) return;
+      const shelves = Store.getShelves();
+      if (!shelves.includes(name)) { shelves.push(name); Store.saveShelves(shelves); }
+      if (!b.shelves.includes(name)) {
+        b.shelves.push(name);
+        await Store.updateBook(b.id, { shelves: b.shelves });
+        if (window.Cloud) Cloud.pushBook(b.id);
+      }
+      input.value = '';
+      renderList(); render();
+    };
+    overlay.querySelector('.sm-add-btn').onclick = addShelf;
+    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addShelf(); } };
+
+    const close = () => overlay.remove();
+    overlay.querySelector('.sm-close').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    setTimeout(() => input.focus(), 60);
+  }
+
   async function exportNotes(id) {
     const b = books.find((x) => x.id === id);
     const st = await Store.getState(id);
-    const items = [...(st.highlights || []), ...(st.pageNotes || [])];
+    const items = [...(st.highlights || []), ...(st.pdfHighlights || []), ...(st.pageNotes || [])];
     if (!items.length) return toast('لا توجد ملاحظات لهذا الكتاب بعد');
     let out = `ملاحظاتي على «${b.title}»${b.author ? ' — ' + b.author : ''}\n`;
     out += '─'.repeat(40) + '\n\n';
     for (const h of st.highlights || []) {
       out += `«${h.text.trim()}»\n`;
+      if (h.note) out += `📝 ${h.note}\n`;
+      out += '\n';
+    }
+    for (const h of (st.pdfHighlights || []).slice().sort((a, b) => a.page - b.page)) {
+      out += `«${h.text.trim()}» [صفحة ${h.page}]\n`;
       if (h.note) out += `📝 ${h.note}\n`;
       out += '\n';
     }
@@ -1250,6 +1432,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText };
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook };
 })();
 window.Library = Library;

@@ -155,8 +155,22 @@
 /* طبقة لون الورق فوق صفحة الـ PDF: تصبغ الأبيض بلون الورق وتُبقي الحبر داكناً */
 .r-canvas-tint { position: absolute; inset: 0; border-radius: 6px; pointer-events: none;
   background: var(--paper); mix-blend-mode: multiply; transition: background .5s; }
+/* طبقة تظليل نص الـ PDF (مرئية فقط) */
+.pdf-hl-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 6px; overflow: hidden; }
+.pdf-hl-layer .pdf-hl { position: absolute; border-radius: 2px; mix-blend-mode: multiply;
+  pointer-events: auto; cursor: pointer; transition: filter .15s; }
+.pdf-hl-layer .pdf-hl:hover { filter: brightness(.9); }
+/* طبقة النص الشفافة لتحديد نص الـ PDF */
+.pdf-textlayer { position: absolute; inset: 0; z-index: 4; overflow: hidden; opacity: 1; line-height: 1;
+  text-align: initial; transform-origin: 0 0; forced-color-adjust: none; -webkit-text-size-adjust: none; text-size-adjust: none; }
+.pdf-textlayer span, .pdf-textlayer br { color: transparent; position: absolute; white-space: pre;
+  cursor: text; transform-origin: 0% 0%; }
+.pdf-textlayer ::selection { background: rgba(217,169,79,.45); }
+#reader.draw-on .pdf-textlayer { pointer-events: none; } /* لا تحديد أثناء الرسم */
+#reader.mode-pdf.pdf-scroll .pdf-textlayer { position: absolute; }
+
 /* طبقة الكتابة على الصفحة */
-#r-draw { position: absolute; inset: 0; width: 100%; height: 100%;
+#r-draw { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5;
   border-radius: 6px; pointer-events: none; }
 #reader.draw-on #r-draw { pointer-events: auto; cursor: crosshair; touch-action: none; }
 #reader.mode-pdf .r-canvas-wrap { cursor: grab; }

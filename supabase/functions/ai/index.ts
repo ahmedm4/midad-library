@@ -41,16 +41,32 @@ Deno.serve(async (req) => {
 
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "ask");
-    const payload = { text: String(b.text || ""), question: String(b.question || ""), title: String(b.title || "") };
-    const prompt = buildPrompt(action, payload);
+
+    // ── OCR: استخراج نص صفحة مصوّرة عبر رؤية Gemini ──
+    let parts: unknown[];
+    let genCfg: Record<string, unknown> = { temperature: 0.4, maxOutputTokens: 2048 };
+    if (action === "ocr") {
+      const image = String(b.image || "");
+      const mimeType = String(b.mimeType || "image/jpeg");
+      if (!image) return json({ error: "لا توجد صورة للاستخراج" }, 400);
+      const ocrPrompt =
+        "استخرج كامل النص المكتوب في هذه الصورة (صفحة من كتاب) حرفياً وبالترتيب الصحيح من اليمين إلى اليسار. " +
+        "أعِد النص فقط دون أي تعليق أو عناوين أو شرح أو أوصاف. حافظ على فواصل الفقرات. " +
+        "إن لم تحتوِ الصورة على نص مقروء فأعد سطراً فارغاً فقط.";
+      parts = [{ text: ocrPrompt }, { inlineData: { mimeType, data: image } }];
+      genCfg = { temperature: 0.1, maxOutputTokens: 4096 };
+    } else {
+      const payload = { text: String(b.text || ""), question: String(b.question || ""), title: String(b.title || "") };
+      parts = [{ text: buildPrompt(action, payload) }];
+    }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
     const gRes = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 2048 },
+        contents: [{ role: "user", parts }],
+        generationConfig: genCfg,
       }),
     });
     const data = await gRes.json();

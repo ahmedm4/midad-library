@@ -32,9 +32,11 @@ const Reader = (() => {
   let contentEl, viewportEl, pristineHTML = '', pageW = 0, colW = 0, pageCount = 1, curPage = 0, totalChars = 0;
   // PDF
   let pdfDoc = null, pdfPage = 1, renderToken = 0, pdfZoom = 1;
+  let ocrFull = null; // نص مُستخرج بالـOCR للكتب المصوّرة {text, pageStarts, ocr}
   // مؤقتات
   let saveTimer = null, uiTimer = null, tickTimer = null, lastActivity = 0, repagTimer = null;
   let flipping = false, pendingMarkId = null, pendingSel = null;
+  let pendingPdfSel = null, pendingPdfMark = null; // تحديد/تظليل نص الـ PDF
   let celebrated = false;
 
   /* ═══════ فتح وإغلاق ═══════ */
@@ -62,6 +64,7 @@ const Reader = (() => {
     $('#flip-scroll-btn').style.display = ''; // التمرير المتصل متاح للنصوص و PDF
     $('#r-btn-draw').style.display = isPdf ? '' : 'none';
     state.drawings = state.drawings || {};
+    state.pdfHighlights = state.pdfHighlights || []; // تظليلات نص الـ PDF
     setDrawMode(false);
     // تصفير محادثة المساعد الذكي لكل كتاب (آمن ضد عدم تطابق النسخ)
     const aiModalEl = $('#ai-modal');
@@ -93,6 +96,7 @@ const Reader = (() => {
       // disableFontFace: يرسم الخطوط المضمّنة مباشرةً على الكنفا (أضمن للنصوص العربية)
       pdfDoc = await pdfjsLib.getDocument({ data: buf, disableFontFace: true }).promise;
       pageCount = pdfDoc.numPages;
+      try { const ft = await Store.getFulltext(id); ocrFull = (ft && ft.ocr) ? ft : null; } catch { ocrFull = null; }
       pdfPage = (target && target.page) ? Math.min(Math.max(target.page, 1), pageCount)
                                         : Math.min(Math.max(state.page + 1, 1), pageCount);
       if (pdfScrollActive()) await buildPdfScroll();
@@ -142,7 +146,7 @@ const Reader = (() => {
     $('#r-pdf-scroll').innerHTML = '';
     // إتلاف مستند PDF لتحرير الخطوط والذاكرة (يمنع تبعثر الخطوط عند إعادة الفتح)
     if (pdfDoc) { try { await pdfDoc.destroy(); } catch {} }
-    pdfDoc = null; pristineHTML = ''; contentEl.innerHTML = '';
+    pdfDoc = null; ocrFull = null; pristineHTML = ''; contentEl.innerHTML = '';
     Library.refresh();
   }
 
@@ -405,8 +409,106 @@ const Reader = (() => {
       // intent:'print' يتجنب requestAnimationFrame فيكتمل الرسم حتى في التبويبات الخلفية
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
       if (fade && !targetCanvas) setTimeout(() => (canvas.style.opacity = '1'), 30);
-      if (!targetCanvas) syncDrawLayer();
+      if (!targetCanvas) { syncDrawLayer(); await buildPdfTextLayer(page, scale); renderPdfHighlights(); }
     } catch (e) { console.error('pdf render', e); }
+  }
+
+  /* ═══════ تظليل نص الـ PDF ═══════ */
+  // طبقة نص شفّافة قابلة للتحديد فوق كنفا الصفحة (paged)
+  async function buildPdfTextLayer(page, cssScale) {
+    const tl = $('#r-textlayer');
+    if (!tl || pdfScrollActive()) return;
+    const myToken = renderToken;
+    const cssVp = page.getViewport({ scale: cssScale });
+    tl.innerHTML = '';
+    tl.style.width = cssVp.width + 'px';
+    tl.style.height = cssVp.height + 'px';
+    tl.style.setProperty('--scale-factor', cssScale);
+    try {
+      const tc = await page.getTextContent();
+      if (myToken !== renderToken) return; // انتقلت الصفحة أثناء الجلب
+      await pdfjsLib.renderTextLayer({ textContentSource: tc, container: tl, viewport: cssVp, textDivs: [] }).promise;
+    } catch (e) { /* بعض الصفحات بلا نص */ }
+  }
+
+  // رسم مستطيلات التظليل المحفوظة للصفحة الحالية فوق الكنفا
+  function renderPdfHighlights() {
+    const layer = $('#r-hltextlayer');
+    if (!layer) return;
+    layer.innerHTML = '';
+    if (pdfScrollActive()) return; // للتمرير تُرسم داخل الشرائح
+    const canvas = $('#r-canvas');
+    const w = parseFloat(canvas.style.width) || canvas.clientWidth;
+    const h = parseFloat(canvas.style.height) || canvas.clientHeight;
+    layer.style.width = w + 'px'; layer.style.height = h + 'px';
+    for (const hl of (state.pdfHighlights || [])) {
+      if (hl.page !== pdfPage) continue;
+      for (const r of hl.rects) {
+        const d = document.createElement('div');
+        d.className = 'pdf-hl';
+        d.dataset.id = hl.id;
+        d.style.left = (r[0] * w) + 'px'; d.style.top = (r[1] * h) + 'px';
+        d.style.width = (r[2] * w) + 'px'; d.style.height = (r[3] * h) + 'px';
+        d.style.background = hl.color;
+        if (hl.note) d.title = hl.note;
+        layer.appendChild(d);
+      }
+    }
+  }
+
+  // تحديث التظليلات بعد أي تعديل — يخدم وضعَي الصفحات والتمرير
+  function refreshPdfHighlights() {
+    if (pdfScrollActive()) {
+      for (const s of pdfSlots) {
+        if (!s.rendered) continue;
+        renderSlotHighlights(s.el, s.page, parseFloat(s.el.style.width), parseFloat(s.el.style.height));
+      }
+    } else renderPdfHighlights();
+  }
+
+  // التقاط تحديد نص PDF → تخزين مؤقت + إظهار المنبثقة (يعمل في وضعَي الصفحات والتمرير)
+  function onPdfSelection() {
+    const sel = getSelection();
+    if (!sel || sel.isCollapsed) return false;
+    const host = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+    const tl = host && host.closest ? host.closest('.pdf-textlayer') : null;
+    if (!tl) return false;
+    const text = sel.toString().trim();
+    if (!text || text.length > 2000) return false;
+    // الكنفا والصفحة المرجعية تختلفان حسب الوضع
+    const slot = tl.closest('.pdf-slot');
+    const canvas = slot ? slot.querySelector('canvas') : $('#r-canvas');
+    const pageNum = slot ? +slot.dataset.page : pdfPage;
+    if (!canvas) return false;
+    const cRect = canvas.getBoundingClientRect();
+    const rects = [];
+    for (const r of sel.getRangeAt(0).getClientRects()) {
+      if (r.width < 1 || r.height < 1) continue;
+      rects.push([
+        (r.left - cRect.left) / cRect.width,
+        (r.top - cRect.top) / cRect.height,
+        r.width / cRect.width,
+        r.height / cRect.height,
+      ]);
+    }
+    if (!rects.length) return false;
+    pendingPdfSel = { page: pageNum, text, rects };
+    pendingSel = null; pendingMarkId = null; pendingPdfMark = null;
+    showHlPopup(sel.getRangeAt(0).getBoundingClientRect(), false);
+    return true;
+  }
+
+  function addPdfHighlight(color, withNote) {
+    if (!pendingPdfSel) return;
+    const h = { id: 'p' + Date.now(), page: pendingPdfSel.page, color, note: '', text: pendingPdfSel.text, rects: pendingPdfSel.rects, at: Date.now() };
+    state.pdfHighlights.push(h);
+    getSelection().removeAllRanges();
+    hideHlPopup();
+    refreshPdfHighlights();
+    renderDrawerPanes();
+    schedulePersist();
+    if (withNote) openNoteModal(h);
+    else Library.toast('ظُلّل النص ✓');
   }
 
   /* ═══════ التمرير العمودي المتصل لـ PDF ═══════ */
@@ -487,9 +589,42 @@ const Reader = (() => {
       const old = s.el.querySelector('canvas'); if (old) old.remove();
       const ld = s.el.querySelector('.slot-loading'); if (ld) ld.remove();
       s.el.insertBefore(canvas, s.el.firstChild);
+      // طبقة تظليل النص (عرض) + طبقة نص شفّافة (تحديد)
+      renderSlotHighlights(s.el, s.page, cssW, cssH);
+      buildSlotTextLayer(s.el, page, cssW / v1.width, cssW, cssH);
       s.rendered = true;
     } catch (e) { console.error('slot render', e); }
     finally { s.rendering = false; }
+  }
+
+  function renderSlotHighlights(slotEl, pageNum, w, h) {
+    let layer = slotEl.querySelector('.pdf-hl-layer');
+    if (!layer) { layer = document.createElement('div'); layer.className = 'pdf-hl-layer'; slotEl.appendChild(layer); }
+    layer.innerHTML = '';
+    for (const hl of (state.pdfHighlights || [])) {
+      if (hl.page !== pageNum) continue;
+      for (const r of hl.rects) {
+        const d = document.createElement('div');
+        d.className = 'pdf-hl'; d.dataset.id = hl.id;
+        d.style.left = (r[0] * w) + 'px'; d.style.top = (r[1] * h) + 'px';
+        d.style.width = (r[2] * w) + 'px'; d.style.height = (r[3] * h) + 'px';
+        d.style.background = hl.color;
+        if (hl.note) d.title = hl.note;
+        layer.appendChild(d);
+      }
+    }
+  }
+
+  async function buildSlotTextLayer(slotEl, page, cssScale, w, h) {
+    let tl = slotEl.querySelector('.pdf-textlayer');
+    if (!tl) { tl = document.createElement('div'); tl.className = 'pdf-textlayer'; slotEl.appendChild(tl); }
+    tl.innerHTML = '';
+    tl.style.width = w + 'px'; tl.style.height = h + 'px';
+    tl.style.setProperty('--scale-factor', cssScale);
+    try {
+      const tc = await page.getTextContent();
+      await pdfjsLib.renderTextLayer({ textContentSource: tc, container: tl, viewport: page.getViewport({ scale: cssScale }), textDivs: [] }).promise;
+    } catch (e) { /* صفحة بلا نص */ }
   }
 
   function renderVisibleSlots() {
@@ -699,6 +834,7 @@ const Reader = (() => {
   }
 
   async function pdfHasReadableText() {
+    if (ocrFull && ocrFull.text && ocrFull.text.trim().length > 15) return true; // نص مُستخرَج متاح
     for (let p = pdfPage; p <= Math.min(pageCount, pdfPage + 4); p++) {
       try {
         const page = await pdfDoc.getPage(p);
@@ -709,11 +845,26 @@ const Reader = (() => {
     return false;
   }
 
+  // نص صفحة من نتيجة الـOCR (1-based) عند غياب النص الأصلي
+  function ocrPageText(n) {
+    if (!ocrFull || !ocrFull.pageStarts) return '';
+    const ps = ocrFull.pageStarts;
+    const a = ps[n - 1] ?? 0, b = ps[n] ?? ocrFull.text.length;
+    return ocrFull.text.slice(a, b).replace(/\s+/g, ' ').trim();
+  }
+
   async function ttsToggle() {
     if (ttsOn) return ttsStop();
     if (!('speechSynthesis' in window)) return Library.toast('القراءة الصوتية غير مدعومة في متصفحك');
     if (isPdf && !(await pdfHasReadableText())) {
-      return Library.toast('هذا الكتاب صفحاته مصوّرة — لا يحتوي نصاً قابلاً للقراءة الصوتية');
+      if (window.Cloud && Cloud.aiReady && Cloud.aiReady() && Library.ocrBook) {
+        if (confirm('صفحات هذا الكتاب مصوّرة (بلا نص). هل تريد استخراج النص أولاً عبر الذكاء الاصطناعي؟ (يُفعّل القراءة الصوتية والبحث والتلخيص)')) {
+          close(); Library.ocrBook(book.id);
+        }
+      } else {
+        Library.toast('هذا الكتاب صفحاته مصوّرة — فعّل المزامنة السحابية لاستخراج نصه (OCR)');
+      }
+      return;
     }
     if (!isPdf) {
       ttsEls = [...contentEl.querySelectorAll('p, h2, h3')].filter((el) => el.textContent.trim());
@@ -741,6 +892,7 @@ const Reader = (() => {
         const tc = await page.getTextContent();
         text = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
       } catch { text = ''; }
+      if (!text) text = ocrPageText(pdfPage); // احتياطي: نص الـOCR
       if (!text) {
         if (pdfPage < pageCount) { jumpTo(pdfPage + 1); return speakNext(); }
         return ttsStop(true);
@@ -1252,7 +1404,7 @@ const Reader = (() => {
     pop.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, innerWidth - w - 8)) + 'px';
     pop.style.top = Math.max(8, rect.top - 54) + 'px';
   }
-  function hideHlPopup() { $('#hl-popup').hidden = true; pendingSel = null; }
+  function hideHlPopup() { $('#hl-popup').hidden = true; pendingSel = null; pendingPdfSel = null; }
 
   function addHighlight(color, withNote) {
     if (!pendingSel) return;
@@ -1278,7 +1430,8 @@ const Reader = (() => {
     $('#note-save').onclick = () => {
       h.note = $('#note-text').value.trim();
       $('#note-modal').hidden = true;
-      rebuildText(); renderDrawerPanes(); schedulePersist();
+      if (h.rects) refreshPdfHighlights(); else rebuildText(); // تظليل PDF مقابل نصي
+      renderDrawerPanes(); schedulePersist();
       Library.toast('حُفظت الملاحظة 📝', 'gold');
     };
   }
@@ -1401,15 +1554,22 @@ const Reader = (() => {
     let html = '';
     if (isPdf) html += `<button class="btn-ghost" style="width:100%;margin-bottom:14px" id="btn-add-pagenote">＋ أضف ملاحظة على الصفحة الحالية</button>`;
     const hls = (state.highlights || []).slice().sort((a, b) => a.start - b.start);
+    const phls = (state.pdfHighlights || []).slice().sort((a, b) => a.page - b.page || a.at - b.at);
     const pns = (state.pageNotes || []).slice().sort((a, b) => a.page - b.page);
-    if (!hls.length && !pns.length) {
-      html += `<div class="drawer-empty">${isPdf ? 'لا ملاحظات بعد' : 'ظلّل أي نص أثناء القراءة<br>لإضافة تظليل أو ملاحظة ✨'}</div>`;
+    if (!hls.length && !phls.length && !pns.length) {
+      html += `<div class="drawer-empty">${isPdf ? 'ظلّل نصاً في الصفحة<br>لإضافة تظليل أو ملاحظة ✨' : 'ظلّل أي نص أثناء القراءة<br>لإضافة تظليل أو ملاحظة ✨'}</div>`;
     }
     html += hls.map((h) => `
       <div class="note-item" data-hid="${h.id}" style="--c:${h.color}">
         <q>${esc(h.text.trim())}</q>
         ${h.note ? `<div class="n-note">📝 ${esc(h.note)}</div>` : ''}
         <div class="n-meta"><span>${new Date(h.at).toLocaleDateString('ar')}</span><button class="n-del" data-del-h="${h.id}">حذف</button></div>
+      </div>`).join('');
+    html += phls.map((h) => `
+      <div class="note-item" data-phid="${h.id}" data-page="${h.page}" style="--c:${h.color}">
+        <q>${esc(h.text.trim())}</q>
+        ${h.note ? `<div class="n-note">📝 ${esc(h.note)}</div>` : ''}
+        <div class="n-meta"><span>صفحة ${h.page}</span><button class="n-del" data-del-ph="${h.id}">حذف</button></div>
       </div>`).join('');
     html += pns.map((n) => `
       <div class="note-item" data-pn="${n.page}" style="--c:#74c0fc">
@@ -1434,8 +1594,18 @@ const Reader = (() => {
         renderDrawerPanes(); schedulePersist();
       };
     });
+    pane.querySelectorAll('[data-del-ph]').forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        state.pdfHighlights = state.pdfHighlights.filter((h) => h.id !== b.dataset.delPh);
+        refreshPdfHighlights(); renderDrawerPanes(); schedulePersist();
+      };
+    });
     pane.querySelectorAll('.note-item[data-hid]').forEach((item) => {
       item.onclick = () => { jumpToHighlight(item.dataset.hid); closeDrawers(); };
+    });
+    pane.querySelectorAll('.note-item[data-phid]').forEach((item) => {
+      item.onclick = () => { jumpTo(+item.dataset.page); closeDrawers(); };
     });
     pane.querySelectorAll('.note-item[data-pn]').forEach((item) => {
       if (item.dataset.hid) return;
@@ -1746,15 +1916,26 @@ const Reader = (() => {
       downX = null;
       setTimeout(() => {
         const sel = getSelection();
-        if (sel && !sel.isCollapsed) { onTextSelection(); return; }
+        if (sel && !sel.isCollapsed) { if (isPdf) onPdfSelection(); else onTextSelection(); return; }
         if (!$('#hl-popup').hidden) { hideHlPopup(); return; }
-        // نقر على تظليل موجود
+        // نقر على تظليل نصي موجود
         const mark = e.target.closest && e.target.closest('mark.hl');
         if (mark) {
           pendingMarkId = mark.dataset.id;
           pendingSel = null;
           showHlPopup(mark.getBoundingClientRect(), true);
           return;
+        }
+        // نقر على تظليل PDF موجود (طبقة النص فوقه، فنختبر النقطة)
+        if (isPdf) {
+          const under = document.elementsFromPoint(e.clientX, e.clientY);
+          const phl = under.find((el) => el.classList && el.classList.contains('pdf-hl'));
+          if (phl) {
+            pendingPdfMark = phl.dataset.id;
+            pendingSel = null; pendingMarkId = null; pendingPdfSel = null;
+            showHlPopup(phl.getBoundingClientRect(), true);
+            return;
+          }
         }
         if (e.target.closest('.r-nav, .r-ribbon, button, #r-draw, #r-pdf-scroll')) return;
         const paged = settings.flip !== 'scroll';
@@ -1778,7 +1959,12 @@ const Reader = (() => {
           const h = state.highlights.find((x) => x.id === pendingMarkId);
           if (h) { h.color = b.dataset.color; rebuildText(); renderDrawerPanes(); schedulePersist(); }
           hideHlPopup();
-        } else addHighlight(b.dataset.color, false);
+        } else if (pendingPdfMark) {
+          const h = state.pdfHighlights.find((x) => x.id === pendingPdfMark);
+          if (h) { h.color = b.dataset.color; refreshPdfHighlights(); renderDrawerPanes(); schedulePersist(); }
+          pendingPdfMark = null; hideHlPopup();
+        } else if (pendingPdfSel) addPdfHighlight(b.dataset.color, false);
+        else addHighlight(b.dataset.color, false);
       };
     });
     $('#hl-note-btn').onclick = () => {
@@ -1786,35 +1972,47 @@ const Reader = (() => {
         const h = state.highlights.find((x) => x.id === pendingMarkId);
         hideHlPopup();
         if (h) openNoteModal(h);
-      } else addHighlight('#f6d743', true);
+      } else if (pendingPdfMark) {
+        const h = state.pdfHighlights.find((x) => x.id === pendingPdfMark);
+        pendingPdfMark = null; hideHlPopup();
+        if (h) openNoteModal(h);
+      } else if (pendingPdfSel) addPdfHighlight('#f6d743', true);
+      else addHighlight('#f6d743', true);
     };
     $('#hl-del-btn').onclick = () => {
       if (pendingMarkId) {
         state.highlights = state.highlights.filter((h) => h.id !== pendingMarkId);
         hideHlPopup(); rebuildText(); renderDrawerPanes(); schedulePersist();
+      } else if (pendingPdfMark) {
+        state.pdfHighlights = state.pdfHighlights.filter((h) => h.id !== pendingPdfMark);
+        pendingPdfMark = null; hideHlPopup(); refreshPdfHighlights(); renderDrawerPanes(); schedulePersist();
       }
     };
     // مساعد الذكاء (محمي: لا يتعطّل إن كانت عناصر الـHTML غير متطابقة مع النسخة)
     if ($('#r-btn-ai') && $('#ai-modal')) {
+      // نص التحديد الحالي (نصي أو PDF)
+      const selText = () => {
+        if (pendingSel) return pendingSel.text;
+        if (pendingPdfSel) return pendingPdfSel.text;
+        if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); return h ? h.text : ''; }
+        if (pendingPdfMark) { const h = state.pdfHighlights.find((x) => x.id === pendingPdfMark); return h ? h.text : ''; }
+        return '';
+      };
       $('#hl-explain-btn').onclick = () => {
-        let txt = '';
-        if (pendingSel) txt = pendingSel.text;
-        else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
-        hideHlPopup();
+        const txt = selText();
+        hideHlPopup(); pendingPdfMark = null;
         if (txt) { openAI(); runAI('explain', { selection: txt }); }
       };
       $('#hl-share-btn').onclick = () => {
-        let txt = '';
-        if (pendingSel) txt = pendingSel.text;
-        else if (pendingMarkId) { const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; }
-        hideHlPopup();
+        const txt = selText();
+        hideHlPopup(); pendingPdfMark = null;
         if (txt) shareQuote(txt);
       };
       $('#hl-define-btn').onclick = () => {
-        let txt = '', rect = null;
-        if (pendingSel) { txt = pendingSel.text; const s = getSelection(); if (s && s.rangeCount) rect = s.getRangeAt(0).getBoundingClientRect(); }
-        else if (pendingMarkId) { const m = contentEl.querySelector(`mark[data-id="${pendingMarkId}"]`); const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; if (m) rect = m.getBoundingClientRect(); }
-        hideHlPopup();
+        let rect = null;
+        const txt = selText();
+        const s = getSelection(); if (s && s.rangeCount && !s.isCollapsed) rect = s.getRangeAt(0).getBoundingClientRect();
+        hideHlPopup(); pendingPdfMark = null;
         if (txt) defineWord(txt.trim(), rect);
       };
       $('#db-close').onclick = hideDefineBubble;
