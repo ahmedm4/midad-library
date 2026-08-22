@@ -134,8 +134,10 @@ const Reader = (() => {
     document.body.style.overflow = '';
     closeDrawers(); hideHlPopup(); $('#r-search').hidden = true;
     { const m = $('#ai-modal'); if (m) m.hidden = true; }
+    { const d = $('#define-bubble'); if (d) d.hidden = true; }
     setDrawMode(false);
     ttsStop();
+    stopAuto();
     teardownPdfScroll();
     $('#r-pdf-scroll').innerHTML = '';
     // إتلاف مستند PDF لتحرير الخطوط والذاكرة (يمنع تبعثر الخطوط عند إعادة الفتح)
@@ -915,6 +917,80 @@ const Reader = (() => {
     Library.toast('حُفظت بطاقة الاقتباس 🖼', 'gold');
   }
 
+  /* ═══════ القاموس الفوري (معنى بالذكاء الاصطناعي) ═══════ */
+  function hideDefineBubble() { $('#define-bubble').hidden = true; }
+
+  async function defineWord(text, rect) {
+    if (!text) return;
+    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
+      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
+      return Library.toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام المعنى الفوري' : 'المعنى الفوري يحتاج تفعيل المزامنة السحابية');
+    }
+    const short = text.length > 60 ? text.slice(0, 60) + '…' : text;
+    const bubble = $('#define-bubble');
+    $('#db-word').textContent = short;
+    $('#db-body').innerHTML = '<span class="ai-typing"><i></i><i></i><i></i></span>';
+    bubble.hidden = false;
+    // موضعة الفقاعة قرب الكلمة
+    const bw = 300;
+    if (rect) {
+      bubble.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - bw / 2, innerWidth - bw - 8)) + 'px';
+      bubble.style.top = (rect.bottom + 10 < innerHeight - 180 ? rect.bottom + 10 : Math.max(60, rect.top - 190)) + 'px';
+    } else {
+      bubble.style.left = (innerWidth / 2 - bw / 2) + 'px';
+      bubble.style.top = '80px';
+    }
+    try {
+      const prompt = `عرّف بإيجاز شديد (جملة أو جملتين بالعربية الفصحى) معنى هذه الكلمة أو العبارة${book && book.title ? ` كما قد ترد في كتاب «${book.title}»` : ''}، ودون مقدمات: «${text}»`;
+      const res = await Cloud.aiInvoke({ action: 'define', text: prompt });
+      if (bubble.hidden) return; // أُغلقت أثناء الانتظار
+      $('#db-body').textContent = res || 'لا يوجد تعريف.';
+    } catch (e) {
+      $('#db-body').textContent = '⚠ ' + ((e && e.message) || 'تعذّر جلب المعنى');
+    }
+  }
+
+  /* ═══════ القراءة التلقائية (تمرير/تقليب بلا يدين) ═══════ */
+  let autoOn = false, autoRAF = 0, autoTimer = 0;
+  const autoContainer = () => pdfScrollActive() ? $('#r-pdf-scroll') : ((!isPdf && settings.flip === 'scroll') ? viewportEl : null);
+
+  function toggleAuto() { if (autoOn) stopAuto(); else startAuto(); }
+
+  function startAuto() {
+    autoOn = true;
+    $('#r-btn-auto').classList.add('on');
+    const cont = autoContainer();
+    if (cont) {
+      let last = performance.now();
+      const step = (now) => {
+        if (!autoOn) return;
+        const dt = Math.min(now - last, 60); last = now;
+        cont.scrollTop += (settings.autoSpeed || 50) * 3 * dt / 1000;
+        if (cont.scrollTop + cont.clientHeight >= cont.scrollHeight - 2) { stopAuto(); Library.toast('انتهت القراءة التلقائية ✓'); return; }
+        autoRAF = requestAnimationFrame(step);
+      };
+      autoRAF = requestAnimationFrame(step);
+    } else {
+      const interval = Math.max(2500, (115 - (settings.autoSpeed || 50)) * 250);
+      autoTimer = setInterval(() => {
+        if (!autoOn) return;
+        const atEnd = isPdf ? (pdfPage >= pageCount) : (curPage >= pageCount - 1);
+        if (atEnd) { stopAuto(); Library.toast('انتهت القراءة التلقائية ✓'); return; }
+        next();
+      }, interval);
+    }
+    Library.toast('بدأت القراءة التلقائية ⏵ — المس الصفحة للإيقاف');
+  }
+
+  function stopAuto() {
+    if (!autoOn && !autoRAF && !autoTimer) return;
+    autoOn = false;
+    $('#r-btn-auto').classList.remove('on');
+    if (autoRAF) cancelAnimationFrame(autoRAF);
+    clearInterval(autoTimer);
+    autoRAF = 0; autoTimer = 0;
+  }
+
   /* ═══════ الإعدادات ═══════ */
   function buildSettingsUI() {
     const themeRow = $('#theme-row');
@@ -938,6 +1014,7 @@ const Reader = (() => {
     $('#set-lineheight').oninput = (e) => { settings.lineHeight = +e.target.value; applySettings(); scheduleRepaginate(); };
     $('#set-width').oninput = (e) => { settings.width = +e.target.value; applySettings(); scheduleRepaginate(); };
     $('#set-ttsrate').oninput = (e) => { settings.ttsRate = +e.target.value; Store.saveSettings(settings); };
+    $('#set-autospeed').oninput = (e) => { settings.autoSpeed = +e.target.value; Store.saveSettings(settings); };
 
     $('#spread-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.spread = b.dataset.spread === '1'; applySettings(); scheduleRepaginate(); };
@@ -958,6 +1035,7 @@ const Reader = (() => {
     });
     $('#flip-row').querySelectorAll('button').forEach((b) => {
       b.onclick = async () => {
+        stopAuto();
         const was = settings.flip;
         settings.flip = b.dataset.flip;
         const scrollChanged = (was === 'scroll') !== (settings.flip === 'scroll');
@@ -1023,6 +1101,7 @@ const Reader = (() => {
     $('#flip-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.flip === settings.flip));
     $('#spread-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.spread === '1') === !!settings.spread));
     $('#set-ttsrate').value = settings.ttsRate || 100;
+    $('#set-autospeed').value = settings.autoSpeed || 50;
     $('#set-brightness').value = settings.brightness;
     $('#set-warmth').value = settings.warmth;
     $('#set-fontsize').value = settings.fontSize;
@@ -1661,6 +1740,8 @@ const Reader = (() => {
     $('#r-stage').addEventListener('pointerup', (e) => {
       if (!isOpen) return;
       bump();
+      // أي لمسة توقف القراءة التلقائية
+      if (autoOn) { stopAuto(); showUI(); downX = null; return; }
       const dx = downX != null ? e.clientX - downX : 0;
       downX = null;
       setTimeout(() => {
@@ -1729,6 +1810,15 @@ const Reader = (() => {
         hideHlPopup();
         if (txt) shareQuote(txt);
       };
+      $('#hl-define-btn').onclick = () => {
+        let txt = '', rect = null;
+        if (pendingSel) { txt = pendingSel.text; const s = getSelection(); if (s && s.rangeCount) rect = s.getRangeAt(0).getBoundingClientRect(); }
+        else if (pendingMarkId) { const m = contentEl.querySelector(`mark[data-id="${pendingMarkId}"]`); const h = state.highlights.find((x) => x.id === pendingMarkId); if (h) txt = h.text; if (m) rect = m.getBoundingClientRect(); }
+        hideHlPopup();
+        if (txt) defineWord(txt.trim(), rect);
+      };
+      $('#db-close').onclick = hideDefineBubble;
+      $('#r-btn-auto').onclick = toggleAuto;
       $('#r-btn-ai').onclick = openAI;
       $('#ai-modal').querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => ($('#ai-modal').hidden = true)));
       $('#ai-modal').onclick = (e) => { if (e.target.id === 'ai-modal') $('#ai-modal').hidden = true; };
