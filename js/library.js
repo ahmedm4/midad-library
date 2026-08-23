@@ -24,6 +24,34 @@ const Library = (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  /* ─── نافذة تأكيد أنيقة (بديل confirm) — تُعيد Promise<boolean> ─── */
+  function uiConfirm(message, opts = {}) {
+    return new Promise((resolve) => {
+      document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+      const { title = 'تأكيد', okText = 'متابعة', cancelText = 'إلغاء', danger = false, icon = '' } = opts;
+      const overlay = document.createElement('div');
+      overlay.className = 'ui-dialog';
+      overlay.innerHTML = `
+        <div class="ud-box" role="dialog" aria-modal="true">
+          <div class="ud-icon${danger ? ' danger' : ''}">${icon || (danger ? '🗑' : '❔')}</div>
+          <h3>${esc(title)}</h3>
+          <p>${esc(message).replace(/\n/g, '<br>')}</p>
+          <div class="ud-actions">
+            <button class="ud-cancel">${esc(cancelText)}</button>
+            <button class="ud-ok ${danger ? 'danger' : 'btn-gold'}">${esc(okText)}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const onKey = (e) => { if (e.key === 'Escape') done(false); else if (e.key === 'Enter') done(true); };
+      const done = (v) => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+      overlay.querySelector('.ud-ok').onclick = () => done(true);
+      overlay.querySelector('.ud-cancel').onclick = () => done(false);
+      overlay.onclick = (e) => { if (e.target === overlay) done(false); };
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => overlay.querySelector('.ud-ok').focus(), 60);
+    });
+  }
+
   /* ─── تهيئة ─── */
   async function init() {
     fillCategorySelect();
@@ -363,7 +391,7 @@ create policy "midad_own_files" on storage.objects for all
     if (!b || b.type !== 'pdf') return;
     const existing = await Store.getFulltext(id);
     if (existing && existing.ocr) {
-      if (!confirm('سبق استخراج نص هذا الكتاب. إعادة الاستخراج قد تستغرق وقتاً وتستهلك من حصّتك. المتابعة؟')) return;
+      if (!(await uiConfirm('سبق استخراج نص هذا الكتاب. إعادة الاستخراج قد تستغرق وقتاً وتستهلك من حصّتك.', { title: 'إعادة استخراج النص؟', okText: 'أعد الاستخراج', icon: '🔎' }))) return;
     }
     let blob = await Store.getPayload(id);
     if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
@@ -416,8 +444,13 @@ create policy "midad_own_files" on storage.objects for all
       try { await pdf.destroy(); } catch {}
       if (cancelled && !text.trim()) { toast('أُلغي الاستخراج'); return; }
       await Store.saveFulltext(id, { text, pageStarts, ocr: true });
-      if (empties === done) toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة');
-      else toast(cancelled ? `حُفظ نص ${done} صفحة ✓` : 'اكتمل استخراج النص ✓ الآن يعمل البحث والتلخيص والقاموس', 'gold');
+      overlay.remove(); // أغلق نافذة التقدّم قبل عرض الخيار
+      if (empties === done) { toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة'); return; }
+      // اعرض أين يُوجد النص: إمكانية إنشاء نسخة نصية قابلة للقراءة فوراً
+      const make = await uiConfirm(
+        `تم استخراج نص ${done} صفحة ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.\nهل تنشئ منه نسخة نصّية مستقلّة تقرأها وتنسّقها بكامل المميزات؟`,
+        { title: 'اكتمل استخراج النص', okText: '📄 أنشئ نسخة نصية', cancelText: 'لاحقاً', icon: '✅' });
+      if (make) createTextFromOcr(id, true);
     } catch (e) {
       console.error('ocr', e);
       toast('تعذّر الاستخراج: ' + ((e && e.message) || 'خطأ'));
@@ -425,7 +458,7 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   /* ─── إنشاء كتاب نصي من النص المُستخرَج (OCR) ─── */
-  async function createTextFromOcr(id) {
+  async function createTextFromOcr(id, skipConfirm) {
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b) return;
     const ft = await Store.getFulltext(id);
@@ -433,7 +466,7 @@ create policy "midad_own_files" on storage.objects for all
       return toast('لا يوجد نص مُستخرَج بعد — استخدم «🔎 استخراج النص (OCR)» أولاً');
     }
     const pages = (ft.pageStarts || []).length;
-    if (!confirm(`إنشاء نسخة نصية من النص المُستخرَج${pages ? ` (${pages} صفحة)` : ''}؟ ستظهر ككتاب نصّي مستقل بكامل مميزات التنسيق والقراءة، مع بقاء الأصل كما هو.`)) return;
+    if (!skipConfirm && !(await uiConfirm(`ستظهر ككتاب نصّي مستقل${pages ? ` (${pages} صفحة)` : ''} بكامل مميزات التنسيق والقراءة، مع بقاء الأصل كما هو.`, { title: 'إنشاء نسخة نصية؟', okText: 'أنشئ النسخة', icon: '📄' }))) return;
     // نظّف النص قليلاً: أزل الأسطر الفارغة الزائدة
     const text = ft.text.replace(/\n{3,}/g, '\n\n').trim();
     const meta = {
@@ -583,7 +616,7 @@ create policy "midad_own_files" on storage.objects for all
         Object.assign(st, { pct: 0, page: 0, scrollTop: 0, finished: false, seconds: 0 });
         await Store.saveState(st); if (window.Cloud) Cloud.pushState(id); await refresh(); toast('تم تصفير التقدم');
       } else if (act === 'delete') {
-        if (confirm(`حذف «${b.title}» نهائياً مع ملاحظاته؟`)) {
+        if (await uiConfirm(`سيُحذف «${b.title}» نهائياً مع كل ملاحظاته وتظليلاته.`, { title: 'حذف الكتاب؟', okText: 'احذف', cancelText: 'إلغاء', danger: true })) {
           await Store.deleteBook(id); if (window.Cloud) Cloud.deleteBook(id); await refresh(); toast('حُذف الكتاب');
         }
       }
@@ -632,7 +665,7 @@ create policy "midad_own_files" on storage.objects for all
         btn.onclick = async (e) => {
           e.preventDefault();
           const name = btn.dataset.del;
-          if (!confirm(`حذف الرفّ «${name}»؟ (لن تُحذف الكتب، فقط الرفّ)`)) return;
+          if (!(await uiConfirm(`سيُحذف الرفّ «${name}» فقط — لن تُحذف الكتب.`, { title: 'حذف الرفّ؟', okText: 'احذف الرفّ', danger: true }))) return;
           Store.saveShelves(Store.getShelves().filter((x) => x !== name));
           // أزل العضوية من كل الكتب
           for (const bk of books) {
@@ -1218,7 +1251,7 @@ create policy "midad_own_files" on storage.objects for all
       const b = books.find((x) => x.id === editingId);
       // (أ) استبدال ملف الكتاب بصيغة جديدة (PDF / EPUB / نص)
       if (pendingFile) {
-        if (!confirm('استبدال محتوى الكتاب بالملف الجديد سيصفّر موضع القراءة والتظليلات والملاحظات.\nهل تريد المتابعة؟')) return;
+        if (!(await uiConfirm('استبدال محتوى الكتاب بالملف الجديد سيصفّر موضع القراءة والتظليلات والملاحظات.', { title: 'استبدال المحتوى؟', okText: 'استبدل', danger: true }))) return;
         if (pendingFile.kind === 'pdf') {
           meta.type = 'pdf'; meta.pages = pendingFile.pages;
           if (!pendingCover) meta.cover = pendingFile.cover;
@@ -1245,7 +1278,7 @@ create policy "midad_own_files" on storage.objects for all
         if (newText !== origText) {
           const st = await Store.getState(editingId);
           if ((st.highlights || []).length &&
-              !confirm('تعديل النص قد يُزيح مواضع التظليلات والملاحظات الحالية عن أماكنها.\nهل تريد المتابعة؟')) return;
+              !(await uiConfirm('تعديل النص قد يُزيح مواضع التظليلات والملاحظات الحالية عن أماكنها.', { title: 'تعديل النص؟', okText: 'تابع التعديل' }))) return;
           await Store.updatePayload(editingId, newText);
         }
       }
@@ -1458,6 +1491,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook };
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, confirm: uiConfirm };
 })();
 window.Library = Library;

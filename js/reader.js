@@ -759,8 +759,9 @@ const Reader = (() => {
       const strokes = state.drawings[pdfPage];
       if (strokes && strokes.length) { strokes.pop(); redrawStrokes(); schedulePersist(); }
     };
-    $('#draw-clear').onclick = () => {
-      if ((state.drawings[pdfPage] || []).length && confirm('مسح كل كتابات هذه الصفحة؟')) {
+    $('#draw-clear').onclick = async () => {
+      if ((state.drawings[pdfPage] || []).length &&
+          await Library.confirm('سيُمسح كل ما رسمته على هذه الصفحة.', { title: 'مسح كتابات الصفحة؟', okText: 'امسح', danger: true })) {
         delete state.drawings[pdfPage];
         redrawStrokes(); schedulePersist();
       }
@@ -858,8 +859,9 @@ const Reader = (() => {
     if (!('speechSynthesis' in window)) return Library.toast('القراءة الصوتية غير مدعومة في متصفحك');
     if (isPdf && !(await pdfHasReadableText())) {
       if (window.Cloud && Cloud.aiReady && Cloud.aiReady() && Library.ocrBook) {
-        if (confirm('صفحات هذا الكتاب مصوّرة (بلا نص). هل تريد استخراج النص أولاً عبر الذكاء الاصطناعي؟ (يُفعّل القراءة الصوتية والبحث والتلخيص)')) {
-          close(); Library.ocrBook(book.id);
+        const bid = book.id;
+        if (await Library.confirm('صفحات هذا الكتاب مصوّرة (بلا نص). استخراج النص عبر الذكاء الاصطناعي يُفعّل القراءة الصوتية والبحث والتلخيص.', { title: 'استخراج النص (OCR)؟', okText: 'استخرج النص', icon: '🔎' })) {
+          close(); Library.ocrBook(bid);
         }
       } else {
         Library.toast('هذا الكتاب صفحاته مصوّرة — فعّل المزامنة السحابية لاستخراج نصه (OCR)');
