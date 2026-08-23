@@ -390,8 +390,10 @@ create policy "midad_own_files" on storage.objects for all
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b || b.type !== 'pdf') return;
     const existing = await Store.getFulltext(id);
-    if (existing && existing.ocr && (existing.text || '').trim()) {
-      if (!(await uiConfirm('سبق استخراج نص هذا الكتاب. إعادة الاستخراج قد تستغرق وقتاً وتستهلك من حصّتك.', { title: 'إعادة استخراج النص؟', okText: 'أعد الاستخراج', icon: '🔎' }))) return;
+    const hasPrev = existing && existing.ocr && (existing.text || '').trim();
+    if (hasPrev) {
+      // استئناف: نُكمل الصفحات الناقصة فقط دون إعادة ما نجح (توفيراً للحصّة)
+      if (!(await uiConfirm('سبق استخراج بعض هذا الكتاب. سنُكمل الصفحات الناقصة فقط دون إعادة ما اكتمل.', { title: 'إكمال استخراج النص؟', okText: 'أكمِل الناقص', icon: '🔎' }))) return;
     }
     let blob = await Store.getPayload(id);
     if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
@@ -421,11 +423,24 @@ create policy "midad_own_files" on storage.objects for all
       const N = pdf.numPages;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const isRateErr = (m) => /quota|rate.?limit|exceeded|RESOURCE_EXHAUSTED|429|retry in|too many/i.test(m || '');
-      let text = ''; const pageStarts = []; let done = 0, empties = 0, stopError = null;
+
+      // ابنِ مصفوفة الصفحات من نتيجة سابقة (إن وُجدت) لاستئناف الناقص فقط
+      const pages = new Array(N).fill('');
+      if (existing && Array.isArray(existing.pageStarts) && existing.text != null) {
+        const ps = existing.pageStarts, tx = existing.text;
+        for (let i = 0; i < N && i < ps.length; i++) {
+          const a = ps[i] ?? 0, e = (ps[i + 1] ?? tx.length);
+          pages[i] = (tx.slice(a, e) || '').trim();
+        }
+      }
+      const alreadyDone = pages.filter((p) => p).length;
+      let newly = 0, stopError = null;
+
       for (let n = 1; n <= N; n++) {
         if (cancelled) break;
-        pageStarts.push(text.length);
-        status.textContent = `استخراج الصفحة ${n} من ${N}…`;
+        if (pages[n - 1]) continue; // صفحة مكتملة سابقاً — تخطَّها (استئناف)
+        const remaining = pages.filter((p) => !p).length;
+        status.textContent = `استخراج الصفحة ${n} من ${N} (المتبقّي ${remaining})…`;
         let pageOk = false, attempt = 0;
         while (!pageOk && !cancelled) {
           try {
@@ -438,9 +453,8 @@ create policy "midad_own_files" on storage.objects for all
             await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
             const base64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
             const pageText = await Cloud.aiInvoke({ action: 'ocr', image: base64, mimeType: 'image/jpeg' });
-            const t = (pageText || '').trim();
-            if (!t) empties++;
-            text += t + '\n\n';
+            pages[n - 1] = (pageText || '').trim();
+            if (pages[n - 1]) newly++;
             pageOk = true;
           } catch (e) {
             const msg = (e && e.message) || 'خطأ في الاتصال';
@@ -461,20 +475,23 @@ create policy "midad_own_files" on storage.objects for all
             }
           }
         }
-        if (stopError) break;
-        if (!pageOk) break; // أُلغي أثناء الانتظار
-        done++;
-        fill.style.width = Math.round((done / N) * 100) + '%';
+        if (stopError || !pageOk) break;
+        fill.style.width = Math.round((pages.filter((p) => p).length / N) * 100) + '%';
         await sleep(400); // تباعد لطيف يقلّل ملامسة حدّ المعدّل
       }
       try { await pdf.destroy(); } catch {}
       overlay.remove(); // أغلق نافذة التقدّم
-      const hasText = !!text.trim();
+
+      // أعد بناء النص والفهارس من كل الصفحات (المكتمِلة قديماً + الجديدة)
+      let text = ''; const pageStarts = [];
+      for (let i = 0; i < N; i++) { pageStarts.push(text.length); text += pages[i] + '\n\n'; }
+      const filled = pages.filter((p) => p).length;
+
       // لا نحفظ نتيجة فارغة (كي لا يعلَق الكتاب في حالة «مُستخرَج لكن بلا نص»)
-      if (!hasText) {
+      if (!filled) {
         if (stopError && isRateErr(stopError)) {
           await uiConfirm(
-            'تجاوزتَ حصّة Gemini المجانية (٢٠ طلباً في الدقيقة، وحدّ يومي محدود). كل صفحة تعادل طلباً واحداً.\nانتظر دقيقة ثم أعد المحاولة، أو استخرج الكتب الكبيرة على دفعات عبر أيام.',
+            'تجاوزتَ حصّة Gemini المجانية (٢٠ طلباً في الدقيقة لكل مفتاح، وحدّ يومي محدود). كل صفحة تعادل طلباً واحداً.\nانتظر قليلاً ثم أعد المحاولة (سيُكمل الناقص)، أو أضِف عدة مفاتيح لمضاعفة الحصّة.',
             { title: 'تجاوزتَ حصّة الاستخراج', okText: 'حسناً', cancelText: 'إغلاق', icon: '⏳' });
         } else if (stopError) {
           await uiConfirm(
@@ -485,16 +502,16 @@ create policy "midad_own_files" on storage.objects for all
         }
         return;
       }
-      // نجاح (كامل أو جزئي): احفظ ما استُخرج
+      // احفظ ما استُخرج (كامل أو جزئي)
       await Store.saveFulltext(id, { text, pageStarts, ocr: true });
       if (window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn()) Cloud.pushBook(id); // زامِن نص الـOCR لبقية الأجهزة
-      const partial = (stopError || cancelled) && done < N;
-      const okText = partial
-        ? `استُخرج نص ${done} من ${N} صفحة${stopError && isRateErr(stopError) ? ' ثم تجاوزتَ الحصّة' : ''}. المستخرَج محفوظ وجاهز، ويمكنك إكمال الباقي لاحقاً بإعادة الاستخراج.`
-        : `تم استخراج نص ${done} صفحة ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.`;
+      const missing = N - filled;
+      const okText = missing > 0
+        ? `اكتمل ${filled} من ${N} صفحة (أُضيفت ${newly} هذه المرة). بقيت ${missing} صفحة ناقصة${stopError && isRateErr(stopError) ? ' — تجاوزتَ الحصّة' : ''}. أعد الاستخراج لاحقاً لإكمالها (سيُكمل الناقص فقط).`
+        : `اكتمل استخراج كل الصفحات (${N}) ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.`;
       const make = await uiConfirm(
         `${okText}\nهل تنشئ منه نسخة نصّية مستقلّة تقرأها وتنسّقها بكامل المميزات؟`,
-        { title: partial ? 'حُفظ المستخرَج' : 'اكتمل استخراج النص', okText: '📄 أنشئ نسخة نصية', cancelText: 'لاحقاً', icon: partial ? '⏳' : '✅' });
+        { title: missing > 0 ? 'حُفظ المستخرَج' : 'اكتمل استخراج النص', okText: '📄 أنشئ نسخة نصية', cancelText: 'لاحقاً', icon: missing > 0 ? '⏳' : '✅' });
       if (make) createTextFromOcr(id, true);
     } catch (e) {
       console.error('ocr', e);
