@@ -1,6 +1,9 @@
 // ═══════ مِداد — دالة الذكاء الاصطناعي (Supabase Edge Function) ═══════
-// تحفظ مفتاح Gemini كسرّ في الخادم فلا يظهر في المتصفح.
-// المتغيّرات السرية المطلوبة: GEMINI_API_KEY  (واختياري GEMINI_MODEL)
+// تحفظ مفاتيح Gemini كسرّ في الخادم فلا تظهر في المتصفح.
+// الأسرار: GEMINI_API_KEY  أو  GEMINI_API_KEYS (عدة مفاتيح مفصولة بفاصلة لمضاعفة الحصّة)
+//          واختياري GEMINI_MODEL
+//
+// تدوير المفاتيح: عند نفاد حصّة مفتاح (429/تجاوز حصّة) تنتقل الدالة للمفتاح التالي تلقائياً.
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -32,11 +35,49 @@ function buildPrompt(action: string, p: { text: string; question: string; title:
   }
 }
 
+// يجمع المفاتيح من GEMINI_API_KEYS (مفصولة بفاصلة أو سطر) ومن GEMINI_API_KEY، دون تكرار
+function collectKeys(): string[] {
+  const raw = `${Deno.env.get("GEMINI_API_KEYS") || ""},${Deno.env.get("GEMINI_API_KEY") || ""}`;
+  const keys = raw.split(/[,\n\s]+/).map((s) => s.trim()).filter(Boolean);
+  return [...new Set(keys)];
+}
+
+const isQuota = (status: number, msg: string) =>
+  status === 429 || /quota|exceeded|RESOURCE_EXHAUSTED|rate.?limit|too many/i.test(msg || "");
+
+// ينادي Gemini مع تدوير المفاتيح: يبدأ من مفتاح عشوائي، وعند تجاوز الحصّة ينتقل للتالي
+async function callGemini(model: string, keys: string[], parts: unknown[], genCfg: Record<string, unknown>) {
+  let lastErr = "خطأ من Gemini", lastStatus = 500;
+  const start = Math.floor(Math.random() * keys.length);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[(start + i) % keys.length];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    let res: Response, data: any;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: genCfg }),
+      });
+      data = await res.json();
+    } catch (e) { lastErr = String((e as Error)?.message || e); lastStatus = 502; continue; }
+    if (res.ok) {
+      const out = (data?.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || "").join("").trim();
+      return { ok: true, text: out, status: 200 };
+    }
+    lastErr = data?.error?.message || "خطأ من Gemini";
+    lastStatus = res.status;
+    // تجاوز حصّة → جرّب المفتاح التالي؛ خطأ آخر → أعده فوراً
+    if (!isQuota(res.status, lastErr)) return { ok: false, error: lastErr, status: res.status };
+  }
+  return { ok: false, error: lastErr, status: lastStatus };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!KEY) return json({ error: "مفتاح Gemini غير مضبوط في الخادم (GEMINI_API_KEY)" }, 500);
+    const KEYS = collectKeys();
+    if (!KEYS.length) return json({ error: "مفتاح Gemini غير مضبوط في الخادم (GEMINI_API_KEY أو GEMINI_API_KEYS)" }, 500);
     const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
 
     const b = await req.json().catch(() => ({}));
@@ -60,19 +101,10 @@ Deno.serve(async (req) => {
       parts = [{ text: buildPrompt(action, payload) }];
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
-    const gRes = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: genCfg,
-      }),
-    });
-    const data = await gRes.json();
-    if (!gRes.ok) return json({ error: data?.error?.message || "خطأ من Gemini" }, 500);
-    const out = (data?.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || "").join("").trim();
-    return json({ text: out || "لم يصل رد." });
+    const r = await callGemini(MODEL, KEYS, parts, genCfg);
+    // نعيد حالة 429 عند تجاوز الحصّة كي يتعرّف عليها العميل وينتظر ويعيد المحاولة
+    if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
+    return json({ text: r.text || "لم يصل رد." });
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
