@@ -1775,10 +1775,11 @@ const Reader = (() => {
     const d = $(id);
     const was = d.classList.contains('open');
     closeDrawers();
-    if (!was) { d.classList.add('open'); showUI(); }
+    if (!was) { d.classList.add('open'); $('#reader').classList.add('drawer-open'); showUI(); }
   }
   function closeDrawers() {
     document.querySelectorAll('.r-drawer').forEach((d) => d.classList.remove('open'));
+    $('#reader').classList.remove('drawer-open');
   }
 
   /* ═══════ ربط الأحداث ═══════ */
@@ -1790,6 +1791,9 @@ const Reader = (() => {
     $('#r-prev').onclick = () => { prev(); bump(); };
     $('#r-btn-settings').onclick = () => toggleDrawer('#settings-drawer');
     $('#r-btn-toc').onclick = () => toggleDrawer('#toc-drawer');
+    // إغلاق الأدراج: لمس الخلفية أو زر ✕
+    { const bd = $('#r-drawer-backdrop'); if (bd) bd.onclick = closeDrawers; }
+    document.querySelectorAll('[data-close-drawer]').forEach((b) => (b.onclick = closeDrawers));
     $('#r-btn-bookmark').onclick = toggleBookmark;
     $('#r-ribbon').onclick = toggleBookmark;
     $('#r-btn-full').onclick = () => {

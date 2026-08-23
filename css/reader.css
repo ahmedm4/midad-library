@@ -258,6 +258,16 @@
   padding: 26px 24px; overflow-y: auto; transition: right .4s cubic-bezier(.25,.9,.3,1);
   box-shadow: -30px 0 60px rgba(0,0,0,.45); color: #eae4f2; display: flex; flex-direction: column; }
 .r-drawer.open { right: 0; }
+/* خلفية معتمة خلف الدرج: لمسها يُغلق الدرج (أفضل ممارسة للأدراج الجانبية) */
+.r-drawer-backdrop { position: absolute; inset: 0; z-index: 118; background: rgba(8,5,16,.5);
+  opacity: 0; pointer-events: none; transition: opacity .35s; backdrop-filter: blur(1px); }
+#reader.drawer-open .r-drawer-backdrop { opacity: 1; pointer-events: auto; }
+/* زر إغلاق داخل الدرج */
+.r-drawer-close { position: absolute; top: 14px; inset-inline-end: 14px; z-index: 2;
+  width: 34px; height: 34px; border-radius: 50%; font-size: 15px; color: #cfc7e0;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+  display: flex; align-items: center; justify-content: center; }
+.r-drawer-close:hover { background: rgba(255,255,255,.14); color: #fff; }
 .r-drawer-right { right: auto; left: -400px; border-inline-start: none;
   border-inline-end: 1px solid rgba(255,255,255,.09); transition: left .4s cubic-bezier(.25,.9,.3,1);
   box-shadow: 30px 0 60px rgba(0,0,0,.45); }
@@ -298,7 +308,7 @@
 
 /* درج الفهرس */
 .drawer-tabs { display: flex; gap: 6px; background: rgba(0,0,0,.3); padding: 5px;
-  border-radius: 12px; margin-bottom: 16px; }
+  border-radius: 12px; margin-bottom: 16px; margin-inline-end: 46px; } /* مساحة لزر الإغلاق */
 .drawer-tabs button { flex: 1; padding: 9px; border-radius: 8px; font-size: 13.5px;
   color: #a89fc0; font-weight: 600; }
 .drawer-tabs button.active { background: rgba(217,169,79,.16); color: #ffe9bd; }
@@ -371,15 +381,19 @@
 @media (max-width: 760px) {
   .r-viewport { inset: 30px 22px 40px; }
   .r-paper { width: calc(100vw - 28px) !important; flex-basis: calc(100vw - 28px) !important; }
-  .r-drawer { width: 88vw; }
   .r-page-label, .r-time-left { min-width: 0; }
   .r-time-left { display: none; }
   .r-bottom { gap: 10px; padding: 10px 16px 12px; }
-  .r-top { padding: 10px 8px; gap: 6px; }
+  .r-top { padding: 10px 8px; gap: 6px 4px; flex-wrap: wrap; }
+  .r-tools { flex-wrap: wrap; justify-content: flex-end; }
   .r-top .icon-btn { width: 34px; height: 34px; }
   .r-top .icon-btn svg { width: 19px; height: 19px; }
+  #r-btn-full { display: none; } /* ملء الشاشة غير موثوق على الجوال ويزاحم الأزرار */
+  .r-title { flex: 1 1 auto; }
   .r-title b { font-size: 15px; }
   .r-title span { display: none; }
+  .r-drawer { width: min(92vw, 380px); }
+  .r-drawer-close { width: 38px; height: 38px; font-size: 16px; }
   .draw-bar { flex-wrap: wrap; justify-content: center; width: min(94vw, 340px);
     border-radius: 22px; bottom: 86px; }
   .zoom-pill { bottom: 12px; left: 10px; }
