@@ -1378,6 +1378,7 @@ create policy "midad_own_files" on storage.objects for all
       menu.className = 'bc-menu';
       menu.innerHTML = `
         <button data-act="stats">📊 إحصائيات قراءتك</button>
+        <button data-act="keys">🔑 فحص مفاتيح الذكاء</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
         <button data-act="restore">📥 استيراد نسخة احتياطية</button>`;
       document.body.appendChild(menu);
@@ -1388,6 +1389,7 @@ create policy "midad_own_files" on storage.objects for all
         const act = ev.target.dataset.act;
         closeCardMenu();
         if (act === 'stats') openStats();
+        else if (act === 'keys') checkAiKeys();
         else if (act === 'backup') exportBackup();
         else if (act === 'restore') $('#import-input').click();
       };
@@ -1400,6 +1402,22 @@ create policy "midad_own_files" on storage.objects for all
     const sm = $('#stats-modal');
     sm.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => (sm.hidden = true)));
     sm.onclick = (e) => { if (e.target === sm) sm.hidden = true; };
+  }
+
+  // فحص مفاتيح الذكاء المُحمّلة في دالة الخادم (للتأكد من تعدّدها وتمايزها)
+  async function checkAiKeys() {
+    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
+      return toast('فعّل المزامنة وسجّل الدخول أولاً');
+    }
+    toast('⏳ جارٍ الفحص…');
+    try {
+      const res = await Cloud.aiInvoke({ action: 'diag' });
+      await uiConfirm(
+        `${res}\n\nملاحظة: تعدّد المفاتيح يفيد فقط إذا كان كل مفتاح من حساب Google مختلف (حصص منفصلة). المفاتيح من نفس الحساب تتشارك الحصّة.`,
+        { title: '🔑 مفاتيح الذكاء', okText: 'حسناً', cancelText: 'إغلاق', icon: '🔑' });
+    } catch (e) {
+      toast('تعذّر الفحص: ' + ((e && e.message) || 'خطأ'));
+    }
   }
 
   function openStats() {

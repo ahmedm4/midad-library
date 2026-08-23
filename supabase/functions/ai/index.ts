@@ -83,6 +83,13 @@ Deno.serve(async (req) => {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "ask");
 
+    // ── تشخيص: عدد المفاتيح وبصماتها (آخر ٤ أحرف فقط) للتأكد من التحميل والتمايز ──
+    if (action === "diag") {
+      const fps = KEYS.map((k) => "…" + k.slice(-4));
+      const distinct = new Set(fps).size;
+      return json({ text: `عدد المفاتيح المُحمّلة: ${KEYS.length}\nالمتمايزة: ${distinct}\nالبصمات: ${fps.join("، ")}\nالنموذج: ${MODEL}` });
+    }
+
     // ── OCR: استخراج نص صفحة مصوّرة عبر رؤية Gemini ──
     let parts: unknown[];
     let genCfg: Record<string, unknown> = { temperature: 0.4, maxOutputTokens: 2048 };
