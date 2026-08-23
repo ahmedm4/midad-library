@@ -390,7 +390,7 @@ create policy "midad_own_files" on storage.objects for all
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b || b.type !== 'pdf') return;
     const existing = await Store.getFulltext(id);
-    if (existing && existing.ocr) {
+    if (existing && existing.ocr && (existing.text || '').trim()) {
       if (!(await uiConfirm('سبق استخراج نص هذا الكتاب. إعادة الاستخراج قد تستغرق وقتاً وتستهلك من حصّتك.', { title: 'إعادة استخراج النص؟', okText: 'أعد الاستخراج', icon: '🔎' }))) return;
     }
     let blob = await Store.getPayload(id);
@@ -419,7 +419,7 @@ create policy "midad_own_files" on storage.objects for all
       const buf = await blob.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
       const N = pdf.numPages;
-      let text = ''; const pageStarts = []; let done = 0, empties = 0;
+      let text = ''; const pageStarts = []; let done = 0, empties = 0, firstError = null;
       for (let n = 1; n <= N; n++) {
         if (cancelled) break;
         pageStarts.push(text.length);
@@ -437,16 +437,32 @@ create policy "midad_own_files" on storage.objects for all
           const t = (pageText || '').trim();
           if (!t) empties++;
           text += t + '\n\n';
-        } catch (e) { console.error('ocr page', n, e); text += '\n\n'; }
+        } catch (e) {
+          console.error('ocr page', n, e);
+          if (!firstError) firstError = (e && e.message) || 'خطأ في الاتصال';
+          text += '\n\n';
+          // إن فشلت أول صفحة باستدعاء الخدمة فالغالب أنها مشكلة عامة (دالة ai غير محدّثة) — أوقف بدل استهلاك ٤٠٠ نداء
+          if (done === 0) { break; }
+        }
         done++;
         fill.style.width = Math.round((done / N) * 100) + '%';
       }
       try { await pdf.destroy(); } catch {}
-      if (cancelled && !text.trim()) { toast('أُلغي الاستخراج'); return; }
+      overlay.remove(); // أغلق نافذة التقدّم
+      // لا نحفظ نتيجة فارغة (كي لا يعلَق الكتاب في حالة «مُستخرَج لكن بلا نص»)
+      if (!text.trim()) {
+        if (firstError) {
+          await uiConfirm(
+            `تعذّر استخراج النص: ${firstError}\n\nغالباً لأن دالة الذكاء «ai» في مشروع Supabase لم تُحدَّث بعد بإجراء الاستخراج (OCR). حدّثها ثم أعد المحاولة.`,
+            { title: 'فشل الاستخراج', okText: 'حسناً', cancelText: 'إغلاق', icon: '⚠️' });
+        } else {
+          toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة');
+        }
+        return;
+      }
       await Store.saveFulltext(id, { text, pageStarts, ocr: true });
       if (window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn()) Cloud.pushBook(id); // زامِن نص الـOCR لبقية الأجهزة
-      overlay.remove(); // أغلق نافذة التقدّم قبل عرض الخيار
-      if (empties === done) { toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة'); return; }
+      if (cancelled) toast(`حُفظ نص ${done} صفحة ✓`, 'gold');
       // اعرض أين يُوجد النص: إمكانية إنشاء نسخة نصية قابلة للقراءة فوراً
       const make = await uiConfirm(
         `تم استخراج نص ${done} صفحة ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.\nهل تنشئ منه نسخة نصّية مستقلّة تقرأها وتنسّقها بكامل المميزات؟`,
