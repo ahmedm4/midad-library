@@ -419,54 +419,82 @@ create policy "midad_own_files" on storage.objects for all
       const buf = await blob.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
       const N = pdf.numPages;
-      let text = ''; const pageStarts = []; let done = 0, empties = 0, firstError = null;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const isRateErr = (m) => /quota|rate.?limit|exceeded|RESOURCE_EXHAUSTED|429|retry in|too many/i.test(m || '');
+      let text = ''; const pageStarts = []; let done = 0, empties = 0, stopError = null;
       for (let n = 1; n <= N; n++) {
         if (cancelled) break;
         pageStarts.push(text.length);
         status.textContent = `استخراج الصفحة ${n} من ${N}…`;
-        try {
-          const page = await pdf.getPage(n);
-          const v1 = page.getViewport({ scale: 1 });
-          const scale = Math.min(2.2, 1600 / Math.max(v1.width, v1.height)); // دقّة كافية للـOCR دون تضخيم
-          const vp = page.getViewport({ scale });
-          const canvas = document.createElement('canvas');
-          canvas.width = vp.width; canvas.height = vp.height;
-          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
-          const base64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
-          const pageText = await Cloud.aiInvoke({ action: 'ocr', image: base64, mimeType: 'image/jpeg' });
-          const t = (pageText || '').trim();
-          if (!t) empties++;
-          text += t + '\n\n';
-        } catch (e) {
-          console.error('ocr page', n, e);
-          if (!firstError) firstError = (e && e.message) || 'خطأ في الاتصال';
-          text += '\n\n';
-          // إن فشلت أول صفحة باستدعاء الخدمة فالغالب أنها مشكلة عامة (دالة ai غير محدّثة) — أوقف بدل استهلاك ٤٠٠ نداء
-          if (done === 0) { break; }
+        let pageOk = false, attempt = 0;
+        while (!pageOk && !cancelled) {
+          try {
+            const page = await pdf.getPage(n);
+            const v1 = page.getViewport({ scale: 1 });
+            const scale = Math.min(2.2, 1600 / Math.max(v1.width, v1.height)); // دقّة كافية للـOCR دون تضخيم
+            const vp = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width = vp.width; canvas.height = vp.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+            const base64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+            const pageText = await Cloud.aiInvoke({ action: 'ocr', image: base64, mimeType: 'image/jpeg' });
+            const t = (pageText || '').trim();
+            if (!t) empties++;
+            text += t + '\n\n';
+            pageOk = true;
+          } catch (e) {
+            const msg = (e && e.message) || 'خطأ في الاتصال';
+            if (isRateErr(msg)) {
+              // احترام حدّ المعدّل: انتظر الزمن المقترح ثم أعد المحاولة لنفس الصفحة
+              attempt++;
+              if (attempt > 8) { stopError = msg; break; } // غالباً الحصّة اليومية استُنفدت
+              const mm = msg.match(/retry in ([\d.]+)\s*s/i);
+              let wait = mm ? Math.ceil(parseFloat(mm[1])) + 2 : 35;
+              wait = Math.max(5, Math.min(wait, 65));
+              for (let s = wait; s > 0 && !cancelled; s--) {
+                status.textContent = `تجاوزتَ حدّ الطلبات المؤقّت — إعادة المحاولة بعد ${s}ث (صفحة ${n}/${N})`;
+                await sleep(1000);
+              }
+            } else {
+              console.error('ocr page', n, e);
+              stopError = msg; break; // خطأ حقيقي (اتصال/دالة) — أوقف
+            }
+          }
         }
+        if (stopError) break;
+        if (!pageOk) break; // أُلغي أثناء الانتظار
         done++;
         fill.style.width = Math.round((done / N) * 100) + '%';
+        await sleep(400); // تباعد لطيف يقلّل ملامسة حدّ المعدّل
       }
       try { await pdf.destroy(); } catch {}
       overlay.remove(); // أغلق نافذة التقدّم
+      const hasText = !!text.trim();
       // لا نحفظ نتيجة فارغة (كي لا يعلَق الكتاب في حالة «مُستخرَج لكن بلا نص»)
-      if (!text.trim()) {
-        if (firstError) {
+      if (!hasText) {
+        if (stopError && isRateErr(stopError)) {
           await uiConfirm(
-            `تعذّر استخراج النص: ${firstError}\n\nغالباً لأن دالة الذكاء «ai» في مشروع Supabase لم تُحدَّث بعد بإجراء الاستخراج (OCR). حدّثها ثم أعد المحاولة.`,
+            'تجاوزتَ حصّة Gemini المجانية (٢٠ طلباً في الدقيقة، وحدّ يومي محدود). كل صفحة تعادل طلباً واحداً.\nانتظر دقيقة ثم أعد المحاولة، أو استخرج الكتب الكبيرة على دفعات عبر أيام.',
+            { title: 'تجاوزتَ حصّة الاستخراج', okText: 'حسناً', cancelText: 'إغلاق', icon: '⏳' });
+        } else if (stopError) {
+          await uiConfirm(
+            `تعذّر استخراج النص: ${stopError}\n\nإن تكرّر، فتأكّد أن دالة الذكاء «ai» في Supabase محدّثة بإجراء الاستخراج (OCR).`,
             { title: 'فشل الاستخراج', okText: 'حسناً', cancelText: 'إغلاق', icon: '⚠️' });
         } else {
           toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة');
         }
         return;
       }
+      // نجاح (كامل أو جزئي): احفظ ما استُخرج
       await Store.saveFulltext(id, { text, pageStarts, ocr: true });
       if (window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn()) Cloud.pushBook(id); // زامِن نص الـOCR لبقية الأجهزة
-      if (cancelled) toast(`حُفظ نص ${done} صفحة ✓`, 'gold');
-      // اعرض أين يُوجد النص: إمكانية إنشاء نسخة نصية قابلة للقراءة فوراً
+      const partial = (stopError || cancelled) && done < N;
+      const okText = partial
+        ? `استُخرج نص ${done} من ${N} صفحة${stopError && isRateErr(stopError) ? ' ثم تجاوزتَ الحصّة' : ''}. المستخرَج محفوظ وجاهز، ويمكنك إكمال الباقي لاحقاً بإعادة الاستخراج.`
+        : `تم استخراج نص ${done} صفحة ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.`;
       const make = await uiConfirm(
-        `تم استخراج نص ${done} صفحة ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.\nهل تنشئ منه نسخة نصّية مستقلّة تقرأها وتنسّقها بكامل المميزات؟`,
-        { title: 'اكتمل استخراج النص', okText: '📄 أنشئ نسخة نصية', cancelText: 'لاحقاً', icon: '✅' });
+        `${okText}\nهل تنشئ منه نسخة نصّية مستقلّة تقرأها وتنسّقها بكامل المميزات؟`,
+        { title: partial ? 'حُفظ المستخرَج' : 'اكتمل استخراج النص', okText: '📄 أنشئ نسخة نصية', cancelText: 'لاحقاً', icon: partial ? '⏳' : '✅' });
       if (make) createTextFromOcr(id, true);
     } catch (e) {
       console.error('ocr', e);
