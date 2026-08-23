@@ -159,8 +159,13 @@ const Cloud = (() => {
     const meta = { ...(r.meta || {}), id: r.id, updatedAt: new Date(r.updated_at).getTime(), cloudHasFile: r.has_file };
     // نص الكتاب يُخزَّن مباشرة؛ ملف PDF يُنزَّل عند أول فتح
     let payload;
-    if (r.content != null) payload = r.content;
-    else payload = undefined; // PDF: لاحقاً عبر ensurePayload
+    if (r.content != null) {
+      if (meta.type === 'pdf') {
+        // للكتب المصوّرة: content يحمل نص الـOCR المُزامَن → احفظه للبحث/الذكاء/النسخة النصية
+        try { const ft = JSON.parse(r.content); if (ft && ft.text != null) await Store.saveFulltext(r.id, ft); } catch {}
+        payload = undefined; // ملف PDF نفسه يُنزَّل عبر ensurePayload
+      } else payload = r.content; // كتاب نصي: المحتوى هو النص
+    } else payload = undefined;
     const existing = await Store.getBook(r.id);
     if (existing) await Store.updateBook(r.id, meta);
     else await Store.addBook(meta, payload);
@@ -194,6 +199,10 @@ const Cloud = (() => {
       } else row.has_file = true;
     } else if (typeof payload === 'string') {
       row.content = payload;
+    }
+    // مزامنة نص الـOCR للكتب المصوّرة عبر عمود content (نص الكتاب المصوّر لا ملفه)
+    if (b.type === 'pdf') {
+      try { const ft = await Store.getFulltext(id); if (ft && ft.ocr && ft.text != null) row.content = JSON.stringify(ft); } catch {}
     }
     const { error } = await sb.from(TABLE).upsert(row);
     if (error) throw error;

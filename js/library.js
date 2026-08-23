@@ -444,6 +444,7 @@ create policy "midad_own_files" on storage.objects for all
       try { await pdf.destroy(); } catch {}
       if (cancelled && !text.trim()) { toast('أُلغي الاستخراج'); return; }
       await Store.saveFulltext(id, { text, pageStarts, ocr: true });
+      if (window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn()) Cloud.pushBook(id); // زامِن نص الـOCR لبقية الأجهزة
       overlay.remove(); // أغلق نافذة التقدّم قبل عرض الخيار
       if (empties === done) { toast('لم يُعثر على نص واضح في الصفحات — قد تكون جودة المسح منخفضة'); return; }
       // اعرض أين يُوجد النص: إمكانية إنشاء نسخة نصية قابلة للقراءة فوراً
