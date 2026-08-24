@@ -21,7 +21,15 @@ const Reader = (() => {
   const FONTS = [
     { css: "'Noto Naskh Arabic', serif", label: 'نسخ' },
     { css: "'Amiri', serif", label: 'أميري' },
+    { css: "'Scheherazade New', serif", label: 'شهرزاد' },
+    { css: "'Markazi Text', serif", label: 'مركزي' },
+    { css: "'Lateef', serif", label: 'لطيف' },
+    { css: "'El Messiri', sans-serif", label: 'المسيري' },
+    { css: "'IBM Plex Sans Arabic', sans-serif", label: 'بلكس' },
     { css: "'Tajawal', sans-serif", label: 'تجوّل' },
+    { css: "'Cairo', sans-serif", label: 'القاهرة' },
+    { css: "'Almarai', sans-serif", label: 'المراعي' },
+    { css: "'Reem Kufi', sans-serif", label: 'ريم كوفي' },
     { css: "'Aref Ruqaa', serif", label: 'رقعة' },
   ];
   const GAP = 64;
