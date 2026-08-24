@@ -340,6 +340,8 @@ input, select, textarea { font-family: inherit; }
 .url-row .btn-gold { white-space: nowrap; }
 .url-hint { margin-top: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.8; }
 
+.fld-hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+#meta-font option { font-size: 15px; }
 #paste-text { width: 100%; min-height: 180px; resize: vertical; padding: 16px;
   border-radius: 14px; border: 1px solid var(--card-line); background: rgba(0,0,0,.28);
   color: var(--cream); font-size: 15px; line-height: 1.8; outline: none; }
@@ -551,31 +553,35 @@ input, select, textarea { font-family: inherit; }
 .fmt-toolbar .fmt-special.on { background: rgba(217,169,79,.28); }
 .fmt-sep { width: 1px; background: var(--card-line); margin: 2px 4px; }
 
-.fmt-preview-pane { --paper: #f4e4c9; --ink-c: #43301a;
+.fmt-preview-pane, .fmt-rich { --paper: #f4e4c9; --ink-c: #43301a;
   background: var(--paper); color: var(--ink-c); border-radius: 14px;
   padding: 26px 30px; min-height: 200px; max-height: 46vh; overflow-y: auto;
   font-family: 'Noto Naskh Arabic', serif; font-size: 18px; line-height: 1.95; text-align: justify;
   box-shadow: inset 0 0 40px rgba(0,0,0,.12); direction: rtl; }
-/* استعمل أنماط النص الغنية (.r-content) داخل المعاينة */
-.fmt-preview-pane h2 { font-family: 'Amiri', serif; font-size: 1.5em; text-align: center; margin: .8em 0 .6em; }
-.fmt-preview-pane h3 { font-family: 'Amiri', serif; font-size: 1.22em; margin: .8em 0 .4em; }
-.fmt-preview-pane h4 { font-family: 'Amiri', serif; font-size: 1.08em; margin: .7em 0 .4em; }
-.fmt-preview-pane p { margin-bottom: .85em; }
-.fmt-preview-pane p.center { text-align: center; }
-.fmt-preview-pane strong { font-weight: 700; }
-.fmt-preview-pane em { font-style: italic; }
-.fmt-preview-pane mark.static-hl { background: rgba(246,215,67,.45); border-radius: 3px; padding: 0 2px; }
-.fmt-preview-pane blockquote { margin: 1em 0; padding: .4em 1em; border-inline-start: 3px solid rgba(67,48,26,.4);
+.fmt-rich { outline: none; cursor: text; }
+.fmt-rich:focus { box-shadow: inset 0 0 40px rgba(0,0,0,.12), 0 0 0 2px rgba(217,169,79,.55); }
+.fmt-rich:empty::before { content: 'اكتب هنا… واستخدم أزرار التنسيق فيظهر الشكل مباشرةً'; color: rgba(67,48,26,.45); }
+/* استعمل أنماط النص الغنية داخل المعاينة والمحرّر المباشر */
+:is(.fmt-preview-pane, .fmt-rich) h1 { font-family: 'Amiri', serif; font-size: 1.6em; text-align: center; margin: .8em 0 .6em; }
+:is(.fmt-preview-pane, .fmt-rich) h2 { font-family: 'Amiri', serif; font-size: 1.5em; text-align: center; margin: .8em 0 .6em; }
+:is(.fmt-preview-pane, .fmt-rich) h3 { font-family: 'Amiri', serif; font-size: 1.22em; margin: .8em 0 .4em; }
+:is(.fmt-preview-pane, .fmt-rich) h4 { font-family: 'Amiri', serif; font-size: 1.08em; margin: .7em 0 .4em; }
+:is(.fmt-preview-pane, .fmt-rich) p { margin-bottom: .85em; }
+:is(.fmt-preview-pane, .fmt-rich) p.center, :is(.fmt-preview-pane, .fmt-rich) [style*="text-align: center"] { text-align: center; }
+:is(.fmt-preview-pane, .fmt-rich) strong, :is(.fmt-preview-pane, .fmt-rich) b { font-weight: 700; }
+:is(.fmt-preview-pane, .fmt-rich) em, :is(.fmt-preview-pane, .fmt-rich) i { font-style: italic; }
+:is(.fmt-preview-pane, .fmt-rich) mark { background: rgba(246,215,67,.45); border-radius: 3px; padding: 0 2px; }
+:is(.fmt-preview-pane, .fmt-rich) blockquote { margin: 1em 0; padding: .4em 1em; border-inline-start: 3px solid rgba(67,48,26,.4);
   font-family: 'Amiri', serif; font-style: italic; background: rgba(67,48,26,.05); border-radius: 0 8px 8px 0; }
-.fmt-preview-pane ul, .fmt-preview-pane ol { margin: .7em 1.4em .7em 0; padding-inline-start: 1.1em; }
-.fmt-preview-pane li { margin-bottom: .35em; }
-.fmt-preview-pane hr.orn { border: none; text-align: center; margin: 1.4em auto; }
-.fmt-preview-pane hr.orn::before { content: '❦'; opacity: .5; font-size: 1.3em; }
-.fmt-preview-pane .poem { margin: 1.1em 0; text-align: center; }
-.fmt-preview-pane .verse { display: flex; justify-content: center; gap: 8%; margin-bottom: .4em; font-family: 'Amiri', serif; }
-.fmt-preview-pane .verse span { flex: 0 1 42%; }
-.fmt-preview-pane .verse span:first-child { text-align: left; }
-.fmt-preview-pane .verse span:last-child { text-align: right; }
+:is(.fmt-preview-pane, .fmt-rich) ul, :is(.fmt-preview-pane, .fmt-rich) ol { margin: .7em 1.4em .7em 0; padding-inline-start: 1.1em; }
+:is(.fmt-preview-pane, .fmt-rich) li { margin-bottom: .35em; }
+:is(.fmt-preview-pane, .fmt-rich) hr { border: none; text-align: center; margin: 1.4em auto; }
+:is(.fmt-preview-pane, .fmt-rich) hr::before, :is(.fmt-preview-pane, .fmt-rich) hr.orn::before { content: '❦'; opacity: .5; font-size: 1.3em; }
+:is(.fmt-preview-pane, .fmt-rich) .poem { margin: 1.1em 0; text-align: center; }
+:is(.fmt-preview-pane, .fmt-rich) .verse { display: flex; justify-content: center; gap: 8%; margin-bottom: .4em; font-family: 'Amiri', serif; }
+:is(.fmt-preview-pane, .fmt-rich) .verse span { flex: 0 1 42%; }
+:is(.fmt-preview-pane, .fmt-rich) .verse span:first-child { text-align: left; }
+:is(.fmt-preview-pane, .fmt-rich) .verse span:last-child { text-align: right; }
 
 /* المحرّر: معاينة جانبية حيّة + وضع ملء الشاشة */
 .fmt-editor { display: flex; flex-direction: column; gap: 12px; }
@@ -584,6 +590,7 @@ input, select, textarea { font-family: inherit; }
 .fmt-editor.split .fmt-preview-pane { flex: 1 1 50%; max-height: none; margin: 0; }
 #add-modal.editor-max .modal { width: min(1240px, 97vw); max-width: none; max-height: 95vh; }
 #add-modal.editor-max #pane-paste { display: flex; flex-direction: column; }
+#add-modal.editor-max #fmt-rich { min-height: 66vh; max-height: 80vh; }
 #add-modal.editor-max .fmt-editor.split #paste-text,
 #add-modal.editor-max .fmt-editor.split .fmt-preview-pane { min-height: 62vh; max-height: 74vh; }
 #add-modal.editor-max .fmt-editor.split .fmt-preview-pane { overflow-y: auto; }

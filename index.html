@@ -139,7 +139,8 @@
         <button type="button" data-fmt="verse" title="بيت شعر">🪶</button>
         <span class="fmt-sep"></span>
         <button type="button" data-fmt="clean" class="fmt-special" title="تنظيف تلقائي للأسطر المكسورة وأرقام الصفحات">✨ تنظيف</button>
-        <button type="button" data-fmt="split" class="fmt-special" title="معاينة جانبية حيّة">◫ معاينة حيّة</button>
+        <button type="button" data-fmt="rich" class="fmt-special" title="تنسيق مباشر: اكتب فترى الشكل النهائي فوراً">🖋 تنسيق مباشر</button>
+        <button type="button" data-fmt="split" class="fmt-special" title="معاينة جانبية حيّة (وضع الرموز)">◫ معاينة</button>
         <button type="button" data-fmt="full" class="fmt-special" title="محرّر ملء الشاشة">⛶ توسيع</button>
       </div>
       <div class="fmt-editor" id="fmt-editor">
@@ -154,6 +155,7 @@
 - عنصر قائمة
 / صدر البيت | عجز البيت
 --- فاصل"></textarea>
+        <div class="fmt-rich" id="fmt-rich" contenteditable="true" dir="rtl" spellcheck="false" hidden></div>
         <div class="fmt-preview-pane" id="fmt-preview-pane" hidden></div>
       </div>
     </div>
@@ -180,6 +182,9 @@
         <label>المؤلف<input id="meta-author" placeholder="اختياري"></label>
         <label>التصنيف
           <select id="meta-category"></select>
+        </label>
+        <label>خط الكتاب <span class="fld-hint">(للتنسيق وتصدير PDF)</span>
+          <select id="meta-font"></select>
         </label>
       </div>
     </div>

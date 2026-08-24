@@ -1,6 +1,22 @@
 /* ═══════ مِداد — واجهة المكتبة ═══════ */
 const Library = (() => {
   const CATEGORIES = ['رواية', 'دين', 'تاريخ', 'علوم', 'تطوير ذات', 'أدب وشعر', 'أطفال', 'أخرى'];
+  // خطوط الكتاب (تُطبَّق في المحرّر والمعاينة وتصدير PDF) — متوافقة مع خطوط القارئ
+  const BOOK_FONTS = [
+    { css: "'Noto Naskh Arabic', serif", label: 'نسخ' },
+    { css: "'Amiri', serif", label: 'أميري' },
+    { css: "'Scheherazade New', serif", label: 'شهرزاد' },
+    { css: "'Markazi Text', serif", label: 'مركزي' },
+    { css: "'Lateef', serif", label: 'لطيف' },
+    { css: "'El Messiri', sans-serif", label: 'المسيري' },
+    { css: "'IBM Plex Sans Arabic', sans-serif", label: 'IBM بلكس' },
+    { css: "'Tajawal', sans-serif", label: 'تجوّل' },
+    { css: "'Cairo', sans-serif", label: 'القاهرة' },
+    { css: "'Almarai', sans-serif", label: 'المراعي' },
+    { css: "'Reem Kufi', sans-serif", label: 'ريم كوفي' },
+    { css: "'Aref Ruqaa', serif", label: 'رقعة' },
+  ];
+  const FONT_LINK = 'https://fonts.googleapis.com/css2?family=Almarai:wght@400;700;800&family=Amiri:ital,wght@0,400;0,700;1,400&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700&family=El+Messiri:wght@400;600;700&family=IBM+Plex+Sans+Arabic:wght@400;600;700&family=Lateef:wght@400;700&family=Markazi+Text:wght@400;600;700&family=Noto+Naskh+Arabic:wght@400;600;700&family=Reem+Kufi:wght@400;600;700&family=Scheherazade+New:wght@400;700&family=Tajawal:wght@400;500;700&display=swap';
   const COVER_PALETTES = [
     ['#3b2a5e', '#1d1436', '#c9a35f'], ['#5e2a3b', '#361420', '#e0b070'],
     ['#1e4a4a', '#0e2626', '#8fd0c0'], ['#5e4a1e', '#33280d', '#f0d78c'],
@@ -808,16 +824,17 @@ create policy "midad_own_files" on storage.objects for all
     const w = window.open('', '_blank');
     if (!w) return toast('اسمح بالنوافذ المنبثقة لتصدير PDF ثم أعد المحاولة');
     const title = esc(b.title || 'كتاب'), author = esc(b.author || '');
+    const bodyFont = b.font || "'Noto Naskh Arabic', serif";
     const doc = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
 <title>${title}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="${FONT_LINK}" rel="stylesheet">
 <style>
   @page { size: A4; margin: 20mm 18mm 18mm; }
   @page { @bottom-center { content: counter(page); font-family: 'Amiri', serif; color: #7a6a4a; font-size: 10pt; } }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
-  body { font-family: 'Noto Naskh Arabic', serif; color: #1f1a12; font-size: 13.2pt; line-height: 1.95;
+  body { font-family: ${bodyFont}; color: #1f1a12; font-size: 13.2pt; line-height: 1.95;
     text-align: justify; direction: rtl; }
   .cover { display: flex; flex-direction: column; align-items: center; justify-content: center;
     text-align: center; height: 86vh; page-break-after: always; }
@@ -889,6 +906,16 @@ create policy "midad_own_files" on storage.objects for all
 
   function fillCategorySelect() {
     $('#meta-category').innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join('');
+    $('#meta-font').innerHTML = BOOK_FONTS.map((f) => `<option value="${esc(f.css)}">${esc(f.label)}</option>`).join('');
+  }
+
+  // طبّق خط الكتاب المختار على المحرّر المباشر والمعاينة (تنسيق حيّ بالخط)
+  function applyEditorFont() {
+    const f = $('#meta-font') ? $('#meta-font').value : '';
+    if (!f) return;
+    const rich = $('#fmt-rich'), prev = $('#fmt-preview-pane');
+    if (rich) rich.style.fontFamily = f;
+    if (prev) prev.style.fontFamily = f;
   }
 
   /* ─── نافذة الإضافة / التعديل ─── */
@@ -945,6 +972,7 @@ create policy "midad_own_files" on storage.objects for all
 
     $('#meta-title').oninput = updateCoverPreview;
     $('#meta-author').oninput = updateCoverPreview;
+    $('#meta-font').onchange = applyEditorFont;
     $('#btn-save-book').onclick = saveBook;
     // استبدال ملف الكتاب في وضع التعديل
     $('#btn-replace-file').onclick = () => {
@@ -956,11 +984,68 @@ create policy "midad_own_files" on storage.objects for all
     wireFmtToolbar();
   }
 
+  /* ─── تحويل محتوى المحرّر المباشر (HTML) إلى صيغة الكتاب النصية ─── */
+  function richToMarkup(root) {
+    const inlineOf = (node) => {
+      let s = '';
+      node.childNodes.forEach((n) => {
+        if (n.nodeType === 3) { s += n.textContent; return; }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName.toLowerCase(), inner = inlineOf(n);
+        if (tag === 'b' || tag === 'strong') s += inner.trim() ? '**' + inner.trim() + '**' : inner;
+        else if (tag === 'i' || tag === 'em') s += inner.trim() ? '_' + inner.trim() + '_' : inner;
+        else if (tag === 'mark') s += inner.trim() ? '==' + inner.trim() + '==' : inner;
+        else if (tag === 'br') s += '\n';
+        else s += inner;
+      });
+      return s;
+    };
+    const centered = (el) => (el.style && el.style.textAlign === 'center') || (el.classList && el.classList.contains('center'));
+    const blocks = [];
+    const walk = (parent) => {
+      parent.childNodes.forEach((n) => {
+        if (n.nodeType === 3) { const t = n.textContent.trim(); if (t) blocks.push(t); return; }
+        if (n.nodeType !== 1) return;
+        const tag = n.tagName.toLowerCase();
+        // محاذاة عكس buildHTML: h2←«# »، h3←«## »، h4←«### »
+        if (tag === 'h1' || tag === 'h2') blocks.push('# ' + inlineOf(n).trim());
+        else if (tag === 'h3') blocks.push('## ' + inlineOf(n).trim());
+        else if (tag === 'h4') blocks.push('### ' + inlineOf(n).trim());
+        else if (tag === 'blockquote') blocks.push('> ' + inlineOf(n).trim());
+        else if (tag === 'ul' || tag === 'ol') {
+          const p = tag === 'ol' ? '1. ' : '- ';
+          const items = [...n.querySelectorAll(':scope > li')].map((li) => p + inlineOf(li).trim()).filter((x) => x.trim() !== p.trim());
+          if (items.length) blocks.push(items.join('\n'));
+        } else if (tag === 'hr') blocks.push('---');
+        else if (n.classList && n.classList.contains('poem')) {
+          const vs = [...n.querySelectorAll('.verse')].map((v) => {
+            const sp = v.querySelectorAll('span');
+            return '/ ' + (sp[0] ? inlineOf(sp[0]).trim() : '') + (sp[1] ? ' | ' + inlineOf(sp[1]).trim() : '');
+          });
+          if (vs.length) blocks.push(vs.join('\n'));
+        } else if (tag === 'p' || tag === 'div') {
+          const hasBlockChild = [...n.children].some((c) => /^(H[1-6]|P|DIV|UL|OL|BLOCKQUOTE|HR)$/.test(c.tagName));
+          if (hasBlockChild) { walk(n); return; }
+          const t = inlineOf(n).trim();
+          if (t) blocks.push((centered(n) ? '~ ' : '') + t);
+        } else { const t = inlineOf(n).trim(); if (t) blocks.push(t); }
+      });
+    };
+    walk(root);
+    return blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  // إن كان المحرّر المباشر مفعّلاً، انقل محتواه إلى مربّع النص (مصدر الحفظ)
+  function syncRichEditor() {
+    const rich = $('#fmt-rich');
+    if (rich && !rich.hidden) $('#paste-text').value = richToMarkup(rich);
+  }
+
   /* ─── شريط أدوات تنسيق النص + معاينة + تنظيف ─── */
   function wireFmtToolbar() {
     const ta = $('#paste-text');
     const preview = $('#fmt-preview-pane');
-    const refreshPreview = () => { if (!preview.hidden && window.Reader) preview.innerHTML = Reader.previewHTML(ta.value); };
+    const refreshPreview = () => { if (!preview.hidden && window.Reader) { preview.innerHTML = Reader.previewHTML(ta.value); applyEditorFont(); } };
 
     const linePrefix = (prefix) => {
       const val = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
@@ -983,7 +1068,59 @@ create policy "midad_own_files" on storage.objects for all
       ta.focus(); ta.setSelectionRange(s + txt.length, s + txt.length);
     };
 
+    const rich = $('#fmt-rich');
+    const richActive = () => !rich.hidden;
+    const setBtn = (name, on) => { const b = $('#fmt-toolbar').querySelector(`[data-fmt="${name}"]`); if (b) b.classList.toggle('on', on); };
+
+    // ── وضع التنسيق المباشر (WYSIWYG) ──
+    function enterRich() {
+      if (!preview.hidden) doFmt('split'); // أغلق المعاينة الجانبية
+      rich.innerHTML = (window.Reader ? Reader.previewHTML(ta.value) : '') || '<p><br></p>';
+      ta.hidden = true; preview.hidden = true; rich.hidden = false;
+      applyEditorFont();
+      setBtn('rich', true);
+      setTimeout(() => rich.focus(), 30);
+    }
+    function exitRich() {
+      ta.value = richToMarkup(rich);
+      rich.hidden = true; ta.hidden = false;
+      setBtn('rich', false);
+      ta.focus();
+    }
+    const markSelection = () => {
+      const sel = getSelection();
+      if (!sel.rangeCount || sel.isCollapsed) return;
+      const r = sel.getRangeAt(0);
+      const m = document.createElement('mark');
+      try { r.surroundContents(m); } catch { m.appendChild(r.extractContents()); r.insertNode(m); }
+      sel.removeAllRanges();
+    };
+    const richCmd = (fmt) => {
+      const ex = (c, v) => document.execCommand(c, false, v);
+      switch (fmt) {
+        case 'bold': ex('bold'); break;
+        case 'italic': ex('italic'); break;
+        case 'mark': markSelection(); break;
+        // نُحاذي مستويات القارئ: «عنوان»→h2 (فصل)، «فرعي»→h3، «صغير»→h4
+        case 'h1': ex('formatBlock', 'h2'); break;
+        case 'h2': ex('formatBlock', 'h3'); break;
+        case 'h3': ex('formatBlock', 'h4'); break;
+        case 'quote': ex('formatBlock', 'blockquote'); break;
+        case 'center': ex('justifyCenter'); break;
+        case 'list': ex('insertUnorderedList'); break;
+        case 'numlist': ex('insertOrderedList'); break;
+        case 'hr': ex('insertHorizontalRule'); break;
+        case 'verse': ex('insertHTML', '<div class="poem"><div class="verse"><span>صدر البيت</span><span>عجز البيت</span></div></div><p><br></p>'); break;
+        case 'clean': { const md = autoCleanText(richToMarkup(rich)); rich.innerHTML = (window.Reader ? Reader.previewHTML(md) : '') || '<p><br></p>'; toast('نُظّف النص ✨'); break; }
+      }
+      rich.focus();
+    };
+
     const doFmt = (fmt) => {
+      // زر التبديل بين الوضعين
+      if (fmt === 'rich') { richActive() ? exitRich() : enterRich(); return; }
+      // في وضع التنسيق المباشر توجَّه أوامر التنسيق للسطح الغني
+      if (richActive() && !['split', 'full'].includes(fmt)) { richCmd(fmt); return; }
       switch (fmt) {
         case 'h1': linePrefix('# '); break;
         case 'h2': linePrefix('## '); break;
@@ -999,10 +1136,11 @@ create policy "midad_own_files" on storage.objects for all
         case 'verse': insert('\n/ صدر البيت | عجز البيت\n'); break;
         case 'clean': ta.value = autoCleanText(ta.value); ta.focus(); toast('نُظّف النص ✨'); break;
         case 'split': {
-          const on = preview.hidden; // كان مخفياً → سيُعرض
+          if (richActive()) exitRich();
+          const on = preview.hidden;
           preview.hidden = !on;
           $('#fmt-editor').classList.toggle('split', on);
-          $('#fmt-toolbar').querySelector('[data-fmt="split"]').classList.toggle('on', on);
+          setBtn('split', on);
           refreshPreview();
           return;
         }
@@ -1010,9 +1148,8 @@ create policy "midad_own_files" on storage.objects for all
           const modal = $('#add-modal');
           const on = !modal.classList.contains('editor-max');
           modal.classList.toggle('editor-max', on);
-          $('#fmt-toolbar').querySelector('[data-fmt="full"]').classList.toggle('on', on);
-          // في وضع ملء الشاشة نفعّل المعاينة الجانبية تلقائياً
-          if (on && preview.hidden) doFmt('split');
+          setBtn('full', on);
+          if (on && !richActive() && preview.hidden) doFmt('split');
           refreshPreview();
           return;
         }
@@ -1022,14 +1159,18 @@ create policy "midad_own_files" on storage.objects for all
 
     $('#fmt-toolbar').querySelectorAll('[data-fmt]').forEach((btn) => {
       btn.onclick = () => doFmt(btn.dataset.fmt);
+      // منع فقدان التحديد داخل السطح الغني عند الضغط على الزر
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
     });
-    // اختصارات لوحة المفاتيح داخل المحرّر
-    ta.addEventListener('keydown', (e) => {
+    // اختصارات لوحة المفاتيح (تعمل في الوضعين)
+    const shortcut = (e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
-      const k = e.key.toLowerCase();
       const map = { b: 'bold', i: 'italic', '1': 'h1', '2': 'h2', '3': 'h3' };
-      if (map[k]) { e.preventDefault(); doFmt(map[k]); }
-    });
+      const f = map[e.key.toLowerCase()];
+      if (f) { e.preventDefault(); doFmt(f); }
+    };
+    ta.addEventListener('keydown', shortcut);
+    rich.addEventListener('keydown', shortcut);
     ta.addEventListener('input', () => { if (!preview.hidden) refreshPreview(); });
   }
 
@@ -1213,6 +1354,8 @@ create policy "midad_own_files" on storage.objects for all
     $('#meta-title').value = book ? book.title : '';
     $('#meta-author').value = book ? book.author || '' : '';
     $('#meta-category').value = book ? book.category || 'أخرى' : 'رواية';
+    $('#meta-font').value = (book && book.font) || BOOK_FONTS[0].css;
+    applyEditorFont();
     // عند التعديل نخفي ألسنة المصدر؛ وللكتب النصية نعرض النص نفسه للتحرير
     $('#add-tabs').style.display = book ? 'none' : '';
     $('#replace-bar').hidden = !book;
@@ -1236,6 +1379,8 @@ create policy "midad_own_files" on storage.objects for all
     $('#add-modal').classList.remove('editor-max');
     $('#fmt-editor').classList.remove('split');
     $('#fmt-preview-pane').hidden = true;
+    const rich = $('#fmt-rich'); if (rich) { rich.hidden = true; rich.innerHTML = ''; }
+    $('#paste-text').hidden = false;
     $('#fmt-toolbar').querySelectorAll('.on').forEach((b) => b.classList.remove('on'));
   }
 
@@ -1402,12 +1547,14 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   async function saveBook() {
+    syncRichEditor(); // انقل تنسيق المحرّر المباشر إلى النص قبل الحفظ
     const title = $('#meta-title').value.trim();
     if (!title) return toast('اكتب عنوان الكتاب أولاً');
     const meta = {
       title,
       author: $('#meta-author').value.trim(),
       category: $('#meta-category').value,
+      font: $('#meta-font').value,
     };
     if (pendingCover) meta.cover = pendingCover;
 
