@@ -577,6 +577,26 @@ input, select, textarea { font-family: inherit; }
 .fmt-preview-pane .verse span:first-child { text-align: left; }
 .fmt-preview-pane .verse span:last-child { text-align: right; }
 
+/* المحرّر: معاينة جانبية حيّة + وضع ملء الشاشة */
+.fmt-editor { display: flex; flex-direction: column; gap: 12px; }
+.fmt-editor.split { flex-direction: row; align-items: stretch; }
+.fmt-editor.split #paste-text { flex: 1 1 50%; min-height: 340px; margin: 0; }
+.fmt-editor.split .fmt-preview-pane { flex: 1 1 50%; max-height: none; margin: 0; }
+#add-modal.editor-max .modal { width: min(1240px, 97vw); max-width: none; max-height: 95vh; }
+#add-modal.editor-max #pane-paste { display: flex; flex-direction: column; }
+#add-modal.editor-max .fmt-editor.split #paste-text,
+#add-modal.editor-max .fmt-editor.split .fmt-preview-pane { min-height: 62vh; max-height: 74vh; }
+#add-modal.editor-max .fmt-editor.split .fmt-preview-pane { overflow-y: auto; }
+/* حرف استهلالي أنيق لأول فقرة بعد العنوان (معاينة) */
+.fmt-preview-pane h2 + p::first-letter { font-family: 'Amiri', serif; font-size: 3.1em; float: right;
+  line-height: .78; margin: .05em .12em 0 .12em; color: #7a5a2a; font-weight: 700; }
+@media (max-width: 760px) {
+  .fmt-editor.split { flex-direction: column; }
+  #add-modal.editor-max .modal { width: 100%; max-height: 96vh; }
+  #add-modal.editor-max .fmt-editor.split #paste-text,
+  #add-modal.editor-max .fmt-editor.split .fmt-preview-pane { min-height: 38vh; max-height: 44vh; }
+}
+
 /* زر تثبيت التطبيق */
 .btn-install { display: inline-flex; align-items: center; gap: 6px; padding: 9px 15px; border-radius: 999px;
   background: linear-gradient(135deg, rgba(233,200,135,.22), rgba(217,169,79,.16)); border: 1px solid rgba(217,169,79,.5);

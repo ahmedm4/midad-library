@@ -125,21 +125,25 @@
 
     <div class="tab-pane" id="pane-paste" hidden>
       <div class="fmt-toolbar" id="fmt-toolbar">
-        <button type="button" data-fmt="h1" title="عنوان فصل"># عنوان</button>
-        <button type="button" data-fmt="h2" title="عنوان فرعي">## فرعي</button>
-        <button type="button" data-fmt="bold" title="عريض"><b>ب</b></button>
-        <button type="button" data-fmt="italic" title="مائل"><i>م</i></button>
+        <button type="button" data-fmt="h1" title="عنوان فصل (Ctrl+1)"># عنوان</button>
+        <button type="button" data-fmt="h2" title="عنوان فرعي (Ctrl+2)">## فرعي</button>
+        <button type="button" data-fmt="h3" title="عنوان صغير (Ctrl+3)">### صغير</button>
+        <button type="button" data-fmt="bold" title="عريض (Ctrl+B)"><b>ب</b></button>
+        <button type="button" data-fmt="italic" title="مائل (Ctrl+I)"><i>م</i></button>
         <button type="button" data-fmt="mark" title="تظليل">🖍</button>
         <button type="button" data-fmt="quote" title="اقتباس">❝</button>
         <button type="button" data-fmt="center" title="توسيط">◈</button>
         <button type="button" data-fmt="list" title="قائمة نقطية">•</button>
+        <button type="button" data-fmt="numlist" title="قائمة مرقّمة">١.</button>
         <button type="button" data-fmt="hr" title="فاصل زخرفي">❦</button>
         <button type="button" data-fmt="verse" title="بيت شعر">🪶</button>
         <span class="fmt-sep"></span>
         <button type="button" data-fmt="clean" class="fmt-special" title="تنظيف تلقائي للأسطر المكسورة وأرقام الصفحات">✨ تنظيف</button>
-        <button type="button" data-fmt="preview" class="fmt-special" title="معاينة الشكل النهائي">👁 معاينة</button>
+        <button type="button" data-fmt="split" class="fmt-special" title="معاينة جانبية حيّة">◫ معاينة حيّة</button>
+        <button type="button" data-fmt="full" class="fmt-special" title="محرّر ملء الشاشة">⛶ توسيع</button>
       </div>
-      <textarea id="paste-text" placeholder="الصق نص الكتاب هنا…
+      <div class="fmt-editor" id="fmt-editor">
+        <textarea id="paste-text" placeholder="الصق نص الكتاب هنا…
 
 استخدم شريط الأدوات أعلاه، أو اكتب مباشرةً:
 # عنوان الفصل
@@ -150,7 +154,8 @@
 - عنصر قائمة
 / صدر البيت | عجز البيت
 --- فاصل"></textarea>
-      <div class="fmt-preview-pane" id="fmt-preview-pane" hidden></div>
+        <div class="fmt-preview-pane" id="fmt-preview-pane" hidden></div>
+      </div>
     </div>
 
     <div class="tab-pane" id="pane-url" hidden>

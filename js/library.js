@@ -656,6 +656,7 @@ create policy "midad_own_files" on storage.objects for all
       <button data-act="shelves">📚 الرفوف…</button>
       ${b.type === 'pdf' ? '<button data-act="ocr">🔎 استخراج النص (OCR)</button>' : ''}
       ${b.type === 'pdf' ? '<button data-act="totext">📄 أنشئ نسخة نصية</button>' : ''}
+      ${b.type === 'text' ? '<button data-act="pdf">🖨 تصدير PDF</button>' : ''}
       <button data-act="edit">✏️ تعديل البيانات</button>
       <button data-act="export">⬇️ تصدير الملاحظات</button>
       <button data-act="reset">↺ تصفير التقدم</button>
@@ -671,6 +672,7 @@ create policy "midad_own_files" on storage.objects for all
       else if (act === 'shelves') openShelvesModal(b);
       else if (act === 'ocr') ocrBook(id);
       else if (act === 'totext') createTextFromOcr(id);
+      else if (act === 'pdf') exportPdf(id);
       else if (act === 'edit') openAddModal(b);
       else if (act === 'export') exportNotes(id);
       else if (act === 'reset') {
@@ -794,6 +796,77 @@ create policy "midad_own_files" on storage.objects for all
     toast('صُدّرت الملاحظات 📄', 'gold');
   }
 
+  /* ─── تصدير الكتاب إلى PDF احترافي (عبر طباعة المتصفح — يدعم العربية بامتياز) ─── */
+  async function exportPdf(id) {
+    const b = books.find((x) => x.id === id) || (await Store.getBook(id));
+    if (!b) return;
+    let text = '';
+    if (b.type === 'text') { const t = await Store.getPayload(id); text = typeof t === 'string' ? t : ''; }
+    else { const ft = await Store.getFulltext(id); text = (ft && ft.text) || ''; }
+    if (!text.trim()) return toast('لا يوجد نص للتصدير (لكتب PDF المصوّرة استخرج النص أولاً)');
+    const bodyHtml = (window.Reader && Reader.previewHTML) ? Reader.previewHTML(text) : `<p>${esc(text)}</p>`;
+    const w = window.open('', '_blank');
+    if (!w) return toast('اسمح بالنوافذ المنبثقة لتصدير PDF ثم أعد المحاولة');
+    const title = esc(b.title || 'كتاب'), author = esc(b.author || '');
+    const doc = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
+<title>${title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 20mm 18mm 18mm; }
+  @page { @bottom-center { content: counter(page); font-family: 'Amiri', serif; color: #7a6a4a; font-size: 10pt; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { font-family: 'Noto Naskh Arabic', serif; color: #1f1a12; font-size: 13.2pt; line-height: 1.95;
+    text-align: justify; direction: rtl; }
+  .cover { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; height: 86vh; page-break-after: always; }
+  .cover .orn { font-family: 'Amiri', serif; font-size: 40pt; color: #b08a3e; margin-bottom: 18pt; }
+  .cover h1 { font-family: 'Amiri', serif; font-size: 30pt; font-weight: 700; margin: 0 0 14pt; color: #2a2114; line-height: 1.4; }
+  .cover .author { font-size: 15pt; color: #6b5c3e; }
+  .cover .rule { width: 40%; height: 2px; background: #c9a35f; margin: 20pt auto; opacity: .6; }
+  .book { }
+  h2 { font-family: 'Amiri', serif; font-size: 20pt; font-weight: 700; text-align: center;
+    margin: 0 0 18pt; color: #2a2114; page-break-before: always; padding-top: 6pt; }
+  .book > h2:first-child { page-break-before: avoid; }
+  h3 { font-family: 'Amiri', serif; font-size: 15pt; margin: 16pt 0 8pt; color: #3a2f1d; }
+  h4 { font-family: 'Amiri', serif; font-size: 13.5pt; margin: 14pt 0 6pt; color: #3a2f1d; }
+  p { margin: 0 0 9pt; orphans: 2; widows: 2; }
+  p.center { text-align: center; }
+  h2 + p::first-letter { font-family: 'Amiri', serif; font-size: 3em; float: right; line-height: .8;
+    margin: .04em .12em 0 .1em; color: #7a5a2a; font-weight: 700; }
+  strong { font-weight: 700; } em { font-style: italic; }
+  mark, mark.static-hl { background: #faedb4; padding: 0 2px; border-radius: 2px; }
+  blockquote { margin: 12pt 0; padding: 2pt 14pt; border-inline-start: 3px solid #c9a35f;
+    color: #4a3d28; font-style: italic; }
+  ul, ol { margin: 8pt 18pt 8pt 0; padding-inline-start: 12pt; }
+  li { margin-bottom: 4pt; }
+  hr.orn { border: none; text-align: center; margin: 16pt 0; page-break-inside: avoid; }
+  hr.orn::before { content: '❦'; color: #b08a3e; font-size: 15pt; }
+  .poem { text-align: center; margin: 12pt 0; page-break-inside: avoid; }
+  .verse { display: flex; justify-content: center; gap: 8%; margin-bottom: 5pt; font-family: 'Amiri', serif; }
+  .verse span { flex: 0 1 42%; } .verse span:first-child { text-align: left; } .verse span:last-child { text-align: right; }
+</style></head><body>
+  <div class="cover">
+    <div class="orn">❁</div>
+    <h1>${title}</h1>
+    ${author ? `<div class="author">${author}</div>` : ''}
+    <div class="rule"></div>
+    <div class="author" style="font-size:11pt;opacity:.7">مِداد — مكتبتي الرقمية</div>
+  </div>
+  <div class="book">${bodyHtml}</div>
+  <script>
+    (function(){
+      function go(){ setTimeout(function(){ window.focus(); window.print(); }, 300); }
+      if (document.fonts && document.fonts.ready) { document.fonts.ready.then(go); setTimeout(go, 2500); }
+      else window.onload = go;
+    })();
+  <\/script>
+</body></html>`;
+    w.document.open(); w.document.write(doc); w.document.close();
+    toast('افتحت معاينة الطباعة — اختر «حفظ كـ PDF» 🖨', 'gold');
+  }
+
   /* ─── الشريط العلوي ─── */
   function wireTopbar() {
     const si = $('#search-input');
@@ -910,29 +983,52 @@ create policy "midad_own_files" on storage.objects for all
       ta.focus(); ta.setSelectionRange(s + txt.length, s + txt.length);
     };
 
-    $('#fmt-toolbar').querySelectorAll('[data-fmt]').forEach((btn) => {
-      btn.onclick = () => {
-        switch (btn.dataset.fmt) {
-          case 'h1': linePrefix('# '); break;
-          case 'h2': linePrefix('## '); break;
-          case 'bold': wrap('**', '**', 'نص عريض'); break;
-          case 'italic': wrap('_', '_', 'نص مائل'); break;
-          case 'mark': wrap('==', '==', 'نص مظلّل'); break;
-          case 'quote': linePrefix('> '); break;
-          case 'center': linePrefix('~ '); break;
-          case 'list': linePrefix('- '); break;
-          case 'hr': insert('\n---\n'); break;
-          case 'verse': insert('\n/ صدر البيت | عجز البيت\n'); break;
-          case 'clean': ta.value = autoCleanText(ta.value); ta.focus(); toast('نُظّف النص ✨'); break;
-          case 'preview': {
-            preview.hidden = !preview.hidden;
-            btn.classList.toggle('on', !preview.hidden);
-            refreshPreview();
-            return;
-          }
+    const doFmt = (fmt) => {
+      switch (fmt) {
+        case 'h1': linePrefix('# '); break;
+        case 'h2': linePrefix('## '); break;
+        case 'h3': linePrefix('### '); break;
+        case 'bold': wrap('**', '**', 'نص عريض'); break;
+        case 'italic': wrap('_', '_', 'نص مائل'); break;
+        case 'mark': wrap('==', '==', 'نص مظلّل'); break;
+        case 'quote': linePrefix('> '); break;
+        case 'center': linePrefix('~ '); break;
+        case 'list': linePrefix('- '); break;
+        case 'numlist': linePrefix('1. '); break;
+        case 'hr': insert('\n---\n'); break;
+        case 'verse': insert('\n/ صدر البيت | عجز البيت\n'); break;
+        case 'clean': ta.value = autoCleanText(ta.value); ta.focus(); toast('نُظّف النص ✨'); break;
+        case 'split': {
+          const on = preview.hidden; // كان مخفياً → سيُعرض
+          preview.hidden = !on;
+          $('#fmt-editor').classList.toggle('split', on);
+          $('#fmt-toolbar').querySelector('[data-fmt="split"]').classList.toggle('on', on);
+          refreshPreview();
+          return;
         }
-        refreshPreview();
-      };
+        case 'full': {
+          const modal = $('#add-modal');
+          const on = !modal.classList.contains('editor-max');
+          modal.classList.toggle('editor-max', on);
+          $('#fmt-toolbar').querySelector('[data-fmt="full"]').classList.toggle('on', on);
+          // في وضع ملء الشاشة نفعّل المعاينة الجانبية تلقائياً
+          if (on && preview.hidden) doFmt('split');
+          refreshPreview();
+          return;
+        }
+      }
+      refreshPreview();
+    };
+
+    $('#fmt-toolbar').querySelectorAll('[data-fmt]').forEach((btn) => {
+      btn.onclick = () => doFmt(btn.dataset.fmt);
+    });
+    // اختصارات لوحة المفاتيح داخل المحرّر
+    ta.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      const map = { b: 'bold', i: 'italic', '1': 'h1', '2': 'h2', '3': 'h3' };
+      if (map[k]) { e.preventDefault(); doFmt(map[k]); }
     });
     ta.addEventListener('input', () => { if (!preview.hidden) refreshPreview(); });
   }
@@ -1135,7 +1231,13 @@ create policy "midad_own_files" on storage.objects for all
     $('#add-modal').hidden = false;
     setTimeout(() => $('#meta-title').focus(), 80);
   }
-  function closeAddModal() { $('#add-modal').hidden = true; }
+  function closeAddModal() {
+    $('#add-modal').hidden = true;
+    $('#add-modal').classList.remove('editor-max');
+    $('#fmt-editor').classList.remove('split');
+    $('#fmt-preview-pane').hidden = true;
+    $('#fmt-toolbar').querySelectorAll('.on').forEach((b) => b.classList.remove('on'));
+  }
 
   function updateCoverPreview(book) {
     const prev = $('#cover-preview');
