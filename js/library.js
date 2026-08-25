@@ -405,11 +405,25 @@ create policy "midad_own_files" on storage.objects for all
     }
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b || b.type !== 'pdf') return;
-    const existing = await Store.getFulltext(id);
+    let existing = await Store.getFulltext(id);
     const hasPrev = existing && existing.ocr && (existing.text || '').trim();
+    let freshRestart = false;
     if (hasPrev) {
+      // احسب كم صفحة اكتملت فعلاً من الإجمالي لإظهارها للمستخدم
+      let filledPrev = 0;
+      const ps = existing.pageStarts || [], tx = existing.text || '';
+      for (let i = 0; i < ps.length; i++) { const a = ps[i] ?? 0, e = ps[i + 1] ?? tx.length; if ((tx.slice(a, e) || '').trim()) filledPrev++; }
+      const total = b.pages || ps.length || 0;
+      const done = total && filledPrev >= total;
       // استئناف: نُكمل الصفحات الناقصة فقط دون إعادة ما نجح (توفيراً للحصّة)
-      if (!(await uiConfirm('سبق استخراج بعض هذا الكتاب. سنُكمل الصفحات الناقصة فقط دون إعادة ما اكتمل.', { title: 'إكمال استخراج النص؟', okText: 'أكمِل الناقص', icon: '🔎' }))) return;
+      const msg = done
+        ? `اكتمل استخراج كل صفحات هذا الكتاب (${total}). هل تريد إعادة الاستخراج من جديد؟`
+        : `المُستخرَج حتى الآن: ${filledPrev}${total ? ` من ${total}` : ''} صفحة. سنُكمل الصفحات الناقصة فقط دون إعادة ما اكتمل.`;
+      if (!(await uiConfirm(msg, {
+        title: done ? 'إعادة استخراج النص؟' : 'إكمال استخراج النص؟',
+        okText: done ? 'أعد من جديد' : 'أكمِل الناقص', icon: '🔎',
+      }))) return;
+      if (done) { freshRestart = true; existing = null; } // إعادة كاملة: تجاهل السابق
     }
     let blob = await Store.getPayload(id);
     if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
