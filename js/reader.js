@@ -69,6 +69,7 @@ const Reader = (() => {
     $('#r-canvas-wrap').hidden = !isPdf;
     $('#r-btn-search').style.display = isPdf ? 'none' : '';
     $('#typo-section').style.display = isPdf ? 'none' : '';
+    { const ps = $('#pdf-section'); if (ps) ps.style.display = isPdf ? '' : 'none'; }
     $('#flip-scroll-btn').style.display = ''; // التمرير المتصل متاح للنصوص و PDF
     $('#r-btn-draw').style.display = isPdf ? '' : 'none';
     state.drawings = state.drawings || {};
@@ -396,6 +397,19 @@ const Reader = (() => {
     }
   }
 
+  // تنقية صفحة مصوّرة: تسوية المستويات فتصير الخلفية بيضاء موحّدة (تزيل الشرائط الفاتحة) والنص أوضح
+  function cleanScan(ctx, W, H) {
+    try {
+      const img = ctx.getImageData(0, 0, W, H), d = img.data;
+      const black = 34, white = 202, range = white - black; // نقطتا الأسود والأبيض
+      // جدول بحث للسرعة
+      const lut = new Uint8ClampedArray(256);
+      for (let v = 0; v < 256; v++) { let o = ((v - black) / range) * 255; lut[v] = o < 0 ? 0 : o > 255 ? 255 : o; }
+      for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]]; }
+      ctx.putImageData(img, 0, 0);
+    } catch { /* قد يمنع بعض المتصفحات قراءة الكنفا */ }
+  }
+
   /* ═══════ عرض PDF ═══════ */
   async function renderPdf(n, fade = false, targetCanvas = null) {
     const canvas = targetCanvas || $('#r-canvas');
@@ -416,6 +430,7 @@ const Reader = (() => {
       if (fade && !targetCanvas) { canvas.style.opacity = '0'; }
       // intent:'print' يتجنب requestAnimationFrame فيكتمل الرسم حتى في التبويبات الخلفية
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+      if (settings.enhanceScan) cleanScan(canvas.getContext('2d'), canvas.width, canvas.height);
       if (fade && !targetCanvas) setTimeout(() => (canvas.style.opacity = '1'), 30);
       if (!targetCanvas) { syncDrawLayer(); await buildPdfTextLayer(page, scale); renderPdfHighlights(); }
     } catch (e) { console.error('pdf render', e); }
@@ -592,6 +607,7 @@ const Reader = (() => {
       const canvas = document.createElement('canvas');
       canvas.width = vp.width; canvas.height = vp.height;
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+      if (settings.enhanceScan) cleanScan(canvas.getContext('2d'), canvas.width, canvas.height);
       // رسم الكتابات المحفوظة (عرض فقط في وضع التمرير)
       drawStrokesTo(canvas.getContext('2d'), state.drawings[s.page] || [], canvas.width, canvas.height);
       const old = s.el.querySelector('canvas'); if (old) old.remove();
@@ -1195,6 +1211,19 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.paperFx = b.dataset.fx; applySettings(); };
     });
+    // تنقية الصفحة المصوّرة (تسوية الخلفية وإزالة الشرائط الفاتحة)
+    const enhanceRow = $('#enhance-row');
+    if (enhanceRow) enhanceRow.querySelectorAll('button').forEach((b) => {
+      b.onclick = async () => {
+        settings.enhanceScan = b.dataset.enhance === '1';
+        Store.saveSettings(settings);
+        enhanceRow.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+        if (isPdf) {
+          if (pdfScrollActive()) { pdfSlots.forEach((s) => clearSlot(s)); renderVisibleSlots(); }
+          else await renderPdf(pdfPage);
+        }
+      };
+    });
     $('#flip-row').querySelectorAll('button').forEach((b) => {
       b.onclick = async () => {
         stopAuto();
@@ -1262,6 +1291,7 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fx === (settings.paperFx || 'none')));
     $('#flip-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.flip === settings.flip));
     $('#spread-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.spread === '1') === !!settings.spread));
+    { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
     $('#set-ttsrate').value = settings.ttsRate || 100;
     $('#set-autospeed').value = settings.autoSpeed || 50;
     $('#set-brightness').value = settings.brightness;
