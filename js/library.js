@@ -549,6 +549,26 @@ create policy "midad_own_files" on storage.objects for all
     } finally { overlay.remove(); }
   }
 
+  // يزيل ترويسة/تذييل الصفحة المتكرّر (اسم الكتاب/الفصل وأرقام الصفحات) اعتماداً على حدود الصفحات
+  function stripRepeatedHeaders(text, pageStarts) {
+    if (!Array.isArray(pageStarts) || pageStarts.length < 4) return text;
+    const pages = [];
+    for (let i = 0; i < pageStarts.length; i++) pages.push(text.slice(pageStarts[i] ?? 0, pageStarts[i + 1] ?? text.length));
+    const norm = (s) => (s || '').trim();
+    // سطر مرشّح للترويسة: قصير، بلا علامة نهاية جملة (ليس فقرة)
+    const cand = (l) => l && l.length <= 45 && !/[.؟!،:»]$/.test(l);
+    const count = {};
+    for (const p of pages) {
+      const lines = p.split('\n').map(norm).filter(Boolean);
+      const top = lines.slice(0, 2), bot = lines.slice(-2); // أول وآخر سطرين
+      [...new Set([...top, ...bot])].forEach((l) => { if (cand(l)) count[l] = (count[l] || 0) + 1; });
+    }
+    const thr = Math.max(3, Math.floor(pages.length * 0.25));
+    const headers = new Set(Object.entries(count).filter(([, c]) => c >= thr).map(([l]) => l));
+    if (!headers.size) return text;
+    return pages.map((p) => p.split('\n').filter((l) => !headers.has(norm(l))).join('\n')).join('\n\n');
+  }
+
   /* ─── إنشاء كتاب نصي من النص المُستخرَج (OCR) ─── */
   async function createTextFromOcr(id, skipConfirm) {
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
@@ -559,8 +579,8 @@ create policy "midad_own_files" on storage.objects for all
     }
     const pages = (ft.pageStarts || []).length;
     if (!skipConfirm && !(await uiConfirm(`ستظهر ككتاب نصّي مستقل${pages ? ` (${pages} صفحة)` : ''} بكامل مميزات التنسيق والقراءة، مع بقاء الأصل كما هو.`, { title: 'إنشاء نسخة نصية؟', okText: 'أنشئ النسخة', icon: '📄' }))) return;
-    // نظّف النص قليلاً: أزل الأسطر الفارغة الزائدة
-    const text = ft.text.replace(/\n{3,}/g, '\n\n').trim();
+    // تنسيق ذكي: أزل الترويسات/التذييلات المتكرّرة، ثم ادمج الأسطر المكسورة وأزل أرقام الصفحات
+    const text = autoCleanText(stripRepeatedHeaders(ft.text, ft.pageStarts));
     const meta = {
       title: b.title + ' — نص', author: b.author || '', category: b.category || 'أخرى',
       type: 'text', shelves: (b.shelves || []).slice(),
