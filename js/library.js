@@ -579,8 +579,8 @@ create policy "midad_own_files" on storage.objects for all
     }
     const pages = (ft.pageStarts || []).length;
     if (!skipConfirm && !(await uiConfirm(`ستظهر ككتاب نصّي مستقل${pages ? ` (${pages} صفحة)` : ''} بكامل مميزات التنسيق والقراءة، مع بقاء الأصل كما هو.`, { title: 'إنشاء نسخة نصية؟', okText: 'أنشئ النسخة', icon: '📄' }))) return;
-    // تنسيق ذكي: أزل الترويسات/التذييلات المتكرّرة، ثم ادمج الأسطر المكسورة وأزل أرقام الصفحات
-    const text = autoCleanText(stripRepeatedHeaders(ft.text, ft.pageStarts));
+    // تنسيق ذكي: أزل الترويسات المتكرّرة، ادمج الأسطر المكسورة، واحتفظ بأرقام الصفحات معزولةً
+    const text = autoCleanText(stripRepeatedHeaders(ft.text, ft.pageStarts), true);
     const meta = {
       title: b.title + ' — نص', author: b.author || '', category: b.category || 'أخرى',
       type: 'text', shelves: (b.shelves || []).slice(),
@@ -1209,9 +1209,10 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   // تنظيف تلقائي: يجمع الأسطر المكسورة في فقرات، ويزيل أرقام الصفحات والفراغات الزائدة
-  function autoCleanText(t) {
+  function autoCleanText(t, keepPageNumbers) {
     let text = t.replace(/\r/g, '');
-    text = text.split('\n').filter((l) => !/^\s*\d{1,4}\s*$/.test(l)).join('\n'); // أرقام صفحات معزولة
+    if (keepPageNumbers) text = text.replace(/(^|\n)[ \t]*(\d{1,4})[ \t]*(?=\n|$)/g, '$1\n$2\n'); // اعزل رقم الصفحة كفقرة مستقلّة (دون حذفه)
+    else text = text.split('\n').filter((l) => !/^\s*\d{1,4}\s*$/.test(l)).join('\n'); // أرقام صفحات معزولة
     const blocks = text.split(/\n\s*\n/);
     const out = blocks.map((b) => {
       const lines = b.split('\n').map((x) => x.trim()).filter(Boolean);
