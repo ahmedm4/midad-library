@@ -549,24 +549,43 @@ create policy "midad_own_files" on storage.objects for all
     } finally { overlay.remove(); }
   }
 
-  // يزيل ترويسة/تذييل الصفحة المتكرّر (اسم الكتاب/الفصل وأرقام الصفحات) اعتماداً على حدود الصفحات
+  // بداية سطر حاشية مرقّمة مثل (١) أو (1) أو [٣]
+  const FOOTNOTE_START = /^[(\[（]\s*[\d٠-٩۰-۹]{1,3}\s*[)\]）]/;
+
+  // يفصل كتلة الحواشي/المراجع أسفل الصفحة عن المتن بفاصل زخرفي (يعوّض الخط المفقود في الـOCR)
+  function markFootnotes(pageText) {
+    const lines = pageText.split('\n');
+    let idx = -1;
+    // ابحث عن أول سطر حاشية في الجزء السفلي من الصفحة (تجنّباً للإشارات داخل المتن)
+    for (let i = Math.max(1, Math.floor(lines.length * 0.4)); i < lines.length; i++) {
+      if (FOOTNOTE_START.test(lines[i].trim())) { idx = i; break; }
+    }
+    if (idx > 0 && !/^[-*_]{3,}$/.test((lines[idx - 1] || '').trim())) lines.splice(idx, 0, '', '---', '');
+    return lines.join('\n');
+  }
+
+  // يزيل ترويسة/تذييل الصفحة المتكرّر، ويفصل الحواشي عن المتن — اعتماداً على حدود الصفحات
   function stripRepeatedHeaders(text, pageStarts) {
-    if (!Array.isArray(pageStarts) || pageStarts.length < 4) return text;
+    if (!Array.isArray(pageStarts) || pageStarts.length < 2) return text;
     const pages = [];
     for (let i = 0; i < pageStarts.length; i++) pages.push(text.slice(pageStarts[i] ?? 0, pageStarts[i + 1] ?? text.length));
     const norm = (s) => (s || '').trim();
-    // سطر مرشّح للترويسة: قصير، بلا علامة نهاية جملة (ليس فقرة)
-    const cand = (l) => l && l.length <= 45 && !/[.؟!،:»]$/.test(l);
-    const count = {};
-    for (const p of pages) {
-      const lines = p.split('\n').map(norm).filter(Boolean);
-      const top = lines.slice(0, 2), bot = lines.slice(-2); // أول وآخر سطرين
-      [...new Set([...top, ...bot])].forEach((l) => { if (cand(l)) count[l] = (count[l] || 0) + 1; });
+    // اكتشف الترويسات المتكرّرة (تحتاج عدداً كافياً من الصفحات)
+    let headers = new Set();
+    if (pages.length >= 4) {
+      const cand = (l) => l && l.length <= 45 && !/[.؟!،:»]$/.test(l);
+      const count = {};
+      for (const p of pages) {
+        const lines = p.split('\n').map(norm).filter(Boolean);
+        [...new Set([...lines.slice(0, 2), ...lines.slice(-2)])].forEach((l) => { if (cand(l)) count[l] = (count[l] || 0) + 1; });
+      }
+      const thr = Math.max(3, Math.floor(pages.length * 0.25));
+      headers = new Set(Object.entries(count).filter(([, c]) => c >= thr).map(([l]) => l));
     }
-    const thr = Math.max(3, Math.floor(pages.length * 0.25));
-    const headers = new Set(Object.entries(count).filter(([, c]) => c >= thr).map(([l]) => l));
-    if (!headers.size) return text;
-    return pages.map((p) => p.split('\n').filter((l) => !headers.has(norm(l))).join('\n')).join('\n\n');
+    return pages.map((p) => {
+      const noHeaders = p.split('\n').filter((l) => !headers.has(norm(l))).join('\n');
+      return markFootnotes(noHeaders);
+    }).join('\n\n');
   }
 
   /* ─── إنشاء كتاب نصي من النص المُستخرَج (OCR) ─── */
@@ -884,6 +903,7 @@ create policy "midad_own_files" on storage.objects for all
   h4 { font-family: 'Amiri', serif; font-size: 13.5pt; margin: 14pt 0 6pt; color: #3a2f1d; }
   p { margin: 0 0 9pt; orphans: 2; widows: 2; }
   p.center { text-align: center; }
+  p.footnote { font-size: .82em; opacity: .85; margin: 2pt 0; line-height: 1.6; }
   h2 + p::first-letter { font-family: 'Amiri', serif; font-size: 3em; float: right; line-height: .8;
     margin: .04em .12em 0 .1em; color: #7a5a2a; font-weight: 700; }
   strong { font-weight: 700; } em { font-style: italic; }
@@ -1219,6 +1239,7 @@ create policy "midad_own_files" on storage.objects for all
       if (!lines.length) return '';
       const joined = []; let para = '';
       const isHeadingLine = (l) => /^(#{1,4}\s|>\s|~\s|[-•]\s|\d+[.)]\s|\/|[-*_]{3,}$)/.test(l)
+        || FOOTNOTE_START.test(l) // كل حاشية مرقّمة تبقى في سطرها
         || (/^(الفصل|الباب|المقدمة|الخاتمة|القسم|الجزء|تمهيد|مدخل|الوصية|المبحث|الفَصل)\b/.test(l) && l.length < 50);
       for (const l of lines) {
         if (isHeadingLine(l)) { if (para) { joined.push(para); para = ''; } joined.push(l); }

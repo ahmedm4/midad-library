@@ -575,6 +575,7 @@ input, select, textarea { font-family: inherit; }
   font-family: 'Amiri', serif; font-style: italic; background: rgba(67,48,26,.05); border-radius: 0 8px 8px 0; }
 :is(.fmt-preview-pane, .fmt-rich) ul, :is(.fmt-preview-pane, .fmt-rich) ol { margin: .7em 1.4em .7em 0; padding-inline-start: 1.1em; }
 :is(.fmt-preview-pane, .fmt-rich) li { margin-bottom: .35em; }
+:is(.fmt-preview-pane, .fmt-rich) .footnote { font-size: .82em; opacity: .82; line-height: 1.7; }
 :is(.fmt-preview-pane, .fmt-rich) hr { border: none; text-align: center; margin: 1.4em auto; }
 :is(.fmt-preview-pane, .fmt-rich) hr::before, :is(.fmt-preview-pane, .fmt-rich) hr.orn::before { content: '❦'; opacity: .5; font-size: 1.3em; }
 :is(.fmt-preview-pane, .fmt-rich) .poem { margin: 1.1em 0; text-align: center; }

@@ -206,6 +206,8 @@ const Reader = (() => {
       if ((m = line.match(/^[-•*]\s+(.+)/))) { flushPara(); if (!list || list.tag !== 'ul') { flushList(); list = { tag: 'ul', items: [] }; } list.items.push(m[1]); continue; }
       if ((m = line.match(/^\d+[.)]\s+(.+)/))) { flushPara(); if (!list || list.tag !== 'ol') { flushList(); list = { tag: 'ol', items: [] }; } list.items.push(m[1]); continue; }
       flushList();
+      // حاشية مرقّمة مثل (١)…  → فقرة حاشية أصغر
+      if (/^[(\[（]\s*[\d٠-٩۰-۹]{1,3}\s*[)\]）]/.test(line)) { flushAll(); html += '<p class="footnote">' + inlineFmt(line) + '</p>'; continue; }
       // كشف تلقائي لعناوين الفصول
       if (/^(الفصل|الباب|المقدمة|الخاتمة|القسم|الجزء|تمهيد|مدخل)\b/.test(line) && line.length < 60) { flushAll(); html += '<h2>' + inlineFmt(line) + '</h2>'; continue; }
       para.push(line);
