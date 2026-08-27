@@ -536,6 +536,13 @@ create policy "midad_own_files" on storage.objects for all
       await Store.saveFulltext(id, { text, pageStarts, ocr: true });
       if (window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn()) Cloud.pushBook(id); // زامِن نص الـOCR لبقية الأجهزة
       const missing = N - filled;
+      // لم تُضَف أي صفحة بسبب خطأ (لا مجرّد تجاوز حصّة) → وضّح السبب بدل «حُفظ المستخرَج»
+      if (newly === 0 && stopError && !isRateErr(stopError)) {
+        await uiConfirm(
+          `لم تُضَف صفحات جديدة بسبب خطأ من خدمة الذكاء:\n«${stopError}»\n\nإن كان بسبب مفتاح أضفته حديثاً، فتأكّد من صحّته وأن السرّ GEMINI_API_KEYS بصيغة: مفتاح1,مفتاح2 بلا مسافات، ثم أعد نشر دالة ai. (المُستخرَج سابقاً ${filled} صفحة محفوظ.)`,
+          { title: 'تعذّرت إضافة صفحات', okText: 'حسناً', cancelText: 'إغلاق', icon: '⚠️' });
+        return;
+      }
       const okText = missing > 0
         ? `اكتمل ${filled} من ${N} صفحة (أُضيفت ${newly} هذه المرة). بقيت ${missing} صفحة ناقصة${stopError && isRateErr(stopError) ? ' — تجاوزتَ الحصّة' : ''}. أعد الاستخراج لاحقاً لإكمالها (سيُكمل الناقص فقط).`
         : `اكتمل استخراج كل الصفحات (${N}) ✓ صار متاحاً للبحث والتلخيص والقاموس والقراءة الصوتية.`;

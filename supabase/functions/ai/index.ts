@@ -44,6 +44,10 @@ function collectKeys(): string[] {
 
 const isQuota = (status: number, msg: string) =>
   status === 429 || /quota|exceeded|RESOURCE_EXHAUSTED|rate.?limit|too many/i.test(msg || "");
+// خطأ خاصّ بالمفتاح (غير صالح/منتهٍ/بلا صلاحية) → جرّب مفتاحاً آخر بدل الفشل
+const isKeyError = (status: number, msg: string) =>
+  status === 401 || status === 403 ||
+  (status === 400 && /api[\s_-]?key|key not valid|API_KEY_INVALID|invalid|expired|permission|denied/i.test(msg || ""));
 
 // ينادي Gemini مع تدوير المفاتيح: يبدأ من مفتاح عشوائي، وعند تجاوز الحصّة ينتقل للتالي
 async function callGemini(model: string, keys: string[], parts: unknown[], genCfg: Record<string, unknown>) {
@@ -67,8 +71,8 @@ async function callGemini(model: string, keys: string[], parts: unknown[], genCf
     }
     lastErr = data?.error?.message || "خطأ من Gemini";
     lastStatus = res.status;
-    // تجاوز حصّة → جرّب المفتاح التالي؛ خطأ آخر → أعده فوراً
-    if (!isQuota(res.status, lastErr)) return { ok: false, error: lastErr, status: res.status };
+    // تجاوز حصّة أو مفتاح معطوب → جرّب المفتاح التالي؛ خطأ آخر → أعده فوراً
+    if (!isQuota(res.status, lastErr) && !isKeyError(res.status, lastErr)) return { ok: false, error: lastErr, status: res.status };
   }
   return { ok: false, error: lastErr, status: lastStatus };
 }
