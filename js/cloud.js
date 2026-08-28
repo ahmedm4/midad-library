@@ -109,7 +109,8 @@ const Cloud = (() => {
     syncing = true;
     setStatus('syncing', 'جارٍ المزامنة…');
     try {
-      const { data: rows, error } = await sb.from(TABLE).select('*');
+      // نستثني عمود content الثقيل (نص الكتب/الـOCR) — يُجلب كسولاً عند فتح الكتاب فيسرع المزامنة كثيراً
+      const { data: rows, error } = await sb.from(TABLE).select('id, owner, meta, state, has_file, deleted, updated_at');
       if (error) throw error;
       const cloudById = new Map((rows || []).map((r) => [r.id, r]));
       const localBooks = await Store.getBooks();
@@ -258,13 +259,31 @@ const Cloud = (() => {
   // ختم الطابع الزمني محلياً حتى تصحّ المقارنة لاحقاً
   async function touch(id) { await Store.updateBook(id, { updatedAt: Date.now() }); }
 
-  /* ── تنزيل ملف عند الحاجة (كسول) ── */
+  // جلب عمود content كسولاً (نص كتاب نصي، أو نص OCR لكتاب مصوّر) عند الحاجة فقط
+  async function fetchContent(id) {
+    try { const { data } = await sb.from(TABLE).select('content').eq('id', id).limit(1); return (data && data[0]) ? data[0].content : null; }
+    catch { return null; }
+  }
+
+  /* ── تنزيل المحتوى/الملف عند الحاجة (كسول) ── */
   async function ensurePayload(id) {
     if (!ready || !user) return;
-    const have = await Store.getPayload(id);
-    if (have != null) return;
     const b = await Store.getBook(id);
-    if (!b || b.type !== 'pdf') return;
+    if (!b) return;
+    const have = await Store.getPayload(id);
+
+    // كتاب نصي: المحتوى في عمود content (لم يعُد يُجلب في المزامنة) — اجلبه الآن
+    if (b.type !== 'pdf') {
+      if (have != null) return;
+      const c = await fetchContent(id);
+      if (typeof c === 'string') await Store.updatePayload(id, c);
+      return;
+    }
+
+    // كتاب مصوّر: استعد نص الـOCR من content إن غاب (يُفعّل البحث/الذكاء/النسخة النصية)
+    try { if (!(await Store.getFulltext(id))) { const c = await fetchContent(id); if (c) { const ft = JSON.parse(c); if (ft && ft.text != null) await Store.saveFulltext(id, ft); } } } catch {}
+
+    if (have != null) return; // الملف موجود محلياً
     try {
       setStatus('syncing', 'جارٍ تنزيل الكتاب…');
       const { data, error } = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);

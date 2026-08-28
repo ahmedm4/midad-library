@@ -1,5 +1,5 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v35';
+const VERSION = 'midad-v36';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',
@@ -67,7 +67,11 @@ self.addEventListener('fetch', (e) => {
     e.respondWith((async () => {
       const cached = await caches.match(req);
       const net = fetch(req).then((res) => {
-        if (res && (res.ok || res.type === 'opaque')) caches.open(VERSION).then((c) => c.put(req, res.clone()));
+        // استنسخ فوراً (تزامنياً) قبل استهلاك الجسم عند الإرجاع
+        if (res && (res.ok || res.type === 'opaque')) {
+          const copy = res.clone();
+          caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => {});
+        }
         return res;
       }).catch(() => null);
       return cached || (await net) || new Response('', { status: 504 });
