@@ -411,7 +411,8 @@ create policy "midad_own_files" on storage.objects for all
     const last = settings.ocrProvider || 'gemini';
     const provOpts = [
       { label: 'Gemini (جوجل)', value: 'gemini', hint: 'الافتراضي — طبقة مجانية', recommended: last === 'gemini' },
-      { label: 'OpenAI — GPT-4o-mini', value: 'openai', hint: 'دقيق (يتطلب مفتاح OpenAI في الخادم)', recommended: last === 'openai' },
+      { label: 'OpenAI — GPT-4o-mini', value: 'openai', hint: 'دقيق (يتطلب مفتاح OpenAI)', recommended: last === 'openai' },
+      { label: 'OpenRouter', value: 'openrouter', hint: 'نماذج رؤية متعددة (بعضها مجاني)', recommended: last === 'openrouter' },
     ];
     // اجعل آخر اختيار أولاً
     provOpts.sort((a, b2) => (b2.recommended ? 1 : 0) - (a.recommended ? 1 : 0));
@@ -450,7 +451,7 @@ create policy "midad_own_files" on storage.objects for all
     overlay.innerHTML = `
       <div class="om-box" role="dialog" aria-label="استخراج النص">
         <h3>🔎 استخراج نص «${esc(b.title)}»</h3>
-        <p class="om-hint">عبر ${provider === 'openai' ? 'OpenAI — GPT-4o-mini' : 'Gemini'} — يُحوّل الصفحات المصوّرة إلى نص، فيعمل معه البحث والتلخيص والقاموس والقراءة الصوتية.</p>
+        <p class="om-hint">عبر ${provider === 'openai' ? 'OpenAI — GPT-4o-mini' : provider === 'openrouter' ? 'OpenRouter' : 'Gemini'} — يُحوّل الصفحات المصوّرة إلى نص، فيعمل معه البحث والتلخيص والقاموس والقراءة الصوتية.</p>
         <div class="om-bar"><i id="om-fill" style="width:0%"></i></div>
         <div class="om-status" id="om-status">جارٍ التحضير…</div>
         <div class="om-actions"><button class="om-cancel">إيقاف</button></div>

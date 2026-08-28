@@ -50,11 +50,11 @@ const isKeyError = (status: number, msg: string) =>
   (status === 400 && /api[\s_-]?key|key not valid|API_KEY_INVALID|invalid|expired|permission|denied/i.test(msg || ""));
 
 // ── مزوّد متوافق مع OpenAI (يدعم الرؤية عبر image_url) — يغطّي OpenAI و OpenRouter و Qwen…‏ ──
-async function callOpenAI(baseUrl: string, key: string, model: string, messages: unknown[], genCfg: Record<string, unknown>) {
+async function callOpenAI(baseUrl: string, key: string, model: string, messages: unknown[], genCfg: Record<string, unknown>, extraHeaders: Record<string, string> = {}) {
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}`, ...extraHeaders },
       body: JSON.stringify({ model, messages, temperature: genCfg.temperature ?? 0.4, max_tokens: genCfg.maxOutputTokens ?? 2048 }),
     });
     const data = await res.json();
@@ -104,6 +104,8 @@ Deno.serve(async (req) => {
     const OAI_KEY = Deno.env.get("OPENAI_API_KEY") || "";
     const OAI_BASE = Deno.env.get("OPENAI_BASE_URL") || "https://api.openai.com/v1";
     const OAI_MODEL = Deno.env.get("OPENAI_MODEL") || "gpt-4o-mini";
+    const OR_KEY = Deno.env.get("OPENROUTER_API_KEY") || "";
+    const OR_MODEL = Deno.env.get("OPENROUTER_MODEL") || "qwen/qwen2.5-vl-72b-instruct:free";
 
     // ── تشخيص: المزوّدات والمفاتيح المتاحة ──
     if (action === "diag") {
@@ -111,7 +113,8 @@ Deno.serve(async (req) => {
       return json({ text:
         `Gemini — مفاتيح: ${KEYS.length} (متمايزة: ${new Set(fps).size})${fps.length ? " — " + fps.join("، ") : ""}\n` +
         `النموذج: ${MODEL}\n` +
-        `OpenAI — ${OAI_KEY ? "مضبوط ✓ (…" + OAI_KEY.slice(-4) + ") نموذج: " + OAI_MODEL : "غير مضبوط"}` });
+        `OpenAI — ${OAI_KEY ? "مضبوط ✓ (…" + OAI_KEY.slice(-4) + ") نموذج: " + OAI_MODEL : "غير مضبوط"}\n` +
+        `OpenRouter — ${OR_KEY ? "مضبوط ✓ (…" + OR_KEY.slice(-4) + ") نموذج: " + OR_MODEL : "غير مضبوط"}` });
     }
 
     // ── جهّز الموجّه/الصورة حسب الإجراء ──
@@ -137,13 +140,18 @@ Deno.serve(async (req) => {
       promptText = buildPrompt(action, payload);
     }
 
-    // ── مزوّد OpenAI (أو متوافق معه) ──
-    if (provider === "openai" || provider === "oai") {
-      if (!OAI_KEY) return json({ error: "مزوّد OpenAI غير مضبوط في الخادم (OPENAI_API_KEY)" }, 400);
+    // ── مزوّدات متوافقة مع OpenAI: OpenAI و OpenRouter ──
+    if (provider === "openai" || provider === "oai" || provider === "openrouter") {
       const messages = action === "ocr"
         ? [{ role: "user", content: [{ type: "text", text: ocrPrompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${image}` } }] }]
         : [{ role: "user", content: promptText }];
-      const r = await callOpenAI(OAI_BASE, OAI_KEY, OAI_MODEL, messages, genCfg);
+      let base = OAI_BASE, key = OAI_KEY, model = OAI_MODEL, headers: Record<string, string> = {};
+      if (provider === "openrouter") {
+        if (!OR_KEY) return json({ error: "مزوّد OpenRouter غير مضبوط في الخادم (OPENROUTER_API_KEY)" }, 400);
+        base = "https://openrouter.ai/api/v1"; key = OR_KEY; model = OR_MODEL;
+        headers = { "HTTP-Referer": "https://midad.app", "X-Title": "Midad" };
+      } else if (!OAI_KEY) return json({ error: "مزوّد OpenAI غير مضبوط في الخادم (OPENAI_API_KEY)" }, 400);
+      const r = await callOpenAI(base, key, model, messages, genCfg, headers);
       if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
       return json({ text: r.text || "لم يصل رد." });
     }
