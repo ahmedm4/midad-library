@@ -405,6 +405,20 @@ create policy "midad_own_files" on storage.objects for all
     }
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b || b.type !== 'pdf') return;
+
+    // اختيار مزوّد الاستخراج (يُحفظ آخر اختيار)
+    const settings = Store.getSettings();
+    const last = settings.ocrProvider || 'gemini';
+    const provOpts = [
+      { label: 'Gemini (جوجل)', value: 'gemini', hint: 'الافتراضي — طبقة مجانية', recommended: last === 'gemini' },
+      { label: 'OpenAI — GPT-4o-mini', value: 'openai', hint: 'دقيق (يتطلب مفتاح OpenAI في الخادم)', recommended: last === 'openai' },
+    ];
+    // اجعل آخر اختيار أولاً
+    provOpts.sort((a, b2) => (b2.recommended ? 1 : 0) - (a.recommended ? 1 : 0));
+    const provider = await uiChoose('اختر مزوّد الذكاء لاستخراج النص من هذا الكتاب:', provOpts, { title: '🔎 مزوّد الاستخراج', icon: '🔎' });
+    if (!provider) return;
+    settings.ocrProvider = provider; Store.saveSettings(settings);
+
     let existing = await Store.getFulltext(id);
     const hasPrev = existing && existing.ocr && (existing.text || '').trim();
     let freshRestart = false;
@@ -436,7 +450,7 @@ create policy "midad_own_files" on storage.objects for all
     overlay.innerHTML = `
       <div class="om-box" role="dialog" aria-label="استخراج النص">
         <h3>🔎 استخراج نص «${esc(b.title)}»</h3>
-        <p class="om-hint">يُحوّل صفحات الكتاب المصوّر إلى نص عبر الذكاء الاصطناعي، فيعمل معه البحث والتلخيص والقاموس والقراءة الصوتية.</p>
+        <p class="om-hint">عبر ${provider === 'openai' ? 'OpenAI — GPT-4o-mini' : 'Gemini'} — يُحوّل الصفحات المصوّرة إلى نص، فيعمل معه البحث والتلخيص والقاموس والقراءة الصوتية.</p>
         <div class="om-bar"><i id="om-fill" style="width:0%"></i></div>
         <div class="om-status" id="om-status">جارٍ التحضير…</div>
         <div class="om-actions"><button class="om-cancel">إيقاف</button></div>
@@ -482,7 +496,7 @@ create policy "midad_own_files" on storage.objects for all
             canvas.width = vp.width; canvas.height = vp.height;
             await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
             const base64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
-            const pageText = await Cloud.aiInvoke({ action: 'ocr', image: base64, mimeType: 'image/jpeg' });
+            const pageText = await Cloud.aiInvoke({ action: 'ocr', image: base64, mimeType: 'image/jpeg', provider });
             pages[n - 1] = (pageText || '').trim();
             if (pages[n - 1]) newly++;
             pageOk = true;
@@ -977,6 +991,30 @@ create policy "midad_own_files" on storage.objects for all
     const rich = $('#fmt-rich'), prev = $('#fmt-preview-pane');
     if (rich) rich.style.fontFamily = f;
     if (prev) prev.style.fontFamily = f;
+  }
+
+  /* ─── نافذة اختيار من عدّة خيارات — تُعيد القيمة أو null ─── */
+  function uiChoose(message, choices, opts = {}) {
+    return new Promise((resolve) => {
+      document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+      const { title = 'اختر', icon = '🔀' } = opts;
+      const overlay = document.createElement('div');
+      overlay.className = 'ui-dialog';
+      overlay.innerHTML = `
+        <div class="ud-box" role="dialog" aria-modal="true">
+          <div class="ud-icon">${icon}</div>
+          <h3>${esc(title)}</h3>
+          ${message ? `<p>${esc(message)}</p>` : ''}
+          <div class="ud-choices">${choices.map((c, i) =>
+            `<button class="ud-choice ${c.recommended ? 'rec' : ''}" data-i="${i}"><b>${esc(c.label)}</b>${c.hint ? `<span>${esc(c.hint)}</span>` : ''}</button>`).join('')}</div>
+          <div class="ud-actions"><button class="ud-cancel">إلغاء</button></div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const done = (v) => { overlay.remove(); resolve(v); };
+      overlay.querySelectorAll('.ud-choice').forEach((btn) => (btn.onclick = () => done(choices[+btn.dataset.i].value)));
+      overlay.querySelector('.ud-cancel').onclick = () => done(null);
+      overlay.onclick = (e) => { if (e.target === overlay) done(null); };
+    });
   }
 
   /* ─── نافذة الإضافة / التعديل ─── */

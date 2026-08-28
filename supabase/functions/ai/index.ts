@@ -49,6 +49,21 @@ const isKeyError = (status: number, msg: string) =>
   status === 401 || status === 403 ||
   (status === 400 && /api[\s_-]?key|key not valid|API_KEY_INVALID|invalid|expired|permission|denied/i.test(msg || ""));
 
+// ── مزوّد متوافق مع OpenAI (يدعم الرؤية عبر image_url) — يغطّي OpenAI و OpenRouter و Qwen…‏ ──
+async function callOpenAI(baseUrl: string, key: string, model: string, messages: unknown[], genCfg: Record<string, unknown>) {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+      body: JSON.stringify({ model, messages, temperature: genCfg.temperature ?? 0.4, max_tokens: genCfg.maxOutputTokens ?? 2048 }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data?.error?.message || "خطأ من المزوّد", status: res.status };
+    const out = String(data?.choices?.[0]?.message?.content || "").trim();
+    return { ok: true, text: out, status: 200 };
+  } catch (e) { return { ok: false, error: String((e as Error)?.message || e), status: 502 }; }
+}
+
 // ينادي Gemini مع تدوير المفاتيح: يبدأ من مفتاح عشوائي، وعند تجاوز الحصّة ينتقل للتالي
 async function callGemini(model: string, keys: string[], parts: unknown[], genCfg: Record<string, unknown>) {
   let lastErr = "خطأ من Gemini", lastStatus = 500;
@@ -80,28 +95,33 @@ async function callGemini(model: string, keys: string[], parts: unknown[], genCf
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const KEYS = collectKeys();
-    if (!KEYS.length) return json({ error: "مفتاح Gemini غير مضبوط في الخادم (GEMINI_API_KEY أو GEMINI_API_KEYS)" }, 500);
-    const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
-
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "ask");
+    const provider = String(b.provider || "gemini").toLowerCase();
 
-    // ── تشخيص: عدد المفاتيح وبصماتها (آخر ٤ أحرف فقط) للتأكد من التحميل والتمايز ──
+    const KEYS = collectKeys();
+    const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
+    const OAI_KEY = Deno.env.get("OPENAI_API_KEY") || "";
+    const OAI_BASE = Deno.env.get("OPENAI_BASE_URL") || "https://api.openai.com/v1";
+    const OAI_MODEL = Deno.env.get("OPENAI_MODEL") || "gpt-4o-mini";
+
+    // ── تشخيص: المزوّدات والمفاتيح المتاحة ──
     if (action === "diag") {
       const fps = KEYS.map((k) => "…" + k.slice(-4));
-      const distinct = new Set(fps).size;
-      return json({ text: `عدد المفاتيح المُحمّلة: ${KEYS.length}\nالمتمايزة: ${distinct}\nالبصمات: ${fps.join("، ")}\nالنموذج: ${MODEL}` });
+      return json({ text:
+        `Gemini — مفاتيح: ${KEYS.length} (متمايزة: ${new Set(fps).size})${fps.length ? " — " + fps.join("، ") : ""}\n` +
+        `النموذج: ${MODEL}\n` +
+        `OpenAI — ${OAI_KEY ? "مضبوط ✓ (…" + OAI_KEY.slice(-4) + ") نموذج: " + OAI_MODEL : "غير مضبوط"}` });
     }
 
-    // ── OCR: استخراج نص صفحة مصوّرة عبر رؤية Gemini ──
-    let parts: unknown[];
+    // ── جهّز الموجّه/الصورة حسب الإجراء ──
     let genCfg: Record<string, unknown> = { temperature: 0.4, maxOutputTokens: 2048 };
+    let ocrPrompt = "", image = "", mimeType = "image/jpeg", promptText = "";
     if (action === "ocr") {
-      const image = String(b.image || "");
-      const mimeType = String(b.mimeType || "image/jpeg");
+      image = String(b.image || "");
+      mimeType = String(b.mimeType || "image/jpeg");
       if (!image) return json({ error: "لا توجد صورة للاستخراج" }, 400);
-      const ocrPrompt =
+      ocrPrompt =
         "أنت محرّرٌ يستخرج نص صفحة كتاب من صورتها ويعيده منسّقاً نظيفاً بصيغة ماركداون بسيطة بالعربية، وفق القواعد:\n" +
         "• انقل النص حرفياً دون ترجمة أو تلخيص أو إضافة من عندك.\n" +
         "• تجاهل ترويسة الصفحة المتكرّرة (اسم الكتاب أو الفصل أعلى الصفحة) والحواشي الجانبية.\n" +
@@ -111,15 +131,27 @@ Deno.serve(async (req) => {
         "• إن فصل خطٌّ أفقي أسفل الصفحة بين المتن والحواشي/المراجع، فضع سطراً فيه «---» مكانه، واجعل كل حاشية مرقّمة (مثل «(١) …») في سطرٍ مستقل.\n" +
         "• الاقتباسات المميّزة: ابدأ سطرها بـ «> ». أبيات الشعر: بصيغة «/ الشطر الأول | الشطر الثاني».\n" +
         "• أعد النص المنسّق فقط دون أي شرح. وإن كانت الصفحة بلا نص مقروء فأعد سطراً فارغاً.";
-      parts = [{ text: ocrPrompt }, { inlineData: { mimeType, data: image } }];
       genCfg = { temperature: 0.1, maxOutputTokens: 4096 };
     } else {
       const payload = { text: String(b.text || ""), question: String(b.question || ""), title: String(b.title || "") };
-      parts = [{ text: buildPrompt(action, payload) }];
+      promptText = buildPrompt(action, payload);
     }
 
+    // ── مزوّد OpenAI (أو متوافق معه) ──
+    if (provider === "openai" || provider === "oai") {
+      if (!OAI_KEY) return json({ error: "مزوّد OpenAI غير مضبوط في الخادم (OPENAI_API_KEY)" }, 400);
+      const messages = action === "ocr"
+        ? [{ role: "user", content: [{ type: "text", text: ocrPrompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${image}` } }] }]
+        : [{ role: "user", content: promptText }];
+      const r = await callOpenAI(OAI_BASE, OAI_KEY, OAI_MODEL, messages, genCfg);
+      if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
+      return json({ text: r.text || "لم يصل رد." });
+    }
+
+    // ── مزوّد Gemini (الافتراضي) ──
+    if (!KEYS.length) return json({ error: "مفتاح Gemini غير مضبوط في الخادم (GEMINI_API_KEY أو GEMINI_API_KEYS)" }, 500);
+    const parts = action === "ocr" ? [{ text: ocrPrompt }, { inlineData: { mimeType, data: image } }] : [{ text: promptText }];
     const r = await callGemini(MODEL, KEYS, parts, genCfg);
-    // نعيد حالة 429 عند تجاوز الحصّة كي يتعرّف عليها العميل وينتظر ويعيد المحاولة
     if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
     return json({ text: r.text || "لم يصل رد." });
   } catch (e) {
