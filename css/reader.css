@@ -269,9 +269,11 @@
   box-shadow: -30px 0 60px rgba(0,0,0,.45); color: #eae4f2; display: flex; flex-direction: column; }
 .r-drawer.open { right: 0; }
 /* خلفية معتمة خلف الدرج: لمسها يُغلق الدرج (أفضل ممارسة للأدراج الجانبية) */
-.r-drawer-backdrop { position: absolute; inset: 0; z-index: 118; background: rgba(8,5,16,.5);
-  opacity: 0; pointer-events: none; transition: opacity .35s; backdrop-filter: blur(1px); }
+.r-drawer-backdrop { position: absolute; inset: 0; z-index: 118; background: rgba(8,5,16,.42);
+  opacity: 0; pointer-events: none; transition: opacity .35s; }
 #reader.drawer-open .r-drawer-backdrop { opacity: 1; pointer-events: auto; }
+/* درج الإعدادات: بلا تعتيم ولا تمويه ليظهر الكتاب بلونه الحقيقي أثناء المعاينة الحيّة */
+#reader.settings-open .r-drawer-backdrop { background: transparent; backdrop-filter: none; }
 /* زر إغلاق داخل الدرج */
 .r-drawer-close { position: absolute; top: 14px; inset-inline-end: 14px; z-index: 2;
   width: 34px; height: 34px; border-radius: 50%; font-size: 15px; color: #cfc7e0;

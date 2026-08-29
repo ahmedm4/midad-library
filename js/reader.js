@@ -1819,11 +1819,17 @@ const Reader = (() => {
     const d = $(id);
     const was = d.classList.contains('open');
     closeDrawers();
-    if (!was) { d.classList.add('open'); $('#reader').classList.add('drawer-open'); showUI(); }
+    if (!was) {
+      d.classList.add('open');
+      $('#reader').classList.add('drawer-open');
+      // درج الإعدادات: خلفية شفّافة كي تُعايِن تأثير الألوان والخطوط على الكتاب مباشرةً
+      $('#reader').classList.toggle('settings-open', id === '#settings-drawer');
+      showUI();
+    }
   }
   function closeDrawers() {
     document.querySelectorAll('.r-drawer').forEach((d) => d.classList.remove('open'));
-    $('#reader').classList.remove('drawer-open');
+    $('#reader').classList.remove('drawer-open', 'settings-open');
   }
 
   /* ═══════ ربط الأحداث ═══════ */
