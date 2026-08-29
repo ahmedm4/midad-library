@@ -1,6 +1,9 @@
 /* ═══════ مِداد — التشغيل ═══════ */
+const APP_VERSION = 'v43'; // يُحدَّث مع كل إصدار
+
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+  { const v = document.getElementById('app-ver'); if (v) v.textContent = APP_VERSION; }
 
   await Store.init();
   await seedGuide();
