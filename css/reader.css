@@ -459,6 +459,29 @@
 .ai-msg.ai b { color: #ffe9bd; }
 .ai-msg.ai p { margin-bottom: 8px; }
 .ai-msg.loading { color: #b6aecb; }
+.ai-msg.ai.wide, .ai-msg.ai:has(.fc-deck), .ai-msg.ai:has(.quiz) { max-width: 100%; align-self: stretch; }
+/* بطاقات المراجعة */
+.fc-hint { font-size: 12px; color: #b6aecb; margin-bottom: 8px; text-align: center; }
+.fc-deck { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fc-card { perspective: 900px; height: 110px; background: none; border: none; padding: 0; cursor: pointer; }
+.fc-inner { position: relative; width: 100%; height: 100%; transition: transform .5s; transform-style: preserve-3d; }
+.fc-card.flipped .fc-inner { transform: rotateY(180deg); }
+.fc-face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 14px; padding: 12px;
+  display: flex; align-items: center; justify-content: center; text-align: center; font-size: 13.5px; line-height: 1.7;
+  border: 1px solid rgba(255,255,255,.12); overflow: auto; }
+.fc-front { background: linear-gradient(150deg, rgba(217,169,79,.2), rgba(217,169,79,.08)); color: #ffe9bd; font-weight: 700; }
+.fc-back { background: rgba(255,255,255,.06); color: #eae4f2; transform: rotateY(180deg); }
+/* الاختبار */
+.quiz { display: flex; flex-direction: column; gap: 16px; }
+.quiz-q .qq-text { font-weight: 700; color: #ffe9bd; margin-bottom: 10px; line-height: 1.8; }
+.qq-opts { display: flex; flex-direction: column; gap: 7px; }
+.qq-opt { text-align: start; padding: 10px 14px; border-radius: 11px; font-size: 14px; color: #e5deee;
+  border: 1px solid var(--card-line, rgba(255,255,255,.1)); background: rgba(255,255,255,.03); transition: .15s; }
+.qq-opt:hover { border-color: rgba(217,169,79,.5); }
+.quiz-q.answered .qq-opt { cursor: default; }
+.qq-opt.correct { background: rgba(87,187,106,.2); border-color: rgba(87,187,106,.6); color: #b6f0c2; }
+.qq-opt.wrong { background: rgba(231,76,60,.16); border-color: rgba(231,76,60,.5); color: #ffb4ab; }
+.qq-why { margin-top: 8px; font-size: 12.5px; color: #b6aecb; padding: 8px 12px; background: rgba(255,255,255,.04); border-radius: 10px; }
 .ai-msg.err { background: rgba(231,76,60,.14); border-color: rgba(231,76,60,.4); color: #ffb4ab; align-self: stretch; max-width: 100%; }
 .ai-typing { display: inline-flex; gap: 4px; }
 .ai-typing i { width: 7px; height: 7px; border-radius: 50%; background: #b6aecb; animation: aidot 1s infinite; }

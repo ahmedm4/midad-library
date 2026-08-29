@@ -1004,16 +1004,43 @@ const Reader = (() => {
     return html || '<p></p>';
   }
 
+  const parseJsonArray = (s) => { try { const m = String(s).match(/\[[\s\S]*\]/); return m ? JSON.parse(m[0]) : []; } catch { return []; } };
+
+  function renderFlashcards(el, res) {
+    const cards = parseJsonArray(res);
+    if (!cards.length) { el.innerHTML = mdToHtml(res); return; }
+    el.innerHTML = '<div class="fc-hint">اضغط البطاقة لقلبها 🔄</div><div class="fc-deck">' + cards.map((c) =>
+      `<button class="fc-card"><div class="fc-inner"><div class="fc-face fc-front">${esc(c.q || '')}</div><div class="fc-face fc-back">${esc(c.a || '')}</div></div></button>`).join('') + '</div>';
+    el.querySelectorAll('.fc-card').forEach((b) => (b.onclick = () => b.classList.toggle('flipped')));
+  }
+  function renderQuiz(el, res) {
+    const qs = parseJsonArray(res);
+    if (!qs.length) { el.innerHTML = mdToHtml(res); return; }
+    el.innerHTML = '<div class="quiz">' + qs.map((q, qi) =>
+      `<div class="quiz-q" data-correct="${q.correct | 0}"><div class="qq-text">${qi + 1}. ${esc(q.q || '')}</div><div class="qq-opts">${(q.options || []).map((o, oi) =>
+        `<button class="qq-opt" data-oi="${oi}">${esc(o)}</button>`).join('')}</div><div class="qq-why" hidden>${esc(q.why || '')}</div></div>`).join('') + '</div>';
+    el.querySelectorAll('.quiz-q').forEach((qEl) => {
+      const correct = +qEl.dataset.correct;
+      qEl.querySelectorAll('.qq-opt').forEach((opt) => (opt.onclick = () => {
+        if (qEl.classList.contains('answered')) return;
+        qEl.classList.add('answered');
+        const chosen = +opt.dataset.oi;
+        qEl.querySelectorAll('.qq-opt').forEach((o, i) => { if (i === correct) o.classList.add('correct'); else if (i === chosen) o.classList.add('wrong'); });
+        const why = qEl.querySelector('.qq-why'); if (why) why.hidden = false;
+      }));
+    });
+  }
+
   async function runAI(action, extra = {}) {
     if (aiBusy) return;
+    const labels = { summarize: '📄 لخّص الكتاب', keypoints: '💡 أبرز نقاط الكتاب', flashcards: '🃏 بطاقات مراجعة', quiz: '📝 اختبرني' };
     if (action === 'ask') {
       const q = $('#ai-input').value.trim();
       if (!q) return;
       $('#ai-input').value = '';
       addAiMsg('user', esc(q));
       extra.question = q;
-    } else if (action === 'summarize') addAiMsg('user', '📄 لخّص الكتاب');
-    else if (action === 'keypoints') addAiMsg('user', '💡 أبرز نقاط الكتاب');
+    } else if (labels[action]) addAiMsg('user', labels[action]);
     else if (action === 'explain') addAiMsg('user', '✨ اشرح: «' + esc((extra.selection || '').slice(0, 120)) + (extra.selection && extra.selection.length > 120 ? '…' : '') + '»');
 
     const loading = addAiMsg('ai loading', '<span class="ai-typing"><i></i><i></i><i></i></span>');
@@ -1024,7 +1051,9 @@ const Reader = (() => {
       else body.text = await Library.getBookText(book.id);
       const res = await Cloud.aiInvoke(body);
       loading.classList.remove('loading');
-      loading.innerHTML = mdToHtml(res);
+      if (action === 'flashcards') renderFlashcards(loading, res);
+      else if (action === 'quiz') renderQuiz(loading, res);
+      else loading.innerHTML = mdToHtml(res);
     } catch (e) {
       loading.classList.remove('loading');
       loading.classList.add('err');
@@ -1102,34 +1131,37 @@ const Reader = (() => {
   /* ═══════ القاموس الفوري (معنى بالذكاء الاصطناعي) ═══════ */
   function hideDefineBubble() { $('#define-bubble').hidden = true; }
 
-  async function defineWord(text, rect) {
-    if (!text) return;
+  // فقاعة ذكاء مشتركة (المعنى/الترجمة): تعرض العنوان وتنتظر نتيجة الاستدعاء
+  async function aiBubble(title, rect, invokeBody, notReadyMsg) {
     if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
       const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
-      return Library.toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام المعنى الفوري' : 'المعنى الفوري يحتاج تفعيل المزامنة السحابية');
+      return Library.toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام هذه الميزة' : notReadyMsg);
     }
-    const short = text.length > 60 ? text.slice(0, 60) + '…' : text;
     const bubble = $('#define-bubble');
-    $('#db-word').textContent = short;
+    $('#db-word').textContent = title.length > 60 ? title.slice(0, 60) + '…' : title;
     $('#db-body').innerHTML = '<span class="ai-typing"><i></i><i></i><i></i></span>';
     bubble.hidden = false;
-    // موضعة الفقاعة قرب الكلمة
     const bw = 300;
     if (rect) {
       bubble.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - bw / 2, innerWidth - bw - 8)) + 'px';
       bubble.style.top = (rect.bottom + 10 < innerHeight - 180 ? rect.bottom + 10 : Math.max(60, rect.top - 190)) + 'px';
-    } else {
-      bubble.style.left = (innerWidth / 2 - bw / 2) + 'px';
-      bubble.style.top = '80px';
-    }
+    } else { bubble.style.left = (innerWidth / 2 - bw / 2) + 'px'; bubble.style.top = '80px'; }
     try {
-      const prompt = `عرّف بإيجاز شديد (جملة أو جملتين بالعربية الفصحى) معنى هذه الكلمة أو العبارة${book && book.title ? ` كما قد ترد في كتاب «${book.title}»` : ''}، ودون مقدمات: «${text}»`;
-      const res = await Cloud.aiInvoke({ action: 'define', text: prompt });
-      if (bubble.hidden) return; // أُغلقت أثناء الانتظار
-      $('#db-body').textContent = res || 'لا يوجد تعريف.';
-    } catch (e) {
-      $('#db-body').textContent = '⚠ ' + ((e && e.message) || 'تعذّر جلب المعنى');
-    }
+      const res = await Cloud.aiInvoke(invokeBody);
+      if (bubble.hidden) return;
+      $('#db-body').textContent = res || '—';
+    } catch (e) { $('#db-body').textContent = '⚠ ' + ((e && e.message) || 'تعذّر الحصول على النتيجة'); }
+  }
+
+  function defineWord(text, rect) {
+    if (!text) return;
+    const prompt = `عرّف بإيجاز شديد (جملة أو جملتين بالعربية الفصحى) معنى هذه الكلمة أو العبارة${book && book.title ? ` كما قد ترد في كتاب «${book.title}»` : ''}، ودون مقدمات: «${text}»`;
+    return aiBubble(text, rect, { action: 'define', text: prompt }, 'المعنى الفوري يحتاج تفعيل المزامنة السحابية');
+  }
+
+  function translateSel(text, rect) {
+    if (!text) return;
+    return aiBubble('🌐 الترجمة', rect, { action: 'translate', text, question: 'الإنجليزية' }, 'الترجمة تحتاج تفعيل المزامنة السحابية');
   }
 
   /* ═══════ القراءة التلقائية (تمرير/تقليب بلا يدين) ═══════ */
@@ -2062,13 +2094,17 @@ const Reader = (() => {
         hideHlPopup(); pendingPdfMark = null;
         if (txt) shareQuote(txt);
       };
+      const selRect = () => { const s = getSelection(); return (s && s.rangeCount && !s.isCollapsed) ? s.getRangeAt(0).getBoundingClientRect() : null; };
       $('#hl-define-btn').onclick = () => {
-        let rect = null;
-        const txt = selText();
-        const s = getSelection(); if (s && s.rangeCount && !s.isCollapsed) rect = s.getRangeAt(0).getBoundingClientRect();
+        const txt = selText(), rect = selRect();
         hideHlPopup(); pendingPdfMark = null;
         if (txt) defineWord(txt.trim(), rect);
       };
+      { const tb = $('#hl-translate-btn'); if (tb) tb.onclick = () => {
+        const txt = selText(), rect = selRect();
+        hideHlPopup(); pendingPdfMark = null;
+        if (txt) translateSel(txt.trim(), rect);
+      }; }
       $('#db-close').onclick = hideDefineBubble;
       $('#r-btn-auto').onclick = toggleAuto;
       $('#r-btn-ai').onclick = openAI;
