@@ -9,9 +9,42 @@
   try { await Library.init(); } catch (e) { console.error('library init', e); }
   try { if (window.Cloud) Cloud.init(); } catch (e) { console.error('cloud init', e); }
 
-  // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت)
+  // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت) مع تحديث مُتحكَّم فيه
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    window.addEventListener('load', async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('sw.js');
+        const offerUpdate = (worker) => { if (worker) showUpdateBanner(worker); };
+        // عامل جديد ينتظر بالفعل
+        if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg.waiting);
+        // اكتشاف تحديث جديد أثناء التشغيل
+        reg.addEventListener('updatefound', () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(nw);
+          });
+        });
+        // عند تفعيل العامل الجديد: أعد التحميل مرّة واحدة فقط
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (reloaded) return; reloaded = true; location.reload();
+        });
+        // افحص وجود تحديث عند العودة للتطبيق
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+      } catch {}
+    });
+  }
+
+  function showUpdateBanner(worker) {
+    if (document.getElementById('update-banner')) return;
+    const bar = document.createElement('div');
+    bar.id = 'update-banner';
+    bar.className = 'update-banner';
+    bar.innerHTML = '<span>✨ تحديث جديد للتطبيق جاهز</span><button class="ub-go">تحديث الآن</button><button class="ub-x" title="لاحقاً">✕</button>';
+    bar.querySelector('.ub-go').onclick = () => { bar.classList.add('going'); worker.postMessage({ type: 'SKIP_WAITING' }); };
+    bar.querySelector('.ub-x').onclick = () => bar.remove();
+    document.body.appendChild(bar);
   }
 
   // زر التثبيت بنقرة واحدة (يظهر عندما يسمح المتصفح)

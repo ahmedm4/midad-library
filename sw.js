@@ -1,5 +1,5 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v39';
+const VERSION = 'midad-v40';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',
@@ -13,8 +13,13 @@ self.addEventListener('install', (e) => {
     const c = await caches.open(VERSION);
     // تجاهل أي ملف يفشل تحميله حتى لا يفشل التثبيت كله
     await Promise.all(SHELL.map((u) => c.add(u).catch(() => {})));
-    self.skipWaiting();
+    // لا نُفعّل فوراً: ننتظر موافقة المستخدم عبر شريط «تحديث الآن» (تحديث بإعادة تحميل واحدة)
   })());
+});
+
+// تفعيل العامل الجديد عند ضغط المستخدم «تحديث الآن»
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
