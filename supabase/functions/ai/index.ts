@@ -140,28 +140,50 @@ Deno.serve(async (req) => {
       promptText = buildPrompt(action, payload);
     }
 
-    // ── مزوّدات متوافقة مع OpenAI: OpenAI و OpenRouter ──
-    if (provider === "openai" || provider === "oai" || provider === "openrouter") {
+    // ── نداء مزوّد بعينه ──
+    const runProvider = (name: string) => {
+      if (name === "gemini") {
+        if (!KEYS.length) return Promise.resolve({ ok: false, error: "Gemini غير مضبوط", status: 400 });
+        const parts = action === "ocr" ? [{ text: ocrPrompt }, { inlineData: { mimeType, data: image } }] : [{ text: promptText }];
+        return callGemini(MODEL, KEYS, parts, genCfg);
+      }
+      // OpenAI / OpenRouter (متوافقان)
+      const isOR = name === "openrouter";
+      const key = isOR ? OR_KEY : OAI_KEY;
+      if (!key) return Promise.resolve({ ok: false, error: `${name} غير مضبوط`, status: 400 });
+      const base = isOR ? "https://openrouter.ai/api/v1" : OAI_BASE;
+      const model = isOR ? OR_MODEL : OAI_MODEL;
+      const headers = isOR ? { "HTTP-Referer": "https://midad.app", "X-Title": "Midad" } : {};
       const messages = action === "ocr"
         ? [{ role: "user", content: [{ type: "text", text: ocrPrompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${image}` } }] }]
         : [{ role: "user", content: promptText }];
-      let base = OAI_BASE, key = OAI_KEY, model = OAI_MODEL, headers: Record<string, string> = {};
-      if (provider === "openrouter") {
-        if (!OR_KEY) return json({ error: "مزوّد OpenRouter غير مضبوط في الخادم (OPENROUTER_API_KEY)" }, 400);
-        base = "https://openrouter.ai/api/v1"; key = OR_KEY; model = OR_MODEL;
-        headers = { "HTTP-Referer": "https://midad.app", "X-Title": "Midad" };
-      } else if (!OAI_KEY) return json({ error: "مزوّد OpenAI غير مضبوط في الخادم (OPENAI_API_KEY)" }, 400);
-      const r = await callOpenAI(base, key, model, messages, genCfg, headers);
-      if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
-      return json({ text: r.text || "لم يصل رد." });
-    }
+      return callOpenAI(base, key, model, messages, genCfg, headers);
+    };
 
-    // ── مزوّد Gemini (الافتراضي) ──
-    if (!KEYS.length) return json({ error: "مفتاح Gemini غير مضبوط في الخادم (GEMINI_API_KEY أو GEMINI_API_KEYS)" }, 500);
-    const parts = action === "ocr" ? [{ text: ocrPrompt }, { inlineData: { mimeType, data: image } }] : [{ text: promptText }];
-    const r = await callGemini(MODEL, KEYS, parts, genCfg);
-    if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
-    return json({ text: r.text || "لم يصل رد." });
+    // المزوّدات المُهيّأة
+    const configured: string[] = [];
+    if (KEYS.length) configured.push("gemini");
+    if (OAI_KEY) configured.push("openai");
+    if (OR_KEY) configured.push("openrouter");
+    if (!configured.length) return json({ error: "لا يوجد مزوّد ذكاء مضبوط في الخادم" }, 500);
+
+    const want = provider === "oai" ? "openai" : provider;
+    // للـOCR: مزوّد واحد فقط (احترام اختيار المستخدم والتكلفة). لبقية المهام: تحويل تلقائي عند تجاوز الحصّة
+    let order: string[];
+    if (action === "ocr") order = [configured.includes(want) ? want : configured[0]];
+    else order = [...new Set([want, ...configured])].filter((p) => configured.includes(p));
+
+    let lastErr = "تعذّر الاتصال بمزوّد الذكاء", lastStatus = 500;
+    for (const name of order) {
+      const r = await runProvider(name);
+      if (r.ok) return json({ text: r.text || "لم يصل رد." });
+      lastErr = r.error || lastErr; lastStatus = r.status || 500;
+      // بدّل للمزوّد التالي فقط عند تجاوز الحصّة/عدم التوفّر؛ الأخطاء الحقيقية تُعاد فوراً
+      const canFailover = isQuota(r.status, r.error || "") || isKeyError(r.status, r.error || "") ||
+        r.status === 503 || /unavailable|no endpoints|overloaded|غير مضبوط/i.test(r.error || "");
+      if (!canFailover) break;
+    }
+    return json({ error: lastErr }, isQuota(lastStatus, lastErr) ? 429 : (lastStatus || 500));
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
