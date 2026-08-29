@@ -608,10 +608,12 @@ const Reader = (() => {
       const vp = page.getViewport({ scale: (cssW / v1.width) * dpr });
       const canvas = document.createElement('canvas');
       canvas.width = vp.width; canvas.height = vp.height;
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
-      if (settings.enhanceScan) cleanScan(canvas.getContext('2d'), canvas.width, canvas.height);
+      // willReadFrequently عند التحسين: القراءة المتكرّرة للبكسل أسرع ودون تحذير
+      const sctx = canvas.getContext('2d', { willReadFrequently: !!settings.enhanceScan });
+      await page.render({ canvasContext: sctx, viewport: vp, intent: 'print' }).promise;
+      if (settings.enhanceScan) cleanScan(sctx, canvas.width, canvas.height);
       // رسم الكتابات المحفوظة (عرض فقط في وضع التمرير)
-      drawStrokesTo(canvas.getContext('2d'), state.drawings[s.page] || [], canvas.width, canvas.height);
+      drawStrokesTo(sctx, state.drawings[s.page] || [], canvas.width, canvas.height);
       const old = s.el.querySelector('canvas'); if (old) old.remove();
       const ld = s.el.querySelector('.slot-loading'); if (ld) ld.remove();
       s.el.insertBefore(canvas, s.el.firstChild);
