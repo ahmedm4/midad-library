@@ -156,6 +156,9 @@
 .r-pdf-scroll { scrollbar-color: rgba(255,255,255,.28) transparent; }
 #reader.mode-scroll .r-content { column-width: auto !important; column-gap: 0;
   height: auto; transform: none !important; padding-bottom: 40px; }
+/* وضع التركيز: تعتيم كل الفقرات عدا السطر الحالي (في التمرير المتصل) */
+#reader.focus-mode.mode-scroll .r-content > * { transition: opacity .35s, filter .35s; opacity: .28; }
+#reader.focus-mode.mode-scroll .r-content > .focus-line { opacity: 1; }
 
 /* كنفا PDF */
 .r-canvas-wrap { position: relative; border-radius: 6px;

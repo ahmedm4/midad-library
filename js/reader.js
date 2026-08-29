@@ -1247,6 +1247,9 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.paperFx = b.dataset.fx; applySettings(); };
     });
+    { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { settings.focusMode = b.dataset.focus === '1'; Store.saveSettings(settings); applySettings(); };
+    }); }
     // تنقية الصفحة المصوّرة (تسوية الخلفية وإزالة الشرائط الفاتحة)
     const enhanceRow = $('#enhance-row');
     if (enhanceRow) enhanceRow.querySelectorAll('button').forEach((b) => {
@@ -1313,6 +1316,8 @@ const Reader = (() => {
     r.classList.toggle('pdf-dark', isPdf && dark);
     r.classList.toggle('mode-scroll', !isPdf && settings.flip === 'scroll');
     r.classList.toggle('pdf-scroll', pdfScrollActive());
+    r.classList.toggle('focus-mode', !!settings.focusMode);
+    if (settings.focusMode && !isPdf && settings.flip === 'scroll') updateFocusLine();
     // في وضع التمرير لـ PDF نخفي الكنفا المفرد وأداة الكتابة (العرض عبر الشرائح)
     if (isPdf) {
       $('#r-canvas-wrap').hidden = pdfScrollActive();
@@ -1327,6 +1332,7 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fx === (settings.paperFx || 'none')));
     $('#flip-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.flip === settings.flip));
     $('#spread-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.spread === '1') === !!settings.spread));
+    { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.focus === '1') === !!settings.focusMode)); }
     { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
     $('#set-ttsrate').value = settings.ttsRate || 100;
     $('#set-autospeed').value = settings.autoSpeed || 50;
@@ -1359,6 +1365,22 @@ const Reader = (() => {
   }
 
   /* ═══════ شريط المعلومات ═══════ */
+  // وضع التركيز: أبرِز الفقرة الأقرب لمركز نافذة القراءة وعتّم البقية
+  function updateFocusLine() {
+    if (!contentEl || isPdf) return;
+    const vr = viewportEl.getBoundingClientRect();
+    const cy = vr.top + vr.height * 0.42;
+    let best = null, bestD = Infinity;
+    for (const el of contentEl.children) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom < vr.top || r.top > vr.bottom) continue;
+      const d = Math.abs((r.top + r.bottom) / 2 - cy);
+      if (d < bestD) { bestD = d; best = el; }
+    }
+    contentEl.querySelectorAll('.focus-line').forEach((e) => { if (e !== best) e.classList.remove('focus-line'); });
+    if (best) best.classList.add('focus-line');
+  }
+
   function updateHUD() {
     const label = $('#r-page-label');
     const slider = $('#r-slider');
@@ -1952,6 +1974,7 @@ const Reader = (() => {
       if (settings.flip !== 'scroll' || isPdf) return;
       const max = viewportEl.scrollHeight - viewportEl.clientHeight;
       state.pct = max > 0 ? viewportEl.scrollTop / max : 1;
+      if (settings.focusMode) updateFocusLine();
       afterNavigate();
     }, { passive: true });
 
@@ -2216,6 +2239,6 @@ const Reader = (() => {
     }, { passive: true });
   }
 
-  return { open, close, wire, previewHTML: buildHTML };
+  return { open, close, wire, previewHTML: buildHTML, mdToHtml };
 })();
 window.Reader = Reader;

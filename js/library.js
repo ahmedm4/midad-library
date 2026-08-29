@@ -34,7 +34,7 @@ const Library = (() => {
   let pendingCover = null;  // غلاف مخصص اختاره المستخدم (dataURL)
   let editingId = null;
   let origText = null;      // النص الأصلي عند تحرير كتاب نصي (لكشف التغيير)
-  const STATUS_FAV = '⭐ المفضلة', STATUS_READING = '📖 قيد القراءة', STATUS_DONE = '✅ مكتملة';
+  const STATUS_FAV = '⭐ المفضلة', STATUS_READING = '📖 قيد القراءة', STATUS_DONE = '✅ مكتملة', STATUS_UNREAD = '🆕 لم تبدأ';
   const SHELF_PREFIX = 'shelf:'; // قيمة data-cat للرفوف المخصصة
 
   const $ = (s) => document.querySelector(s);
@@ -220,16 +220,28 @@ create policy "midad_own_files" on storage.objects for all
     }
   }
 
+  // اقتراح كتاب لم يُبدأ بعد، مع تفضيل تصنيف آخر ما قرأه المستخدم
+  function pickSuggestion(excludeId) {
+    const unread = books.filter((b) => b.id !== excludeId && !states[b.id].finished && !(states[b.id].pct > 0));
+    if (!unread.length) return null;
+    const readBooks = books.filter((b) => states[b.id].lastRead).sort((a, b) => states[b.id].lastRead - states[a.id].lastRead);
+    const favCat = readBooks[0] && readBooks[0].category;
+    const sameCat = unread.filter((b) => b.category === favCat);
+    return (sameCat.length ? sameCat : unread).sort((a, b) => b.addedAt - a.addedAt)[0];
+  }
+
   function renderHero() {
     const hero = $('#hero-continue');
     const last = books
       .filter((b) => states[b.id].lastRead && !states[b.id].finished && states[b.id].pct > 0)
       .sort((a, b) => states[b.id].lastRead - states[a.id].lastRead)[0];
-    if (!last) { hero.hidden = true; return; }
-    const st = states[last.id];
-    const pct = Math.round(st.pct * 100);
+    const sug = pickSuggestion(last ? last.id : null);
+    if (!last && !sug) { hero.hidden = true; return; }
     hero.hidden = false;
-    hero.innerHTML = `
+    let html = '';
+    if (last) {
+      const st = states[last.id], pct = Math.round(st.pct * 100);
+      html += `
       <div class="continue-card" data-id="${last.id}">
         ${coverHTML(last, 'cc-cover')}
         <div class="cc-info">
@@ -241,7 +253,21 @@ create policy "midad_own_files" on storage.objects for all
         </div>
         <button class="btn-gold cc-btn">استئناف القراءة ←</button>
       </div>`;
-    hero.querySelector('.continue-card').onclick = () => openBook(last.id);
+    }
+    if (sug) {
+      html += `
+      <div class="suggest-card" data-id="${sug.id}">
+        ${coverHTML(sug, 'sc-cover')}
+        <div class="sc-info">
+          <div class="sc-label">💡 اقرأ التالي</div>
+          <h4>${esc(sug.title)}</h4>
+          <div class="sc-author">${esc(sug.author || sug.category || '')}</div>
+        </div>
+      </div>`;
+    }
+    hero.innerHTML = html;
+    const cc = hero.querySelector('.continue-card'); if (cc && last) cc.onclick = () => openBook(last.id);
+    const sc = hero.querySelector('.suggest-card'); if (sc && sug) sc.onclick = () => openBook(sug.id);
   }
 
   // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
@@ -266,6 +292,7 @@ create policy "midad_own_files" on storage.objects for all
     const status = [];
     if (books.some((b) => b.fav)) status.push(STATUS_FAV);
     if (books.some((b) => states[b.id].pct > 0 && !states[b.id].finished)) status.push(STATUS_READING);
+    if (books.some((b) => !states[b.id].finished && !(states[b.id].pct > 0))) status.push(STATUS_UNREAD);
     if (books.some((b) => states[b.id].finished)) status.push(STATUS_DONE);
     const cats = ['الكل', ...status, ...CATEGORIES.filter((c) => used.has(c))];
     const shelves = allShelves();
@@ -292,6 +319,7 @@ create policy "midad_own_files" on storage.objects for all
     if (activeCat === STATUS_FAV) list = list.filter((b) => b.fav);
     else if (activeCat === STATUS_READING) list = list.filter((b) => states[b.id].pct > 0 && !states[b.id].finished);
     else if (activeCat === STATUS_DONE) list = list.filter((b) => states[b.id].finished);
+    else if (activeCat === STATUS_UNREAD) list = list.filter((b) => !states[b.id].finished && !(states[b.id].pct > 0));
     else if (activeCat.startsWith(SHELF_PREFIX)) { const sh = activeCat.slice(SHELF_PREFIX.length); list = list.filter((b) => (b.shelves || []).includes(sh)); }
     else if (activeCat !== 'الكل') list = list.filter((b) => b.category === activeCat);
     if (query) {
@@ -1728,6 +1756,7 @@ create policy "midad_own_files" on storage.objects for all
       const menu = document.createElement('div');
       menu.className = 'bc-menu';
       menu.innerHTML = `
+        <button data-act="libai">🔍 اسأل مكتبتك</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
         <button data-act="keys">🔑 فحص مفاتيح الذكاء</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
@@ -1740,6 +1769,7 @@ create policy "midad_own_files" on storage.objects for all
         const act = ev.target.dataset.act;
         closeCardMenu();
         if (act === 'stats') openStats();
+        else if (act === 'libai') openLibAI();
         else if (act === 'keys') checkAiKeys();
         else if (act === 'backup') exportBackup();
         else if (act === 'restore') $('#import-input').click();
@@ -1769,6 +1799,74 @@ create policy "midad_own_files" on storage.objects for all
     } catch (e) {
       toast('تعذّر الفحص: ' + ((e && e.message) || 'خطأ'));
     }
+  }
+
+  /* ─── اسأل مكتبتك: بحث ذكي عبر كل الكتب (RAG مبسّط) ─── */
+  let libAiWired = false, libAiBusy = false;
+  function openLibAI() {
+    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
+      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
+      return toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام «اسأل مكتبتك»' : '«اسأل مكتبتك» يحتاج تفعيل المزامنة السحابية');
+    }
+    const modal = $('#libai-modal');
+    modal.hidden = false;
+    if (!libAiWired) {
+      libAiWired = true;
+      modal.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => (modal.hidden = true)));
+      modal.onclick = (e) => { if (e.target === modal) modal.hidden = true; };
+      $('#libai-send').onclick = () => askLibrary();
+      $('#libai-input').onkeydown = (e) => { if (e.key === 'Enter') askLibrary(); };
+    }
+    setTimeout(() => $('#libai-input').focus(), 80);
+  }
+
+  function libAiMsg(kind, html) {
+    const el = document.createElement('div');
+    el.className = 'ai-msg ' + kind; el.innerHTML = html;
+    const hint = $('#libai-body').querySelector('.ai-hint'); if (hint) hint.remove();
+    $('#libai-body').appendChild(el);
+    $('#libai-body').scrollTop = $('#libai-body').scrollHeight;
+    return el;
+  }
+
+  async function askLibrary() {
+    if (libAiBusy) return;
+    const q = $('#libai-input').value.trim();
+    if (!q) return;
+    $('#libai-input').value = '';
+    libAiMsg('user', esc(q));
+    const loading = libAiMsg('ai loading', '<span class="ai-typing"><i></i><i></i><i></i></span>');
+    libAiBusy = true;
+    try {
+      // اجمع مقتطفات ذات صلة من نصوص الكتب المتاحة (نصية + PDF مفهرس/مُستخرَج)
+      // نُبقي الحروف العربية واللاتينية والأرقام فقط (نحذف علامات الترقيم والتشكيل)
+      const words = [...new Set(q.split(/\s+/).map((w) => w.replace(/[^ء-يa-zA-Z0-9]/g, '')).filter((w) => w.length >= 3))];
+      const snippets = [];
+      for (const b of books) {
+        if (snippets.length >= 30) break;
+        const s = await searchableOf(b, false); // المُخزَّن فقط (سرعة)
+        if (!s || !s.text) continue;
+        for (const w of words) {
+          for (const h of findHits(s.text, w, 2)) {
+            let page = '';
+            if (b.type === 'pdf' && s.pageStarts) { let pg = 1; for (let k = 0; k < s.pageStarts.length; k++) if (s.pageStarts[k] <= h.off) pg = k + 1; page = ' ص ' + pg; }
+            snippets.push(`من كتاب «${b.title}»${page}: …${snippetClean(h.before + h.hit + h.after)}…`);
+          }
+        }
+      }
+      const ctx = [...new Set(snippets)].slice(0, 18).join('\n\n');
+      if (!ctx) {
+        loading.classList.remove('loading');
+        loading.innerHTML = 'لم أجد نصاً ذا صلة في مكتبتك. تأكّد من فهرسة كتبك: افتح الكتب المصوّرة مرّة (أو استخرج نصها)، ثم أعد المحاولة.';
+        return;
+      }
+      const res = await Cloud.aiInvoke({ action: 'library', question: q, text: ctx });
+      loading.classList.remove('loading');
+      loading.innerHTML = (window.Reader && Reader.mdToHtml) ? Reader.mdToHtml(res) : esc(res).replace(/\n/g, '<br>');
+    } catch (e) {
+      loading.classList.remove('loading'); loading.classList.add('err');
+      loading.innerHTML = '⚠ ' + esc((e && e.message) || 'تعذّر الحصول على رد');
+    } finally { libAiBusy = false; $('#libai-body').scrollTop = $('#libai-body').scrollHeight; }
   }
 
   function openStats() {

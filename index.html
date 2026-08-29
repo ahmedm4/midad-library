@@ -351,6 +351,11 @@
         <button data-spread="0" class="active">صفحة واحدة</button>
         <button data-spread="1">صفحتان متقابلتان</button>
       </div>
+      <h4>وضع التركيز <span class="fld-hint">(تعتيم ما حول السطر — للتمرير المتصل)</span></h4>
+      <div class="bgmode-row" id="focus-row">
+        <button data-focus="0" class="active">عادي</button>
+        <button data-focus="1">تركيز</button>
+      </div>
     </section>
 
     <section id="flip-section">
@@ -475,6 +480,21 @@
   <div class="modal">
     <header><h3>📊 إحصائيات قراءتك</h3><button class="icon-btn" data-close>✕</button></header>
     <div id="stats-body"></div>
+  </div>
+</div>
+
+<!-- اسأل مكتبتك: بحث ذكي عبر كل الكتب -->
+<div class="modal-backdrop" id="libai-modal" hidden>
+  <div class="modal ai-modal">
+    <header><h3>🔍 اسأل مكتبتك</h3><button class="icon-btn" data-close>✕</button></header>
+    <div class="ai-body" id="libai-body">
+      <div class="ai-hint">اطرح سؤالاً، فيبحث المساعد في كل كتبك ويجيبك مع ذكر المصدر والصفحة. مثال: «ماذا قيل عن الصبر؟» أو «أي كتاب يتحدث عن كربلاء؟»</div>
+    </div>
+    <div class="ai-input-row">
+      <input id="libai-input" placeholder="اسأل مكتبتك كلها…" autocomplete="off">
+      <button class="btn-gold" id="libai-send">إرسال</button>
+    </div>
+    <div class="ai-foot">يبحث في النصوص المتاحة على هذا الجهاز — افتح الكتب المصوّرة مرّة لفهرستها.</div>
   </div>
 </div>
 <input type="file" id="import-input" accept=".json,application/json" hidden>
