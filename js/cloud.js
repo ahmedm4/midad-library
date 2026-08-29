@@ -110,7 +110,11 @@ const Cloud = (() => {
     setStatus('syncing', 'جارٍ المزامنة…');
     try {
       // نستثني عمود content الثقيل (نص الكتب/الـOCR) — يُجلب كسولاً عند فتح الكتاب فيسرع المزامنة كثيراً
-      const { data: rows, error } = await sb.from(TABLE).select('id, owner, meta, state, has_file, deleted, updated_at');
+      let { data: rows, error } = await sb.from(TABLE).select('id, owner, meta, state, has_file, deleted, updated_at');
+      // بعض الجداول لا تحتوي عمود deleted (الحذف الناعم) — أعِد الجلب بدونه
+      if (error && /deleted|column .* does not exist/i.test(error.message || '')) {
+        ({ data: rows, error } = await sb.from(TABLE).select('id, owner, meta, state, has_file, updated_at'));
+      }
       if (error) throw error;
       const cloudById = new Map((rows || []).map((r) => [r.id, r]));
       const localBooks = await Store.getBooks();
