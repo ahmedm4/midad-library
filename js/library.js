@@ -932,7 +932,8 @@ create policy "midad_own_files" on storage.objects for all
     const bodyHtml = (window.Reader && Reader.previewHTML) ? Reader.previewHTML(text) : `<p>${esc(text)}</p>`;
     const w = window.open('', '_blank');
     if (!w) return toast('اسمح بالنوافذ المنبثقة لتصدير PDF ثم أعد المحاولة');
-    const title = esc(b.title || 'كتاب'), author = esc(b.author || '');
+    // نظّف لاحقة «— نص» التي يضيفها التطبيق للنسخ النصية
+    const title = esc((b.title || 'كتاب').replace(/\s*—\s*نص\s*$/, '')), author = esc(b.author || '');
     const bodyFont = b.font || "'Noto Naskh Arabic', serif";
     // لون الورق من سمة القارئ الحالية (يطابق ما يراه المستخدم)
     const s = Store.getSettings();
