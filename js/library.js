@@ -927,6 +927,41 @@ create policy "midad_own_files" on storage.objects for all
     toast('صُدّرت الملاحظات 📄', 'gold');
   }
 
+  /* ─── نافذة خيارات تصدير PDF ─── */
+  function exportOptions() {
+    return new Promise((resolve) => {
+      document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+      const overlay = document.createElement('div');
+      overlay.className = 'ui-dialog';
+      overlay.innerHTML = `
+        <div class="ud-box exp-box" role="dialog" aria-modal="true">
+          <div class="ud-icon">🖨</div>
+          <h3>خيارات تصدير PDF</h3>
+          <div class="exp-row"><label>مقاس الصفحة</label>
+            <div class="exp-seg" data-k="size"><button data-v="A4" class="on">A4</button><button data-v="A5">A5 (كتاب)</button><button data-v="Letter">Letter</button></div></div>
+          <div class="exp-row"><label>حجم الخط</label>
+            <div class="exp-seg" data-k="font"><button data-v="0.9">صغير</button><button data-v="1" class="on">متوسط</button><button data-v="1.12">كبير</button></div></div>
+          <label class="exp-check"><input type="checkbox" id="exp-toc" checked><span>فهرس محتويات تلقائي (بأرقام الصفحات)</span></label>
+          <label class="exp-check"><input type="checkbox" id="exp-info" checked><span>صفحة معلومات الكتاب</span></label>
+          <label class="exp-check"><input type="checkbox" id="exp-pages" checked><span>ترقيم الصفحات</span></label>
+          <label class="exp-check"><input type="checkbox" id="exp-drop" checked><span>حرف استهلالي للفصول</span></label>
+          <div class="ud-actions"><button class="ud-cancel">إلغاء</button><button class="ud-ok btn-gold">🖨 تصدير</button></div>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelectorAll('.exp-seg').forEach((seg) => seg.querySelectorAll('button').forEach((btn) =>
+        (btn.onclick = () => seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === btn)))));
+      const done = (v) => { overlay.remove(); resolve(v); };
+      overlay.querySelector('.ud-cancel').onclick = () => done(null);
+      overlay.onclick = (e) => { if (e.target === overlay) done(null); };
+      overlay.querySelector('.ud-ok').onclick = () => {
+        const seg = (k) => overlay.querySelector(`.exp-seg[data-k="${k}"] button.on`).dataset.v;
+        done({ size: seg('size'), fontScale: parseFloat(seg('font')),
+          toc: overlay.querySelector('#exp-toc').checked, info: overlay.querySelector('#exp-info').checked,
+          pageNumbers: overlay.querySelector('#exp-pages').checked, dropcap: overlay.querySelector('#exp-drop').checked });
+      };
+    });
+  }
+
   /* ─── تصدير الكتاب إلى PDF احترافي (عبر طباعة المتصفح — يدعم العربية بامتياز) ─── */
   async function exportPdf(id) {
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
@@ -935,52 +970,70 @@ create policy "midad_own_files" on storage.objects for all
     if (b.type === 'text') { const t = await Store.getPayload(id); text = typeof t === 'string' ? t : ''; }
     else { const ft = await Store.getFulltext(id); text = (ft && ft.text) || ''; }
     if (!text.trim()) return toast('لا يوجد نص للتصدير (لكتب PDF المصوّرة استخرج النص أولاً)');
-    const bodyHtml = (window.Reader && Reader.previewHTML) ? Reader.previewHTML(text) : `<p>${esc(text)}</p>`;
+    const opts = await exportOptions();
+    if (!opts) return;
+
+    let bodyHtml = (window.Reader && Reader.previewHTML) ? Reader.previewHTML(text) : `<p>${esc(text)}</p>`;
+    // فهرس المحتويات: أضف مُعرّفات للعناوين وابنِ الفهرس بأرقام صفحات حقيقية (عبر target-counter)
+    let tocHtml = '';
+    if (opts.toc) {
+      const dom = new DOMParser().parseFromString(bodyHtml, 'text/html');
+      const heads = [...dom.body.querySelectorAll('h2, h3')];
+      heads.forEach((h, i) => (h.id = 'toc' + i));
+      if (heads.length) {
+        tocHtml = `<div class="toc"><h2 class="toc-h">المحتويات</h2>` + heads.map((h) =>
+          `<a class="toc-item ${h.tagName.toLowerCase()}" href="#${h.id}"><span class="toc-txt">${esc(h.textContent)}</span><span class="toc-dots"></span></a>`).join('') + `</div>`;
+        bodyHtml = dom.body.innerHTML;
+      }
+    }
     const w = window.open('', '_blank');
     if (!w) return toast('اسمح بالنوافذ المنبثقة لتصدير PDF ثم أعد المحاولة');
-    // نظّف لاحقة «— نص» التي يضيفها التطبيق للنسخ النصية
     const title = esc((b.title || 'كتاب').replace(/\s*—\s*نص\s*$/, '')), author = esc(b.author || '');
     const bodyFont = b.font || "'Noto Naskh Arabic', serif";
-    // لون الورق من سمة القارئ الحالية (يطابق ما يراه المستخدم)
     const s = Store.getSettings();
     let [paper, ink] = PAPER_THEMES[s.theme] || PAPER_THEMES.sepia;
     if (s.theme === 'custom' && s.customPaper) { paper = s.customPaper; ink = '#2a2114'; }
     const softInk = 'color-mix(in srgb, ' + ink + ' 72%, ' + paper + ')';
+    const fs = (13.5 * opts.fontScale).toFixed(1);
+    const margin = opts.size === 'A5' ? '15mm 14mm 16mm' : '22mm 20mm 20mm';
     const doc = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
 <title>${title}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="${FONT_LINK}" rel="stylesheet">
 <style>
-  @page { size: A4; margin: 22mm 20mm 20mm; }
-  @page { @bottom-center { content: counter(page); font-family: 'Amiri', serif; color: ${softInk}; font-size: 10pt; } }
+  @page { size: ${opts.size}; margin: ${margin}; }
+  ${opts.pageNumbers ? `@page { @bottom-center { content: counter(page); font-family: 'Amiri', serif; color: ${softInk}; font-size: 10pt; } }` : ''}
+  @page :first { @bottom-center { content: ''; } }
   * { box-sizing: border-box; }
   html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { margin: 0; padding: 0; background: ${paper}; }
-  body { font-family: ${bodyFont}; color: ${ink}; font-size: 13.5pt; line-height: 1.95;
-    text-align: justify; direction: rtl; }
-  /* معاينة الطباعة على الشاشة تبدو كصفحة كتاب */
-  @media screen { body { max-width: 820px; margin: 24px auto; padding: 40px 46px; border-radius: 6px;
-    box-shadow: 0 10px 50px rgba(0,0,0,.25); } }
-  .cover { display: flex; flex-direction: column; align-items: center; justify-content: center;
-    text-align: center; min-height: 84vh; page-break-after: always; }
+  body { font-family: ${bodyFont}; color: ${ink}; font-size: ${fs}pt; line-height: 1.95; text-align: justify; direction: rtl; }
+  @media screen { body { max-width: 820px; margin: 24px auto; padding: 40px 46px; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.25); } }
+  .cover { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 84vh; page-break-after: always; }
   .cover .orn { font-family: 'Amiri', serif; font-size: 42pt; color: ${softInk}; margin-bottom: 18pt; }
   .cover h1 { font-family: 'Amiri', serif; font-size: 30pt; font-weight: 700; margin: 0 0 14pt; color: ${ink}; line-height: 1.4; }
   .cover .author { font-size: 15pt; color: ${softInk}; }
   .cover .rule { width: 40%; height: 2px; background: ${softInk}; margin: 20pt auto; opacity: .55; }
-  h2 { font-family: 'Amiri', serif; font-size: 21pt; font-weight: 700; text-align: center;
-    margin: 0 0 20pt; color: ${ink}; page-break-before: always; padding-top: 6pt; }
+  .info-page { min-height: 62vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 9pt; page-break-after: always; }
+  .info-page .it { font-family: 'Amiri', serif; font-size: 20pt; color: ${ink}; margin-bottom: 6pt; }
+  .info-page .il { font-size: 12pt; color: ${softInk}; }
+  .toc { page-break-after: always; }
+  .toc-h { font-family: 'Amiri', serif; font-size: 20pt; text-align: center; color: ${ink}; margin: 0 0 20pt; page-break-before: avoid; }
+  .toc-item { display: flex; align-items: baseline; text-decoration: none; color: ${ink}; margin: 7pt 0; font-size: 12.5pt; }
+  .toc-item.h3 { padding-inline-start: 20pt; font-size: 11pt; color: ${softInk}; }
+  .toc-dots { flex: 1; border-bottom: 1px dotted ${softInk}; opacity: .5; margin: 0 6pt; transform: translateY(-3px); }
+  .toc-item::after { content: target-counter(attr(href), page); font-variant-numeric: tabular-nums; color: ${softInk}; }
+  h2 { font-family: 'Amiri', serif; font-size: 21pt; font-weight: 700; text-align: center; margin: 0 0 20pt; color: ${ink}; page-break-before: always; padding-top: 6pt; }
   .book > h2:first-child { page-break-before: avoid; }
   h3 { font-family: 'Amiri', serif; font-size: 15.5pt; margin: 16pt 0 8pt; color: ${ink}; }
   h4 { font-family: 'Amiri', serif; font-size: 13.5pt; margin: 14pt 0 6pt; color: ${ink}; }
   p { margin: 0 0 10pt; orphans: 2; widows: 2; }
   p.center { text-align: center; }
   p.footnote { font-size: .82em; color: ${softInk}; margin: 2pt 0; line-height: 1.6; }
-  h2 + p::first-letter, h3 + p::first-letter { font-family: 'Amiri', serif; font-size: 3.1em; float: right; line-height: .78;
-    margin: .04em .14em 0 .12em; color: ${softInk}; font-weight: 700; }
+  ${opts.dropcap ? `h2 + p::first-letter, h3 + p::first-letter { font-family: 'Amiri', serif; font-size: 3.1em; float: right; line-height: .78; margin: .04em .14em 0 .12em; color: ${softInk}; font-weight: 700; }` : ''}
   strong { font-weight: 700; } em { font-style: italic; }
   mark, mark.static-hl { background: color-mix(in srgb, ${ink} 18%, transparent); padding: 0 2px; border-radius: 2px; }
-  blockquote { margin: 12pt 0; padding: 2pt 14pt; border-inline-start: 3px solid ${softInk};
-    color: ${softInk}; font-style: italic; }
+  blockquote { margin: 12pt 0; padding: 2pt 14pt; border-inline-start: 3px solid ${softInk}; color: ${softInk}; font-style: italic; }
   ul, ol { margin: 8pt 18pt 8pt 0; padding-inline-start: 12pt; }
   li { margin-bottom: 4pt; }
   hr, hr.orn { border: none; text-align: center; margin: 16pt 0; page-break-inside: avoid; }
@@ -996,10 +1049,18 @@ create policy "midad_own_files" on storage.objects for all
     <div class="rule"></div>
     <div class="author" style="font-size:11pt;opacity:.7">مِداد — مكتبتي الرقمية</div>
   </div>
+  ${opts.info ? `<div class="info-page">
+    <div class="it">${title}</div>
+    ${author ? `<div class="il">تأليف: ${author}</div>` : ''}
+    ${b.category ? `<div class="il">التصنيف: ${esc(b.category)}</div>` : ''}
+    <div class="il">صُدِّر عبر تطبيق «مِداد»</div>
+    <div class="il">${new Date().toLocaleDateString('ar')}</div>
+  </div>` : ''}
+  ${tocHtml}
   <div class="book">${bodyHtml}</div>
   <script>
     (function(){
-      function go(){ setTimeout(function(){ window.focus(); window.print(); }, 300); }
+      function go(){ setTimeout(function(){ window.focus(); window.print(); }, 350); }
       if (document.fonts && document.fonts.ready) { document.fonts.ready.then(go); setTimeout(go, 2500); }
       else window.onload = go;
     })();

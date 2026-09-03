@@ -183,6 +183,16 @@ input, select, textarea { font-family: inherit; }
 .shelf-modal .sm-input:focus { border-color: rgba(217,169,79,.6); }
 .shelf-modal .sm-add-btn { padding: 10px 16px; border-radius: 12px; font-size: 14px; white-space: nowrap; }
 
+/* خيارات تصدير PDF */
+.exp-box { text-align: right; }
+.exp-box .exp-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0; }
+.exp-box .exp-row > label { font-size: 14px; color: var(--cream); font-weight: 600; }
+.exp-seg { display: inline-flex; background: rgba(0,0,0,.25); border-radius: 10px; padding: 3px; gap: 3px; }
+.exp-seg button { padding: 7px 12px; border-radius: 8px; font-size: 12.5px; color: var(--muted); }
+.exp-seg button.on { background: rgba(217,169,79,.22); color: var(--gold-soft); font-weight: 700; }
+.exp-check { display: flex; align-items: center; gap: 10px; margin: 10px 0; font-size: 14px; color: var(--cream); cursor: pointer; }
+.exp-check input { width: 18px; height: 18px; accent-color: var(--gold); flex: none; }
+
 /* شارة عدد في قائمة المكتبة */
 .menu-badge { font-style: normal; font-size: 10px; font-weight: 700; background: var(--gold); color: #2a2114;
   padding: 1px 7px; border-radius: 999px; margin-inline-start: 4px; vertical-align: middle; }
