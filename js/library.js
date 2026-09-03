@@ -198,6 +198,12 @@ create policy "midad_own_files" on storage.objects for all
     for (const b of books) states[b.id] = await Store.getState(b.id);
     // ثبّت أسماء الرفوف المكتشفة من الكتب محلياً (تدعم استمرارها والمزامنة عبر الأجهزة)
     if (Store.saveShelves) Store.saveShelves(allShelves());
+    // احسب عدد بطاقات المراجعة المستحقّة (لشارة القائمة)
+    try {
+      const now = Date.now();
+      const decks = Store.getAllDecks ? await Store.getAllDecks() : [];
+      reviewDueCount = decks.reduce((n, d) => n + (d.cards || []).filter((c) => (c.due || 0) <= now).length, 0);
+    } catch { reviewDueCount = 0; }
     render();
   }
 
@@ -1772,6 +1778,7 @@ create policy "midad_own_files" on storage.objects for all
       menu.className = 'bc-menu';
       menu.innerHTML = `
         <button data-act="libai">🔍 اسأل مكتبتك</button>
+        <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
         <button data-act="keys">🔑 فحص مفاتيح الذكاء</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
@@ -1784,6 +1791,7 @@ create policy "midad_own_files" on storage.objects for all
         const act = ev.target.dataset.act;
         closeCardMenu();
         if (act === 'stats') openStats();
+        else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();
         else if (act === 'keys') checkAiKeys();
         else if (act === 'backup') exportBackup();
@@ -1817,6 +1825,70 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   /* ─── اسأل مكتبتك: بحث ذكي عبر كل الكتب (RAG مبسّط) ─── */
+  let reviewDueCount = 0;
+
+  /* ─── مراجعة البطاقات بالتكرار المتباعد (نظام Leitner) ─── */
+  const SRS_INTERVALS = [0, 6e5, 864e5, 2592e5, 6048e5, 1382e5 * 10]; // box0غير مستخدم:10د،1ي،3ي،7ي،16ي
+  async function openReview() {
+    const modal = $('#review-modal'), body = $('#review-body');
+    modal.hidden = false;
+    modal.querySelectorAll('[data-close]').forEach((btn) => (btn.onclick = () => { modal.hidden = true; refresh(); }));
+    modal.onclick = (e) => { if (e.target === modal) { modal.hidden = true; refresh(); } };
+
+    const now = Date.now();
+    const decks = await Store.getAllDecks();
+    // اجمع البطاقات المستحقّة مع مرجع كتابها
+    const queue = [];
+    const deckMap = {}; // bookId → cards (للتعديل والحفظ)
+    for (const d of decks) {
+      deckMap[d.bookId] = d.cards || [];
+      const bk = books.find((x) => x.id === d.bookId);
+      for (const c of (d.cards || [])) if ((c.due || 0) <= now) queue.push({ bookId: d.bookId, card: c, title: bk ? bk.title : '' });
+    }
+    if (!queue.length) {
+      const total = decks.reduce((n, d) => n + (d.cards || []).length, 0);
+      body.innerHTML = `<div class="rev-done">${total ? '🎉 أحسنت! لا بطاقات مستحقّة للمراجعة الآن.<br><span>عُد لاحقاً — ستُذكّرك البطاقات في وقتها.</span>' : '🃏 لا بطاقات محفوظة بعد.<br><span>وّلد بطاقات مراجعة من مساعد القراءة داخل أي كتاب، واضغط «احفظ للمراجعة».</span>'}</div>`;
+      return;
+    }
+    // خلط
+    for (let i = queue.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [queue[i], queue[j]] = [queue[j], queue[i]]; }
+
+    let idx = 0, reviewed = 0;
+    const dirty = new Set();
+    const saveDirty = async () => { for (const id of dirty) await Store.saveDeck(id, deckMap[id]); dirty.clear(); };
+
+    const showCard = () => {
+      if (idx >= queue.length) {
+        body.innerHTML = `<div class="rev-done">🎉 أنهيت المراجعة! راجعتَ ${reviewed} بطاقة.<br><span>عُد غداً لتثبيت ما تعلّمت.</span></div>`;
+        saveDirty();
+        return;
+      }
+      const item = queue[idx];
+      body.innerHTML = `
+        <div class="rev-progress">بطاقة ${idx + 1} من ${queue.length}${item.title ? ` · <span>${esc(item.title)}</span>` : ''}</div>
+        <div class="rev-card"><div class="rev-q">${esc(item.card.q)}</div><div class="rev-a" id="rev-a" hidden>${esc(item.card.a)}</div></div>
+        <div class="rev-actions" id="rev-actions">
+          <button class="btn-gold rev-show" id="rev-show">أظهر الجواب</button>
+        </div>`;
+      $('#rev-show').onclick = () => {
+        $('#rev-a').hidden = false;
+        $('#rev-actions').innerHTML = `
+          <button class="rev-again" data-g="0">لم أتذكّر ✗</button>
+          <button class="rev-good" data-g="1">أتذكّر ✓</button>`;
+        $('#rev-actions').querySelectorAll('button').forEach((b) => (b.onclick = () => grade(+b.dataset.g)));
+      };
+    };
+    const grade = (good) => {
+      const c = queue[idx].card;
+      if (good) { c.box = Math.min((c.box || 1) + 1, 5); c.due = Date.now() + SRS_INTERVALS[c.box]; }
+      else { c.box = 1; c.due = Date.now() + 6e4; } // أعِدها بعد دقيقة ضمن الجلسة
+      dirty.add(queue[idx].bookId);
+      reviewed++; idx++;
+      showCard();
+    };
+    showCard();
+  }
+
   let libAiWired = false, libAiBusy = false;
   function openLibAI() {
     if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {

@@ -1,6 +1,6 @@
 /* ═══════ مِداد — طبقة التخزين (IndexedDB) ═══════ */
 const Store = (() => {
-  const DB_NAME = 'midad-db', DB_VER = 2;
+  const DB_NAME = 'midad-db', DB_VER = 3;
   let db = null;
 
   function init() {
@@ -12,6 +12,7 @@ const Store = (() => {
         if (!d.objectStoreNames.contains('files')) d.createObjectStore('files');
         if (!d.objectStoreNames.contains('states')) d.createObjectStore('states', { keyPath: 'bookId' });
         if (!d.objectStoreNames.contains('fulltext')) d.createObjectStore('fulltext'); // نص مُستخرج للبحث الشامل
+        if (!d.objectStoreNames.contains('decks')) d.createObjectStore('decks', { keyPath: 'bookId' }); // بطاقات المراجعة (تكرار متباعد)
       };
       req.onsuccess = () => { db = req.result; resolve(); };
       req.onerror = () => reject(req.error);
@@ -43,11 +44,18 @@ const Store = (() => {
     await p(os('files', 'readwrite').delete(id));
     await p(os('states', 'readwrite').delete(id));
     try { await p(os('fulltext', 'readwrite').delete(id)); } catch {}
+    try { await p(os('decks', 'readwrite').delete(id)); } catch {}
   }
   const getPayload = (id) => p(os('files').get(id));
   const updatePayload = (id, payload) => p(os('files', 'readwrite').put(payload, id));
   const getFulltext = (id) => p(os('fulltext').get(id));
   const saveFulltext = (id, text) => p(os('fulltext', 'readwrite').put(text, id));
+
+  /* ── بطاقات المراجعة (تكرار متباعد) ── */
+  const getDeck = (bookId) => p(os('decks').get(bookId));
+  const saveDeck = (bookId, cards) => p(os('decks', 'readwrite').put({ bookId, cards, updatedAt: Date.now() }));
+  const getAllDecks = () => p(os('decks').getAll());
+  const deleteDeck = (bookId) => p(os('decks', 'readwrite').delete(bookId));
 
   /* ── حالة القراءة (الموضع، العلامات، الملاحظات، الوقت) ── */
   async function getState(bookId) {
@@ -109,6 +117,6 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves };
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves };
 })();
 window.Store = Store;

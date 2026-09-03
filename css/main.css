@@ -183,6 +183,30 @@ input, select, textarea { font-family: inherit; }
 .shelf-modal .sm-input:focus { border-color: rgba(217,169,79,.6); }
 .shelf-modal .sm-add-btn { padding: 10px 16px; border-radius: 12px; font-size: 14px; white-space: nowrap; }
 
+/* شارة عدد في قائمة المكتبة */
+.menu-badge { font-style: normal; font-size: 10px; font-weight: 700; background: var(--gold); color: #2a2114;
+  padding: 1px 7px; border-radius: 999px; margin-inline-start: 4px; vertical-align: middle; }
+
+/* مراجعة البطاقات */
+.review-box { max-width: 560px; }
+.rev-progress { font-size: 13px; color: var(--muted); text-align: center; margin-bottom: 14px; }
+.rev-progress span { color: var(--gold-soft); }
+.rev-card { min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; text-align: center; padding: 26px; border-radius: 18px; border: 1px solid var(--card-line);
+  background: linear-gradient(150deg, rgba(217,169,79,.08), rgba(255,255,255,.03)); }
+.rev-q { font-family: 'Amiri', serif; font-size: 22px; font-weight: 700; color: var(--cream); line-height: 1.6; }
+.rev-a { font-size: 16px; color: var(--gold-soft); line-height: 1.9; border-top: 1px dashed var(--card-line); padding-top: 16px; width: 100%; }
+.rev-actions { display: flex; gap: 12px; margin-top: 18px; justify-content: center; }
+.rev-actions button { flex: 1; max-width: 200px; padding: 13px; border-radius: 13px; font-size: 15px; font-weight: 700; }
+.rev-show { }
+.rev-again { background: rgba(231,76,60,.16); border: 1px solid rgba(231,76,60,.4); color: #ffb4ab; }
+.rev-again:hover { background: rgba(231,76,60,.26); }
+.rev-good { background: rgba(87,187,106,.18); border: 1px solid rgba(87,187,106,.5); color: #b6f0c2; }
+.rev-good:hover { background: rgba(87,187,106,.28); }
+.rev-done { text-align: center; font-size: 19px; font-family: 'Amiri', serif; color: var(--cream); line-height: 2; padding: 30px 10px; }
+.rev-done span { font-size: 14px; font-family: 'Tajawal', sans-serif; color: var(--muted); }
+.fc-save { font-size: 13.5px; }
+
 /* شريط «تحديث متاح» */
 .update-banner { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 1500;
   display: flex; align-items: center; gap: 12px; padding: 11px 12px 11px 18px; border-radius: 999px;

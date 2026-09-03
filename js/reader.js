@@ -1007,11 +1007,26 @@ const Reader = (() => {
   const parseJsonArray = (s) => { try { const m = String(s).match(/\[[\s\S]*\]/); return m ? JSON.parse(m[0]) : []; } catch { return []; } };
 
   function renderFlashcards(el, res) {
-    const cards = parseJsonArray(res);
+    const cards = parseJsonArray(res).filter((c) => c && (c.q || c.a));
     if (!cards.length) { el.innerHTML = mdToHtml(res); return; }
     el.innerHTML = '<div class="fc-hint">اضغط البطاقة لقلبها 🔄</div><div class="fc-deck">' + cards.map((c) =>
-      `<button class="fc-card"><div class="fc-inner"><div class="fc-face fc-front">${esc(c.q || '')}</div><div class="fc-face fc-back">${esc(c.a || '')}</div></div></button>`).join('') + '</div>';
+      `<button class="fc-card"><div class="fc-inner"><div class="fc-face fc-front">${esc(c.q || '')}</div><div class="fc-face fc-back">${esc(c.a || '')}</div></div></button>`).join('') +
+      `</div><button class="fc-save btn-gold" style="margin-top:12px">💾 احفظ للمراجعة (${cards.length})</button>`;
     el.querySelectorAll('.fc-card').forEach((b) => (b.onclick = () => b.classList.toggle('flipped')));
+    const saveBtn = el.querySelector('.fc-save');
+    saveBtn.onclick = async () => {
+      try {
+        const existing = (await Store.getDeck(book.id)) || { cards: [] };
+        const have = new Set((existing.cards || []).map((c) => c.q));
+        const now = Date.now();
+        const fresh = cards.filter((c) => !have.has(c.q)).map((c) => ({ id: 'fc' + now + Math.random().toString(36).slice(2, 6), q: c.q || '', a: c.a || '', box: 1, due: now }));
+        const merged = [...(existing.cards || []), ...fresh];
+        await Store.saveDeck(book.id, merged);
+        saveBtn.textContent = `✓ حُفظت — ${merged.length} بطاقة في «${book.title}»`;
+        saveBtn.disabled = true;
+        Library.toast('حُفظت البطاقات للمراجعة 🃏', 'gold');
+      } catch (e) { Library.toast('تعذّر الحفظ'); }
+    };
   }
   function renderQuiz(el, res) {
     const qs = parseJsonArray(res);
