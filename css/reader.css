@@ -68,6 +68,9 @@
   background: transparent; box-shadow: none; }
 #reader.mode-pdf .r-paper::before, #reader.mode-pdf .r-paper::after { display: none; }
 #reader.zoomed #r-canvas { max-width: none; max-height: none; }
+/* ملء العرض: ترفع قيد الارتفاع فتملأ الصفحة العرض وتُمرَّر عمودياً من الأعلى */
+#reader.fit-width.mode-pdf #r-canvas { max-width: none; max-height: none; }
+#reader.fit-width.mode-pdf .r-book { align-items: flex-start; }
 
 /* الصفحتان المتقابلتان: ورقة أعرض ككتاب مفتوح (العرض يُحسب في paginate) */
 #reader.spread .r-paper { border-radius: 10px 14px 14px 10px; }

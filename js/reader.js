@@ -420,9 +420,12 @@ const Reader = (() => {
       const page = await pdfDoc.getPage(n);
       const stage = $('#r-stage');
       const availH = stage.clientHeight * 0.96;
-      const availW = Math.min(stage.clientWidth - 130, 1500);
+      const fitW = settings.pdfFit === 'width';
+      const availW = fitW ? (stage.clientWidth - 24) : Math.min(stage.clientWidth - 130, 1500);
       const vp1 = page.getViewport({ scale: 1 });
-      const scale = Math.min(availH / vp1.height, availW / vp1.width) * pdfZoom;
+      // «ملء العرض»: القياس بعرض الصفحة فقط (تُمرَّر عمودياً)؛ «احتواء»: الصفحة كاملة داخل الشاشة
+      const base = fitW ? (availW / vp1.width) : Math.min(availH / vp1.height, availW / vp1.width);
+      const scale = base * pdfZoom;
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const vp = page.getViewport({ scale: scale * dpr });
       if (token !== -1 && token !== renderToken) return;
@@ -584,7 +587,9 @@ const Reader = (() => {
 
   function pdfSlotWidth() {
     const stageW = $('#r-stage').clientWidth;
-    return Math.round(Math.min(stageW - 40, 860) * pdfZoom);
+    // «ملء العرض»: تملأ الصفحة عرض الشاشة كاملاً؛ «احتواء»: عرض قراءة مريح
+    const cap = settings.pdfFit === 'width' ? stageW - 16 : Math.min(stageW - 40, 860);
+    return Math.round(cap * pdfZoom);
   }
 
   function teardownPdfScroll() {
@@ -835,14 +840,10 @@ const Reader = (() => {
   }
 
   /* ═══════ تكبير PDF ═══════ */
-  function setZoom(z) {
+  // إعادة تخطيط صفحات PDF بالعرض/التكبير الحالي (يُستدعى عند التكبير أو تغيير ملء العرض)
+  function relayoutPdf() {
     if (!isPdf) return;
-    pdfZoom = Math.min(2.4, Math.max(1, Math.round(z * 10) / 10));
-    $('#zoom-val').textContent = Math.round(pdfZoom * 100) + '٪';
-    $('#reader').classList.toggle('zoomed', pdfZoom > 1.001);
     if (pdfScrollActive()) {
-      // أعد قياس الشرائح ورسم المرئية منها بالعرض الجديد
-      const cont = $('#r-pdf-scroll');
       const anchorPage = pdfPage;
       const w = pdfSlotWidth();
       for (const s of pdfSlots) {
@@ -852,6 +853,14 @@ const Reader = (() => {
       }
       requestAnimationFrame(() => { pdfScrollTo(anchorPage, false); renderVisibleSlots(); });
     } else renderPdf(pdfPage);
+  }
+
+  function setZoom(z) {
+    if (!isPdf) return;
+    pdfZoom = Math.min(2.4, Math.max(1, Math.round(z * 10) / 10));
+    $('#zoom-val').textContent = Math.round(pdfZoom * 100) + '٪';
+    $('#reader').classList.toggle('zoomed', pdfZoom > 1.001);
+    relayoutPdf();
   }
 
   /* ═══════ القراءة الصوتية ═══════ */
@@ -1249,6 +1258,10 @@ const Reader = (() => {
       b.onclick = () => { settings.spread = b.dataset.spread === '1'; applySettings(); scheduleRepaginate(); };
     });
 
+    { const fitr = $('#fit-row'); if (fitr) fitr.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { settings.pdfFit = b.dataset.fit; applySettings(); relayoutPdf(); };
+    }); }
+
     $('#btn-reset-settings').onclick = () => {
       settings = Store.resetSettings();
       applySettings(false);
@@ -1338,6 +1351,7 @@ const Reader = (() => {
       $('#r-canvas-wrap').hidden = pdfScrollActive();
       $('#r-btn-draw').style.display = pdfScrollActive() ? 'none' : '';
       $('#zoom-pill').hidden = false;
+      r.classList.toggle('fit-width', settings.pdfFit === 'width');
     }
 
     // تفعيل الأزرار
@@ -1347,6 +1361,7 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fx === (settings.paperFx || 'none')));
     $('#flip-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.flip === settings.flip));
     $('#spread-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.spread === '1') === !!settings.spread));
+    { const fitr = $('#fit-row'); if (fitr) fitr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fit === (settings.pdfFit || 'page'))); }
     { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.focus === '1') === !!settings.focusMode)); }
     { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
     $('#set-ttsrate').value = settings.ttsRate || 100;
@@ -2196,11 +2211,16 @@ const Reader = (() => {
       if (isPdf) {
         const target = Math.min(2.4, Math.max(1, pinch.z0 * ratio));
         pinch.target = target;
-        if (!pdfScrollActive()) {
-          // معاينة حيّة سلسة عبر تحويل CSS، ثم رسم واضح عند الانتهاء
+        // معاينة حيّة سلسة عبر تحويل CSS في كل الأوضاع، ثم رسم واضح عند رفع الإصبع
+        const previewScale = (target / (pinch.z0 || 1)).toFixed(3);
+        if (pdfScrollActive()) {
+          const cont = $('#r-pdf-scroll');
+          cont.style.transformOrigin = 'center center';
+          cont.style.transform = `scale(${previewScale})`;
+        } else {
           const cv = $('#r-canvas');
           cv.style.transformOrigin = 'center center';
-          cv.style.transform = `scale(${(target / (pinch.z0 || 1)).toFixed(3)})`;
+          cv.style.transform = `scale(${previewScale})`;
           $('#reader').classList.add('zoomed');
         }
         $('#zoom-val').textContent = Math.round(target * 100) + '٪';
@@ -2222,7 +2242,8 @@ const Reader = (() => {
       if (pinch && e.touches.length < 2) {
         pinchBadge.hidden = true;
         if (isPdf) {
-          const cv = $('#r-canvas'); cv.style.transform = '';
+          $('#r-canvas').style.transform = '';
+          $('#r-pdf-scroll').style.transform = '';
           setZoom(pinch.target);
         } else {
           viewportEl.style.transform = ''; // أزل معاينة التحويل قبل الترقيم الحقيقي
@@ -2249,7 +2270,7 @@ const Reader = (() => {
 
     stage.addEventListener('touchcancel', () => {
       // إلغاء القرص: أزل المعاينة والشارة دون تثبيت أي تغيير
-      if (pinch) { pinchBadge.hidden = true; viewportEl.style.transform = ''; $('#r-canvas').style.transform = ''; }
+      if (pinch) { pinchBadge.hidden = true; viewportEl.style.transform = ''; $('#r-canvas').style.transform = ''; $('#r-pdf-scroll').style.transform = ''; }
       pinch = null; touchX = null;
     }, { passive: true });
   }
