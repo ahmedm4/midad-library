@@ -1088,6 +1088,7 @@ create policy "midad_own_files" on storage.objects for all
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
     $('#btn-add').onclick = () => openAddModal();
     $('#btn-add-empty').onclick = () => openAddModal();
+    { const bd = $('#btn-discover'); if (bd) bd.onclick = () => { if (window.Discover) Discover.open(); }; }
   }
 
   function fillCategorySelect() {
@@ -1535,6 +1536,49 @@ create policy "midad_own_files" on storage.objects for all
     }
     await refresh();
     toast(`أُضيف ${n} من ${files.length} كتاباً إلى مكتبتك 📚`, 'gold');
+  }
+
+  /* إزالة تنويه أرشيف الإنترنت الإنجليزي المُضاف تلقائياً في مطلع كتب EPUB المولّدة آلياً */
+  function stripIaPreamble(t) {
+    return String(t || '')
+      .replace(/^\s*(?:---\s*)?This book was produced in EPUB format by the Internet Archive\.[\s\S]*?(?=\n\s*\n|$)/i, '')
+      // ملاحظات دقّة المسح التي يحقنها الأرشيف في كل صفحة ضعيفة الجودة
+      .replace(/^.*The text on this page is estimated to be only[^\n]*\n?/gim, '')
+      .replace(/^\s*(?:---\s*)+/, '')
+      .trimStart();
+  }
+
+  /* تنظيف خفيف لنص مُستورد (OCR أرشيف الإنترنت): توحيد الأسطر وحذف الفراغات الزائدة */
+  function cleanImportedText(t) {
+    return stripIaPreamble(String(t || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n'))
+      .trim();
+  }
+
+  /* استيراد كتاب من مصدر خارجي (مكتبة الاكتشاف): blob جاهز + بيانات وصفية غنية */
+  async function addRemoteBook({ blob, name, kind, title, author, category, cover }) {
+    let id;
+    if (kind === 'epub') {
+      const p = await parseEpub(await blob.arrayBuffer());
+      const etext = stripIaPreamble(p.text);
+      id = await Store.addBook({ title: title || p.title || name, author: author || p.author || '', category: category || 'أخرى', type: 'text', cover: cover || p.cover || undefined }, etext);
+    } else if (kind === 'pdf') {
+      const buf = await blob.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+      const c = cover || await renderPdfCover(pdf);
+      const pages = pdf.numPages;
+      try { await pdf.destroy(); } catch {}
+      id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'pdf', cover: c, pages }, new Blob([buf], { type: 'application/pdf' }));
+    } else {
+      const text = cleanImportedText(typeof blob === 'string' ? blob : await blob.text());
+      if (!text.trim()) throw new Error('النص المستخرج فارغ');
+      id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'text', cover }, text);
+    }
+    if (window.Cloud) Cloud.pushBook(id);
+    await refresh();
+    return id;
   }
 
   /* سحب الملفات وإفلاتها في أي مكان بالمكتبة */
@@ -2168,6 +2212,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, confirm: uiConfirm };
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, confirm: uiConfirm };
 })();
 window.Library = Library;
