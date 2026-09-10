@@ -2227,6 +2227,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, confirm: uiConfirm };
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm };
 })();
 window.Library = Library;

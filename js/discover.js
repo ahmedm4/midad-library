@@ -7,6 +7,13 @@ const Discover = (() => {
   const cr = (c) => Array.isArray(c) ? c.join('، ') : (c || '');
   const fmtNum = (n) => { n = +n || 0; return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n); };
   const $ = (s, r = document) => r.querySelector(s);
+  // جلب بمهلة زمنية: يمنع تعليق الاستيراد إلى الأبد إذا تأخّر مضيف الأرشيف
+  async function fetchTimeout(url, ms, opts = {}) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+    finally { clearTimeout(t); }
+  }
 
   const CATS = [
     { label: '📖 روايات', q: 'رواية OR روايات' },
@@ -147,6 +154,10 @@ const Discover = (() => {
             <a class="dd-link" href="${IA}/details/${encodeURIComponent(id)}" target="_blank" rel="noopener">↗ افتح صفحة الكتاب في الأرشيف</a>
           </div>
         </div>
+        ${djvu ? `<div class="disc-preview-wrap">
+          <button class="disc-preview-btn">👁 عايِن جودة النص قبل الإضافة</button>
+          <div class="disc-preview" hidden></div>
+        </div>` : ''}
         <div class="disc-formats">
           ${opts.length ? '<h4>اختر الصيغة لإضافتها إلى مكتبتك:</h4>' : '<p>لا توجد صيغة قابلة للاستيراد لهذا العنصر.</p>'}
           ${opts.map((o, i) => `
@@ -158,6 +169,32 @@ const Discover = (() => {
       </div>`;
     sheet.querySelector('.disc-back').onclick = closeSheet;
     sheet.querySelectorAll('.disc-import').forEach((btn) => btn.onclick = () => importBook(id, { title, author }, opts[+btn.dataset.i], btn));
+    if (djvu) { const pb = sheet.querySelector('.disc-preview-btn'); pb.onclick = () => previewText(id, djvu.name, pb, sheet.querySelector('.disc-preview')); }
+  }
+
+  // معاينة عيّنة حقيقية من نصّ الكتاب (من داخل المتن لا الغلاف) ليحكم القارئ على الجودة بنفسه
+  async function previewText(id, file, btn, box) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="disc-spin"></span> جارٍ جلب عيّنة…`;
+    try {
+      const r = await fetchTimeout(`${CORSHOST}/${id}/${encodeURIComponent(file)}`, 30000);
+      const reader = r.body.getReader();
+      let recv = new Uint8Array(0), total = 0;
+      // تجاوز نحو ١٨٠ ك.ب (الغلاف والصفحات الأولى غالباً رديئة المسح) ثم التقط عيّنة
+      const SKIP = 180000, GRAB = 220000;
+      while (total < GRAB) { const { done, value } = await reader.read(); if (done) break; const m = new Uint8Array(recv.length + value.length); m.set(recv); m.set(value, recv.length); recv = m; total += value.length; }
+      try { await reader.cancel(); } catch {}
+      let text = new TextDecoder('utf-8').decode(recv);
+      if (text.length > SKIP / 2) text = text.slice(Math.min(text.length - 1200, SKIP / 2));
+      text = text.replace(/\s+/g, ' ').trim().slice(0, 700);
+      box.hidden = false;
+      box.textContent = text || 'تعذّرت قراءة عيّنة من النص.';
+      btn.remove();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '👁 عايِن جودة النص قبل الإضافة';
+      box.hidden = false; box.textContent = 'تعذّر جلب عيّنة النص.';
+    }
   }
 
   async function importBook(id, meta, opt, btn) {
@@ -173,19 +210,32 @@ const Discover = (() => {
     btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ التنزيل…${big ? ' (ملف كبير، قد يستغرق دقيقة)' : ''}</span>`;
     try {
       const url = `${CORSHOST}/${id}/${encodeURIComponent(opt.file)}`;
-      const r = await fetch(url);
+      // مهلة تتناسب مع الحجم (دقيقتان أساساً + ثانية لكل ٥٠ ك.ب، بحدّ ٦ دقائق)
+      const timeout = Math.min(360000, 120000 + (opt.size / 51200) * 1000);
+      let r;
+      try { r = await fetchTimeout(url, timeout); }
+      catch (err) { throw new Error(err.name === 'AbortError' ? 'استغرق التنزيل وقتاً طويلاً — حاول مجدداً أو اختر صيغة أخف' : 'تعذّر الوصول إلى الملف'); }
       if (!r.ok) throw new Error('تعذّر تنزيل الملف (' + r.status + ')');
       const blob = await r.blob();
       btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ الإضافة…</span>`;
       const cover = await fetchCover(id);
-      await Library.addRemoteBook({
+      const bookId = await Library.addRemoteBook({
         blob, name: meta.title, kind: opt.kind,
         title: meta.title, author: meta.author, category: 'أخرى', cover,
         expectedSize: opt.size,
       });
       btn.classList.remove('loading'); btn.classList.add('done');
       btn.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;
-      Library.toast('أُضيف الكتاب إلى مكتبتك 📚 — تجده في «كل الكتب»', 'gold');
+      Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+      // زر «اقرأ الآن»: يفتح الكتاب فور استيراده
+      const fmts = sheet.querySelector('.disc-formats');
+      if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
+        const rn = document.createElement('button');
+        rn.className = 'disc-readnow';
+        rn.innerHTML = '📖 اقرأ الآن';
+        rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+        fmts.prepend(rn);
+      }
     } catch (e) {
       sheet.querySelectorAll('.disc-import').forEach((b) => b.disabled = false);
       btn.classList.remove('loading'); btn.innerHTML = orig;
@@ -197,7 +247,7 @@ const Discover = (() => {
   async function fetchCover(id) {
     const fallback = `${IA}/services/img/${encodeURIComponent(id)}`;
     try {
-      const r = await fetch(`${CORSHOST}/${id}/__ia_thumb.jpg`);
+      const r = await fetchTimeout(`${CORSHOST}/${id}/__ia_thumb.jpg`, 15000);
       if (!r.ok) return fallback;
       const blob = await r.blob();
       if (!blob.size || blob.size > 500000 || !/^image\//.test(blob.type)) return fallback;
