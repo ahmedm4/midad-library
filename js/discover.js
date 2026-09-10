@@ -169,7 +169,8 @@ const Discover = (() => {
     const orig = btn.innerHTML;
     sheet.querySelectorAll('.disc-import').forEach((b) => b.disabled = true);
     btn.classList.add('loading');
-    btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ التنزيل…</span>`;
+    const big = opt.size > 5242880;
+    btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ التنزيل…${big ? ' (ملف كبير، قد يستغرق دقيقة)' : ''}</span>`;
     try {
       const url = `${CORSHOST}/${id}/${encodeURIComponent(opt.file)}`;
       const r = await fetch(url);
@@ -180,6 +181,7 @@ const Discover = (() => {
       await Library.addRemoteBook({
         blob, name: meta.title, kind: opt.kind,
         title: meta.title, author: meta.author, category: 'أخرى', cover,
+        expectedSize: opt.size,
       });
       btn.classList.remove('loading'); btn.classList.add('done');
       btn.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;

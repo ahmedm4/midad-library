@@ -1538,14 +1538,18 @@ create policy "midad_own_files" on storage.objects for all
     toast(`أُضيف ${n} من ${files.length} كتاباً إلى مكتبتك 📚`, 'gold');
   }
 
-  /* إزالة تنويه أرشيف الإنترنت الإنجليزي المُضاف تلقائياً في مطلع كتب EPUB المولّدة آلياً */
+  /* إزالة تنويه أرشيف الإنترنت الإنجليزي المُضاف تلقائياً في مطلع كتب EPUB المولّدة آلياً.
+     مُصان: يتوقّف عند أول حرف عربي أو سطر فارغ (لا يبتلع النص أبداً)، ولا يُفرّغ النص مطلقاً. */
   function stripIaPreamble(t) {
-    return String(t || '')
-      .replace(/^\s*(?:---\s*)?This book was produced in EPUB format by the Internet Archive\.[\s\S]*?(?=\n\s*\n|$)/i, '')
-      // ملاحظات دقّة المسح التي يحقنها الأرشيف في كل صفحة ضعيفة الجودة
-      .replace(/^.*The text on this page is estimated to be only[^\n]*\n?/gim, '')
+    t = String(t || '');
+    const out = t
+      // التنويه الإنجليزي في المطلع فقط، وحتى أول حرف عربي أو سطر فارغ
+      .replace(/^\s*(?:---\s*)?This book was produced in EPUB format by the Internet Archive\.[\s\S]*?(?=[؀-ۿ]|\n\s*\n)/i, '')
+      // ملاحظات دقّة المسح التي يحقنها الأرشيف في الصفحات ضعيفة الجودة (سطراً سطراً)
+      .replace(/^.*The text on this page is estimated to be only[^\n]*$/gim, '')
       .replace(/^\s*(?:---\s*)+/, '')
       .trimStart();
+    return out.trim() ? out : t; // أمان: لا تُرجِع نصاً فارغاً إن كان الأصل غير فارغ
   }
 
   /* تنظيف خفيف لنص مُستورد (OCR أرشيف الإنترنت): توحيد الأسطر وحذف الفراغات الزائدة */
@@ -1557,23 +1561,34 @@ create policy "midad_own_files" on storage.objects for all
       .trim();
   }
 
-  /* استيراد كتاب من مصدر خارجي (مكتبة الاكتشاف): blob جاهز + بيانات وصفية غنية */
-  async function addRemoteBook({ blob, name, kind, title, author, category, cover }) {
+  /* استيراد كتاب من مصدر خارجي (مكتبة الاكتشاف): blob جاهز + بيانات وصفية غنية.
+     expectedSize (اختياري) للتحقق من اكتمال التنزيل. */
+  async function addRemoteBook({ blob, name, kind, title, author, category, cover, expectedSize }) {
+    if (blob instanceof Blob && expectedSize && blob.size < expectedSize * 0.9) {
+      throw new Error('التنزيل غير مكتمل — تحقّق من اتصالك وحاول مجدداً');
+    }
     let id;
     if (kind === 'epub') {
       const p = await parseEpub(await blob.arrayBuffer());
-      const etext = stripIaPreamble(p.text);
+      const etext = cleanImportedText(p.text);
+      if (!etext.trim()) throw new Error('لم يُعثر على نص قابل للقراءة في هذه الصيغة — جرّب صيغة أخرى (PDF مثلاً)');
       id = await Store.addBook({ title: title || p.title || name, author: author || p.author || '', category: category || 'أخرى', type: 'text', cover: cover || p.cover || undefined }, etext);
     } else if (kind === 'pdf') {
       const buf = await blob.arrayBuffer();
+      const head = new Uint8Array(buf.slice(0, 5));
+      // %PDF- في مطلع الملف — يكشف صفحات الخطأ (HTML) التي قد يعيدها الوسيط بحالة 200
+      if (!(head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46)) {
+        throw new Error('الملف المُنزَّل ليس PDF صالحاً — جرّب صيغة أخرى');
+      }
       const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-      const c = cover || await renderPdfCover(pdf);
       const pages = pdf.numPages;
+      if (!pages) { try { await pdf.destroy(); } catch {} throw new Error('ملف PDF فارغ — جرّب صيغة أخرى'); }
+      const c = cover || await renderPdfCover(pdf);
       try { await pdf.destroy(); } catch {}
       id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'pdf', cover: c, pages }, new Blob([buf], { type: 'application/pdf' }));
     } else {
       const text = cleanImportedText(typeof blob === 'string' ? blob : await blob.text());
-      if (!text.trim()) throw new Error('النص المستخرج فارغ');
+      if (!text.trim()) throw new Error('لم يُعثر على نص قابل للقراءة في هذه الصيغة — جرّب صيغة أخرى');
       id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'text', cover }, text);
     }
     if (window.Cloud) Cloud.pushBook(id);
