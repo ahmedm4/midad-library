@@ -207,6 +207,12 @@ input, select, textarea { font-family: inherit; }
   background: rgba(255,255,255,.05); border: 1px solid var(--card-line); cursor: pointer; transition: .15s; flex: none; }
 .disc-x:hover { color: var(--cream); background: rgba(255,255,255,.1); }
 
+.disc-sources { display: flex; gap: 8px; padding: 12px 22px 0; }
+.disc-src { flex: 1; padding: 10px 14px; border-radius: 12px; font-family: inherit; font-size: 13.5px; font-weight: 700;
+  cursor: pointer; color: var(--muted); background: var(--card); border: 1px solid var(--card-line); transition: .15s; }
+.disc-src:hover { color: var(--cream); }
+.disc-src.on { background: rgba(217,169,79,.16); border-color: rgba(217,169,79,.6); color: var(--gold-soft); }
+
 .disc-search { position: relative; margin: 16px 22px 4px; }
 .disc-search svg { position: absolute; right: 14px; top: 50%; translate: 0 -50%; width: 19px; height: 19px; color: var(--muted); pointer-events: none; }
 .disc-input { width: 100%; padding: 13px 44px 13px 16px; border-radius: 14px; font-size: 15px; font-family: inherit;

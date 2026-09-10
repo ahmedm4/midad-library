@@ -336,7 +336,33 @@ const Cloud = (() => {
     hasBuiltin,
     aiReady: () => ready && !!user,
     aiInvoke,
+    fnReady: () => ready,
+    invokeFn, invokeFnRaw,
   };
+
+  /* ── نداء دالة طرفية عامة (JSON) — لا تتطلّب تسجيل دخول ── */
+  async function invokeFn(name, body) {
+    if (!ready) throw new Error('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام هذا المصدر');
+    const { data, error } = await sb.functions.invoke(name, { body });
+    if (error) {
+      let msg = error.message || 'تعذّر الاتصال بالخادم';
+      try { const ctx = await error.context.json(); if (ctx && ctx.error) msg = ctx.error; } catch {}
+      if (/not found|404|failed to send|failed to fetch|non-2xx/i.test(msg)) msg = `الدالة «${name}» غير منشورة بعد في مشروعك — انشرها ثم أعد المحاولة`;
+      throw new Error(msg);
+    }
+    if (data && data.error) throw new Error(data.error);
+    return data;
+  }
+
+  /* ── نداء دالة طرفية وإرجاع الاستجابة الخام (للملفات الثنائية) ── */
+  async function invokeFnRaw(name, body) {
+    if (!cfg) throw new Error('فعّل المزامنة السحابية أولاً (زر ☁️)');
+    return fetch(`${cfg.url}/functions/v1/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.anonKey}`, 'apikey': cfg.anonKey },
+      body: JSON.stringify(body),
+    });
+  }
 
   /* ── نداء دالة الذكاء الطرفية ── */
   async function aiInvoke(body) {
