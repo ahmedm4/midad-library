@@ -54,17 +54,23 @@ function parseDetail(html: string, id: string) {
   // القسم فقط من كتلة معلومات الكتاب (لا من قائمة التصنيفات الجانبية)
   const category = decode(stripTags((html.match(/القسم\s*:?\s*<span>\s*<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
   const pages = (html.match(/عدد\s*الصفحات[^\d]{0,20}(\d+)/) || [])[1] || "";
-  // رابط الملف: قد يكون Google Drive أو MediaFire أو رابط PDF مباشر (alfeker يستخدم عدة مستضيفات)
-  const fileUrl = decode(
-    (html.match(/https?:\/\/(?:drive\.google\.com|www\.mediafire\.com|mediafire\.com|www\.dropbox\.com)\/[^"'\s<>]+/i) || [])[0] ||
-    (html.match(/https?:\/\/[^"'\s<>]+\.pdf(?:\/file)?/i) || [])[0] || "");
-  let host = "";
-  if (/drive\.google\.com/i.test(fileUrl)) host = "drive";
-  else if (/mediafire\.com/i.test(fileUrl)) host = "mediafire";
-  else if (/dropbox\.com/i.test(fileUrl)) host = "dropbox";
-  else if (/\.pdf/i.test(fileUrl)) host = "direct";
+  // الكتاب قد يُرفع على عدة مستضيفات معاً؛ نفضّل Google Drive (يعمل عبر الوسيط) على MediaFire (يحجب الخوادم)
+  const driveUrl = (html.match(/https?:\/\/drive\.google\.com\/[^"'\s<>]+/i) || [])[0] || "";
+  const dropboxUrl = (html.match(/https?:\/\/(?:www\.)?dropbox\.com\/[^"'\s<>]+/i) || [])[0] || "";
+  const mfUrl = (html.match(/https?:\/\/(?:www\.)?mediafire\.com\/[^"'\s<>]+/i) || [])[0] || "";
+  const directUrl = (html.match(/https?:\/\/[^"'\s<>]+\.pdf(?:\/file)?/i) || [])
+    .filter((u: string) => !/(mediafire|drive\.google|dropbox)/i.test(u))[0] || "";
+  let fileUrl = "", host = "";
+  if (driveUrl) { fileUrl = driveUrl; host = "drive"; }
+  else if (directUrl) { fileUrl = directUrl; host = "direct"; }
+  else if (dropboxUrl) { fileUrl = dropboxUrl; host = "dropbox"; }
+  else if (mfUrl) { fileUrl = mfUrl; host = "mediafire"; }
+  fileUrl = decode(fileUrl);
+  // رابط بديل يدوي (MediaFire) عند توفّر Drive، أو Drive عند غيابه — للاحتياط
+  let altUrl = "", altHost = "";
+  if (host === "drive" && mfUrl) { altUrl = decode(mfUrl); altHost = "mediafire"; }
   const cover = absImg((html.match(/uploads\/pictures\/(?!\.thumb)[^"']+\.(?:jpg|jpeg|png)/i) || html.match(/uploads\/pictures\/[^"']+\.(?:jpg|jpeg|png)/i) || [])[0] || "");
-  return { id, title, author, category, pages, fileUrl, host, cover };
+  return { id, title, author, category, pages, fileUrl, host, altUrl, altHost, cover };
 }
 
 // MediaFire: اجلب صفحة الملف واستخرج رابط التنزيل المباشر (أنماط متعددة)

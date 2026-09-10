@@ -349,6 +349,7 @@ const Discover = (() => {
           ${autoImport ? `<button class="disc-import">
             <span class="di-label">📕 أضِف إلى مكتبتي (PDF)<em>يُنزَّل من ${esc(hostName)} عبر خادمك</em></span>
           </button>` : ''}
+          ${autoImport && d.altUrl ? `<a class="disc-alt" href="${esc(d.altUrl)}" target="_blank" rel="noopener">أو نزّله يدوياً من MediaFire ↗</a>` : ''}
           ${hasFile && !autoImport ? `
             <a class="disc-import disc-openfile" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">
               <span class="di-label">⬇ افتح صفحة التنزيل (${esc(hostName)})<em>حمّل الملف ثم أضِفه عبر «أضف كتاباً»</em></span>
