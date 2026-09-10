@@ -330,6 +330,8 @@ const Discover = (() => {
     const cover = d.cover || ds.cover || '';
     const hasFile = !!d.fileUrl;
     const hostName = { drive: 'Google Drive', mediafire: 'MediaFire', dropbox: 'Dropbox', direct: 'رابط مباشر' }[d.host] || 'المستضيف';
+    // الاستيراد الآلي يعمل لـ Drive/الروابط المباشرة فقط؛ MediaFire يمنع التنزيل من الخادم → تنزيل يدوي
+    const autoImport = hasFile && (d.host === 'drive' || d.host === 'direct');
     sheet.innerHTML = `
       <div class="disc-sheet-box">
         <button class="disc-back" title="رجوع">→ رجوع</button>
@@ -343,14 +345,20 @@ const Discover = (() => {
           </div>
         </div>
         <div class="disc-formats">
-          ${hasFile ? '' : '<p>لا يوجد ملف قابل للتنزيل لهذا الكتاب.</p>'}
-          ${hasFile ? `<button class="disc-import">
+          ${!hasFile ? '<p>لا يوجد ملف قابل للتنزيل لهذا الكتاب.</p>' : ''}
+          ${autoImport ? `<button class="disc-import">
             <span class="di-label">📕 أضِف إلى مكتبتي (PDF)<em>يُنزَّل من ${esc(hostName)} عبر خادمك</em></span>
           </button>` : ''}
+          ${hasFile && !autoImport ? `
+            <a class="disc-import disc-openfile" href="${esc(d.fileUrl)}" target="_blank" rel="noopener">
+              <span class="di-label">⬇ افتح صفحة التنزيل (${esc(hostName)})<em>حمّل الملف ثم أضِفه عبر «أضف كتاباً»</em></span>
+            </a>
+            <p class="disc-note">يمنع ${esc(hostName)} التنزيل التلقائي عبر الخوادم، لذا يُنزَّل الملف يدوياً من متصفّحك ثم يُضاف عبر زر «أضف كتاباً ← من ملف».</p>
+          ` : ''}
         </div>
       </div>`;
     sheet.querySelector('.disc-back').onclick = closeSheet;
-    const ib = sheet.querySelector('.disc-import');
+    const ib = sheet.querySelector('.disc-import:not(.disc-openfile)');
     if (ib) ib.onclick = () => importAlfeker(ds, { title, author, cover, category: d.category, fileUrl: d.fileUrl, host: d.host }, ib);
   }
 
