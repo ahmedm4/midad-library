@@ -304,20 +304,25 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   function renderChips() {
+    // ── تبويبات رئيسية بارزة: حالة القراءة ──
+    const tabs = ['الكل'];
+    if (books.some(isReading)) tabs.push(STATUS_READING);
+    if (books.some((b) => b.fav)) tabs.push(STATUS_FAV);
+    if (books.some((b) => states[b.id].finished)) tabs.push(STATUS_DONE);
+    if (books.some(isUnread)) tabs.push(STATUS_UNREAD);
+    $('#status-tabs').innerHTML = tabs.map((c) => {
+      const n = countFor(c);
+      return `<button class="stab ${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}${n ? ` <i>${n}</i>` : ''}</button>`;
+    }).join('');
+
+    // ── تصنيفات الأنواع + الرفوف (تصفية ثانوية) ──
     const used = new Set(books.map((b) => b.category).filter(Boolean));
-    const status = [];
-    if (books.some((b) => b.fav)) status.push(STATUS_FAV);
-    if (books.some((b) => states[b.id].pct > 0 && !states[b.id].finished)) status.push(STATUS_READING);
-    if (books.some((b) => !states[b.id].finished && !(states[b.id].pct > 0))) status.push(STATUS_UNREAD);
-    if (books.some((b) => states[b.id].finished)) status.push(STATUS_DONE);
-    const cats = ['الكل', ...status, ...CATEGORIES.filter((c) => used.has(c))];
-    const shelves = allShelves();
-    let html = cats
+    let html = CATEGORIES.filter((c) => used.has(c))
       .map((c) => { const n = countFor(c); return `<button class="${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}${n ? ` <i>${n}</i>` : ''}</button>`; })
       .join('');
-    // رفوف مخصّصة (تظهر مميّزة بأيقونة ولها فاصل بسيط قبلها)
+    const shelves = allShelves();
     if (shelves.length) {
-      html += '<span class="chip-sep"></span>';
+      if (html) html += '<span class="chip-sep"></span>';
       html += shelves.map((s) => {
         const val = SHELF_PREFIX + s;
         const n = books.filter((b) => (b.shelves || []).includes(s)).length;
@@ -325,17 +330,22 @@ create policy "midad_own_files" on storage.objects for all
       }).join('');
     }
     $('#cat-chips').innerHTML = html;
-    $('#cat-chips').querySelectorAll('button').forEach((btn) => {
-      btn.onclick = () => { activeCat = btn.dataset.cat; render(); };
-    });
+    $('#cat-chips').hidden = !html;
+
+    [...$('#status-tabs').querySelectorAll('button'), ...$('#cat-chips').querySelectorAll('button')]
+      .forEach((btn) => { btn.onclick = () => { activeCat = btn.dataset.cat; render(); }; });
   }
+
+  // «قيد القراءة» = كتاب فُتِح لمتابعته (له موضع محفوظ أو تاريخ فتح) ولم يكتمل
+  const isReading = (b) => { const s = states[b.id]; return !s.finished && (s.pct > 0 || !!s.lastRead); };
+  const isUnread = (b) => { const s = states[b.id]; return !s.finished && !(s.pct > 0) && !s.lastRead; };
 
   // عدد الكتب ضمن تصنيف/حالة معيّنة (لشارات التصنيفات)
   function countFor(cat) {
     if (cat === 'الكل') return books.length;
     if (cat === STATUS_FAV) return books.filter((b) => b.fav).length;
-    if (cat === STATUS_READING) return books.filter((b) => states[b.id].pct > 0 && !states[b.id].finished).length;
-    if (cat === STATUS_UNREAD) return books.filter((b) => !states[b.id].finished && !(states[b.id].pct > 0)).length;
+    if (cat === STATUS_READING) return books.filter(isReading).length;
+    if (cat === STATUS_UNREAD) return books.filter(isUnread).length;
     if (cat === STATUS_DONE) return books.filter((b) => states[b.id].finished).length;
     return books.filter((b) => b.category === cat).length;
   }
@@ -365,9 +375,9 @@ create policy "midad_own_files" on storage.objects for all
       else if (pairView === 'text') list = list.filter((b) => !textTwinOf[b.id]); // أخفِ الأصل PDF الذي له نسخة نصية
     }
     if (activeCat === STATUS_FAV) list = list.filter((b) => b.fav);
-    else if (activeCat === STATUS_READING) list = list.filter((b) => states[b.id].pct > 0 && !states[b.id].finished);
+    else if (activeCat === STATUS_READING) list = list.filter(isReading);
     else if (activeCat === STATUS_DONE) list = list.filter((b) => states[b.id].finished);
-    else if (activeCat === STATUS_UNREAD) list = list.filter((b) => !states[b.id].finished && !(states[b.id].pct > 0));
+    else if (activeCat === STATUS_UNREAD) list = list.filter(isUnread);
     else if (activeCat.startsWith(SHELF_PREFIX)) { const sh = activeCat.slice(SHELF_PREFIX.length); list = list.filter((b) => (b.shelves || []).includes(sh)); }
     else if (activeCat !== 'الكل') list = list.filter((b) => b.category === activeCat);
     if (query) {
@@ -1980,6 +1990,45 @@ create policy "midad_own_files" on storage.objects for all
     toast(`أُضيف «${title}» إلى مكتبتك 📚`, 'gold');
   }
 
+  /* ─── سمات المكتبة ─── */
+  const LIB_THEMES = [
+    { id: 'purple', label: 'بنفسجي فاخر', bg: '#0e0b16', glow: '#4b2d7f', dot: '#d9a94f' },
+    { id: 'blue', label: 'أزرق ليلي', bg: '#0a0f1e', glow: '#2d5a9f', dot: '#d9a94f' },
+    { id: 'emerald', label: 'زمردي', bg: '#08130f', glow: '#2d7f5a', dot: '#e0b45a' },
+    { id: 'wine', label: 'نبيذي', bg: '#160a0e', glow: '#7f2d4a', dot: '#d9a94f' },
+    { id: 'charcoal', label: 'فحمي', bg: '#121316', glow: '#4a4f5a', dot: '#d9a94f' },
+    { id: 'sepia', label: 'رملي دافئ', bg: '#17120b', glow: '#7f5a2d', dot: '#d9a94f' },
+  ];
+  function applyLibTheme(id) {
+    if (id && id !== 'purple') document.documentElement.setAttribute('data-lib-theme', id);
+    else document.documentElement.removeAttribute('data-lib-theme');
+    try { localStorage.setItem('midad-lib-theme', id || 'purple'); } catch {}
+  }
+  function openThemePicker() {
+    let cur = 'purple'; try { cur = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `<div class="ud-box" style="max-width:460px" role="dialog" aria-modal="true">
+      <div class="ud-icon">🎨</div><h3>سمة المكتبة</h3>
+      <div class="theme-grid">${LIB_THEMES.map((t) => `
+        <button class="theme-swatch ${t.id === cur ? 'on' : ''}" data-id="${t.id}" title="${esc(t.label)}">
+          <span class="ts-fill" style="background:radial-gradient(130% 100% at 82% 0%, ${t.glow}, ${t.bg} 68%)"></span>
+          <span class="ts-name">${esc(t.label)}</span>
+          <span class="ts-dot" style="background:${t.dot}"></span>
+          <span class="ts-check">✓</span>
+        </button>`).join('')}</div>
+      <div class="ud-actions"><button class="ud-cancel">تمّ</button></div></div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.ud-cancel').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    overlay.querySelectorAll('.theme-swatch').forEach((sw) => sw.onclick = () => {
+      applyLibTheme(sw.dataset.id);
+      overlay.querySelectorAll('.theme-swatch').forEach((x) => x.classList.toggle('on', x === sw));
+    });
+  }
+
   /* ─── قائمة المكتبة: إحصائيات + نسخ احتياطي ─── */
   function wireLibMenu() {
     $('#btn-lib-menu').onclick = (e) => {
@@ -1990,6 +2039,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="libai">🔍 اسأل مكتبتك</button>
         <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
+        <button data-act="theme">🎨 سمة المكتبة</button>
         <button data-act="keys">🔑 فحص مفاتيح الذكاء</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
         <button data-act="restore">📥 استيراد نسخة احتياطية</button>`;
@@ -2001,6 +2051,7 @@ create policy "midad_own_files" on storage.objects for all
         const act = ev.target.dataset.act;
         closeCardMenu();
         if (act === 'stats') openStats();
+        else if (act === 'theme') openThemePicker();
         else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();
         else if (act === 'keys') checkAiKeys();
