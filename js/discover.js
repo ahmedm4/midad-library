@@ -143,7 +143,8 @@ const Discover = (() => {
         const term = (q || '').trim();
         const data = await Cloud.invokeFn('alfeker', term ? { action: 'list', q: term } : { action: 'list', catid: catid || '65' });
         if (my !== curReq) return;
-        cards = (data.books || []).map((b) => ({ source: 'alfeker', id: b.id, title: b.title, author: b.author, cover: b.cover, meta: b.views ? ('👁 ' + fmtNum(b.views)) : '' }));
+        // استخدم الغلاف الكامل بدل المصغّرة المنخفضة الدقة (…/.thumb/… → …/…)
+        cards = (data.books || []).map((b) => ({ source: 'alfeker', id: b.id, title: b.title, author: b.author, cover: (b.cover || '').replace('/.thumb/', '/'), meta: b.views ? ('👁 ' + fmtNum(b.views)) : '' }));
       } else {
         const term = (q || catQ || '').trim();
         const scope = 'mediatype:texts AND language:(Arabic OR ara)';
