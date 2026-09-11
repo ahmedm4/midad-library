@@ -463,6 +463,29 @@ const Reader = (() => {
     return cv.toDataURL('image/jpeg', 0.82);
   }
 
+  // سحب الورقة بالماوس/اللمس مع تعويض العكس الأفقي (RTL): x داخلي = يمين المستطيل − clientX
+  function wirePfDrag(el) {
+    let down = false, moved = false, sx = 0, sy = 0;
+    const toPos = (e) => { const r = el.getBoundingClientRect(); return { x: r.right - e.clientX, y: e.clientY - r.top }; };
+    el.style.touchAction = 'none';
+    el.addEventListener('pointerdown', (e) => {
+      if (!pageFlip || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      down = true; moved = false; sx = e.clientX; sy = e.clientY;
+      try { el.setPointerCapture(e.pointerId); } catch {}
+      pageFlip.startUserTouch(toPos(e));
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!pageFlip) return;
+      if (down && (Math.abs(e.clientX - sx) > 4 || Math.abs(e.clientY - sy) > 4)) moved = true;
+      pageFlip.userMove(toPos(e), false); // يعمل السحب أثناء الضغط، والانحناء عند المرور قرب الزاوية
+    });
+    const end = (e) => { if (!pageFlip || !down) return; down = false; try { pageFlip.userStop(toPos(e)); } catch {} if (moved) e.stopPropagation(); };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', () => { down = false; });
+    // امنع «نقرة» منطقة التقليب من القفز بعد سحب فعلي
+    el.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+  }
+
   // يحسب صندوق الكتاب ليلائم المسرح (مفرد أو مزدوج حسب العرض)
   function sizePfBox(box) {
     const stage = $('#r-stage');
@@ -516,6 +539,7 @@ const Reader = (() => {
         state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1;
         afterNavigate();
       });
+      wirePfDrag(inner);
       pdfPage = targetIdx + 1;
     } catch (e) { console.error('pageflip', e); teardownPageFlip(); renderPdf(gotoPage || pdfPage); }
     pfBuilding = false;
