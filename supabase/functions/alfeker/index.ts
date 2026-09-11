@@ -140,6 +140,22 @@ Deno.serve(async (req) => {
       return json(parseDetail(html, id));
     }
 
+    // وسيط عام: يجلب أي رابط مباشر (PDF/نص) من الخادم ويعيده للمتصفح بلا قيد CORS
+    if (action === "fetch") {
+      const target = String(b.url || "").trim();
+      if (!/^https?:\/\/.+/i.test(target)) return json({ error: "رابط غير صالح" }, 400);
+      let dr: Response;
+      try { dr = await fetch(target, { headers: { "User-Agent": UA, "Accept": "*/*", "Accept-Language": "ar,en;q=0.8" } }); }
+      catch (e) { return json({ error: "تعذّر الوصول إلى الرابط: " + String((e as Error)?.message || e) }, 502); }
+      if (!dr.ok) return json({ error: "الرابط أعاد الحالة " + dr.status }, 502);
+      const ct = dr.headers.get("content-type") || "application/octet-stream";
+      const headers = new Headers(CORS);
+      headers.set("Content-Type", ct);
+      const cl = dr.headers.get("content-length"); if (cl) headers.set("Content-Length", cl);
+      headers.set("Content-Disposition", "inline");
+      return new Response(dr.body, { status: 200, headers });
+    }
+
     if (action === "file") {
       let fileUrl = String(b.fileUrl || "").trim();
       let host = String(b.host || "").trim();

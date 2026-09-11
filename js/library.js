@@ -1538,6 +1538,46 @@ create policy "midad_own_files" on storage.objects for all
     return out.filter((x) => x !== '').join('\n\n').trim();
   }
 
+  /* جلب رابط عبر سلسلة وسطاء: مباشر ← خادمك (Supabase) ← وسطاء عامّون — مع مهلة لكل محاولة
+     يعيد {buf, ct} حيث buf هو ArrayBuffer و ct نوع المحتوى (قد يكون '') */
+  async function fetchViaProxies(url, onStep) {
+    const attempt = async (u, ms) => {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), ms);
+      try {
+        const r = await fetch(u, { signal: ctrl.signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const ct = r.headers.get('content-type') || '';
+        return { buf: await r.arrayBuffer(), ct };
+      } finally { clearTimeout(to); }
+    };
+    // 1) مباشر (يعمل مع المواقع المتيحة لـCORS)
+    try { return await attempt(url, 20000); } catch {}
+    // 2) عبر خادمك (الأوثق) إن كانت المزامنة السحابية مُفعّلة
+    if (window.Cloud && Cloud.isConfigured && Cloud.isConfigured()) {
+      try {
+        onStep && onStep('⏳ الموقع يمنع الجلب المباشر — محاولة عبر خادمك…');
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 45000);
+        try {
+          const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url });
+          const ct = r.headers.get('content-type') || '';
+          if (r.ok && !/application\/json/i.test(ct)) return { buf: await r.arrayBuffer(), ct };
+        } finally { clearTimeout(to); }
+      } catch {}
+    }
+    // 3) وسطاء عامّون (لمن لا يستخدم المزامنة السحابية)
+    const proxies = [
+      (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+      (u) => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u),
+      (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+    ];
+    for (const p of proxies) {
+      try { onStep && onStep('⏳ الموقع يمنع الجلب المباشر — محاولة عبر وسيط…'); return await attempt(p(url), 20000); } catch {}
+    }
+    throw new Error('تعذّر الجلب من كل المصادر');
+  }
+
   /* جلب كتاب من رابط مباشر (PDF أو نص) */
   async function fetchFromUrl() {
     const url = $('#url-input').value.trim();
@@ -1547,22 +1587,11 @@ create policy "midad_own_files" on storage.objects for all
     chip.textContent = '⏳ جارٍ جلب الملف…';
     pendingFile = null;
 
-    const tryFetch = async (u) => {
-      const r = await fetch(u);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.arrayBuffer();
-    };
     let buf = null;
-    try { buf = await tryFetch(url); }
+    try { ({ buf } = await fetchViaProxies(url, (m) => { chip.textContent = m; })); }
     catch {
-      // كثير من المواقع تمنع الجلب المباشر (CORS) — نجرب عبر وسيط عام
-      try {
-        chip.textContent = '⏳ الموقع يمنع الجلب المباشر — محاولة عبر وسيط…';
-        buf = await tryFetch('https://corsproxy.io/?url=' + encodeURIComponent(url));
-      } catch {
-        chip.textContent = '⚠ تعذّر الجلب: الموقع يمنع التحميل المباشر. نزّل الملف إلى جهازك ثم أضفه من لسان «ملف»';
-        return;
-      }
+      chip.textContent = '⚠ تعذّر الجلب: الموقع يمنع التحميل المباشر. نزّل الملف إلى جهازك ثم أضفه من لسان «ملف»، أو فعّل المزامنة السحابية (☁️) للجلب عبر خادمك';
+      return;
     }
 
     const nameFromUrl = decodeURIComponent((url.split('/').pop() || '').split('?')[0]) || 'كتاب من الإنترنت';
@@ -1619,10 +1648,8 @@ create policy "midad_own_files" on storage.objects for all
     const url = $('#cover-url-input').value.trim();
     if (!/^https?:\/\/.+/i.test(url)) return toast('أدخل رابط صورة صحيحاً يبدأ بـ https://');
     const go = $('#cover-url-go'); const orig = go.textContent; go.textContent = '⏳';
-    const tryFetch = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); };
     let blob = null;
-    try { blob = await tryFetch(url); }
-    catch { try { blob = await tryFetch('https://corsproxy.io/?url=' + encodeURIComponent(url)); } catch {} }
+    try { const { buf, ct } = await fetchViaProxies(url); blob = new Blob([buf], { type: ct || 'image/jpeg' }); } catch {}
     go.textContent = orig;
     if (!blob) return toast('تعذّر جلب الصورة — قد يمنع الموقع التحميل المباشر');
     const cover = await imageToCover(blob);
@@ -1634,12 +1661,10 @@ create policy "midad_own_files" on storage.objects for all
     toast('اختير الغلاف من الرابط ✓', 'gold');
   }
 
-  // جلب صورة من رابط وتحويلها إلى غلاف (مع وسيط CORS احتياطي)
+  // جلب صورة من رابط وتحويلها إلى غلاف (مع سلسلة وسطاء CORS احتياطية)
   async function coverFromUrl(url) {
-    const tryFetch = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); };
     let blob = null;
-    try { blob = await tryFetch(url); }
-    catch { try { blob = await tryFetch('https://corsproxy.io/?url=' + encodeURIComponent(url)); } catch {} }
+    try { const { buf, ct } = await fetchViaProxies(url); blob = new Blob([buf], { type: ct || 'image/jpeg' }); } catch {}
     return blob ? imageToCover(blob) : null;
   }
 

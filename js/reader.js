@@ -434,7 +434,7 @@ const Reader = (() => {
   let pageFlip = null, pfAspect = 1.414, pfBuilding = false;
   const PF_MAX_PAGES = 240; // فوقها نستخدم قلبنا الخاص (تجنّب بطء/ذاكرة تحضير كل الصفحات)
   // نستخدم StPageFlip للعرض المزدوج (أفقي) — القلب المفرد (رأسي) يستخدم محرّكنا
-  const pdfFlipBookActive = () => isPdf && settings.flip === 'flip' && pdfZoom <= 1.001 && pageCount <= PF_MAX_PAGES && spreadFits() && !!(window.St && St.PageFlip);
+  const pdfFlipBookActive = () => isPdf && settings.flip === 'flip' && settings.realFlip !== false && pdfZoom <= 1.001 && pageCount <= PF_MAX_PAGES && spreadFits() && !!(window.St && St.PageFlip);
 
   // موجّه العرض: StPageFlip (تقليب ورقي) أو المزدوج أو المفرد
   function showPdfPage(n, fade = false) {
@@ -475,9 +475,9 @@ const Reader = (() => {
       pageFlip.startUserTouch(toPos(e));
     });
     el.addEventListener('pointermove', (e) => {
-      if (!pageFlip) return;
-      if (down && (Math.abs(e.clientX - sx) > 4 || Math.abs(e.clientY - sy) > 4)) moved = true;
-      pageFlip.userMove(toPos(e), false); // يعمل السحب أثناء الضغط، والانحناء عند المرور قرب الزاوية
+      if (!pageFlip || !down) return; // لا انحناء عند مجرد مرور الماوس — فقط أثناء ضغط الزر
+      if (Math.abs(e.clientX - sx) > 4 || Math.abs(e.clientY - sy) > 4) moved = true;
+      pageFlip.userMove(toPos(e), false);
     });
     const end = (e) => { if (!pageFlip || !down) return; down = false; try { pageFlip.userStop(toPos(e)); } catch {} if (moved) e.stopPropagation(); };
     el.addEventListener('pointerup', end);
@@ -531,7 +531,7 @@ const Reader = (() => {
         width: pageW, height: Math.round(bookH), size: 'stretch',
         minWidth: 160, maxWidth: 3000, minHeight: 160, maxHeight: 2000,
         drawShadow: true, flippingTime: 650, usePortrait: true, maxShadowOpacity: 0.5,
-        showCover: false, useMouseEvents: false, mobileScrollSupport: false, startPage: targetIdx,
+        showCover: false, useMouseEvents: false, showPageCorners: false, mobileScrollSupport: false, startPage: targetIdx,
       });
       pageFlip.loadFromHTML(inner.querySelectorAll('.pf-page'));
       pageFlip.on('flip', (e) => {
@@ -1474,6 +1474,16 @@ const Reader = (() => {
       b.onclick = () => { settings.pdfFit = b.dataset.fit; applySettings(); relayoutPdf(); };
     }); }
 
+    // تفعيل/إطفاء القلب الواقعي (StPageFlip) لملفات PDF
+    { const rfr = $('#realflip-row'); if (rfr) rfr.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => {
+        settings.realFlip = b.dataset.realflip === '1';
+        Store.saveSettings(settings);
+        rfr.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+        if (isPdf && !pdfScrollActive()) { teardownPageFlip(); showPdfPage(pdfPage); applySettings(); }
+      };
+    }); }
+
     $('#btn-reset-settings').onclick = () => {
       settings = Store.resetSettings();
       applySettings(false);
@@ -1572,6 +1582,7 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fx === (settings.paperFx || 'none')));
     $('#flip-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.flip === settings.flip));
     $('#spread-row').querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.spread === '1') === !!settings.spread));
+    { const rfr = $('#realflip-row'); if (rfr) rfr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.realflip === '1') === (settings.realFlip !== false))); }
     { const fitr = $('#fit-row'); if (fitr) fitr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fit === (settings.pdfFit || 'page'))); }
     { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.focus === '1') === !!settings.focusMode)); }
     { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
