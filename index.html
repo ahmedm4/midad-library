@@ -66,13 +66,22 @@
     <nav class="chips" id="cat-chips"></nav>
 
     <div class="grid-head">
-      <h2 id="grid-title">كل الكتب</h2>
-      <select id="sort-select">
-        <option value="recent">الأحدث قراءة</option>
-        <option value="added">الأحدث إضافة</option>
-        <option value="title">الاسم</option>
-        <option value="progress">نسبة الإنجاز</option>
-      </select>
+      <div class="grid-head-title"><h2 id="grid-title">كل الكتب</h2><span class="grid-count" id="grid-count"></span></div>
+      <div class="grid-tools">
+        <div class="view-toggle" id="view-toggle" title="طريقة العرض">
+          <button data-view="grid" title="شبكة">▦</button>
+          <button data-view="compact" title="مضغوط">⊞</button>
+          <button data-view="list" title="قائمة">☰</button>
+        </div>
+        <select id="sort-select">
+          <option value="recent">الأحدث قراءة</option>
+          <option value="added">الأحدث إضافة</option>
+          <option value="oldest">الأقدم إضافة</option>
+          <option value="title">الاسم</option>
+          <option value="author">المؤلف</option>
+          <option value="progress">نسبة الإنجاز</option>
+        </select>
+      </div>
     </div>
 
     <section class="book-grid" id="book-grid"></section>

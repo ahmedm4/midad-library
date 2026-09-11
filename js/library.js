@@ -36,6 +36,9 @@ const Library = (() => {
   let activeCat = 'الكل';
   let query = '';
   let sort = 'recent';
+  let viewMode = (() => { try { return localStorage.getItem('midad-view') || 'grid'; } catch { return 'grid'; } })();
+  const CHUNK = 40;           // عدد الكتب في كل دفعة عرض (تحميل تدريجي)
+  let curList = [], renderCursor = 0, gridSentinel = null, gridObserver = null;
   let pendingFile = null;   // {kind:'pdf'|'text', blob?, text?, cover?}
   let pendingCover = null;  // غلاف مخصص اختاره المستخدم (dataURL)
   let editingId = null;
@@ -309,7 +312,7 @@ create policy "midad_own_files" on storage.objects for all
     const cats = ['الكل', ...status, ...CATEGORIES.filter((c) => used.has(c))];
     const shelves = allShelves();
     let html = cats
-      .map((c) => `<button class="${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`)
+      .map((c) => { const n = countFor(c); return `<button class="${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}${n ? ` <i>${n}</i>` : ''}</button>`; })
       .join('');
     // رفوف مخصّصة (تظهر مميّزة بأيقونة ولها فاصل بسيط قبلها)
     if (shelves.length) {
@@ -324,6 +327,16 @@ create policy "midad_own_files" on storage.objects for all
     $('#cat-chips').querySelectorAll('button').forEach((btn) => {
       btn.onclick = () => { activeCat = btn.dataset.cat; render(); };
     });
+  }
+
+  // عدد الكتب ضمن تصنيف/حالة معيّنة (لشارات التصنيفات)
+  function countFor(cat) {
+    if (cat === 'الكل') return books.length;
+    if (cat === STATUS_FAV) return books.filter((b) => b.fav).length;
+    if (cat === STATUS_READING) return books.filter((b) => states[b.id].pct > 0 && !states[b.id].finished).length;
+    if (cat === STATUS_UNREAD) return books.filter((b) => !states[b.id].finished && !(states[b.id].pct > 0)).length;
+    if (cat === STATUS_DONE) return books.filter((b) => states[b.id].finished).length;
+    return books.filter((b) => b.category === cat).length;
   }
 
   function visibleBooks() {
@@ -341,21 +354,18 @@ create policy "midad_own_files" on storage.objects for all
     const st = (b) => states[b.id];
     if (sort === 'recent') list.sort((a, b) => (st(b).lastRead || 0) - (st(a).lastRead || 0) || b.addedAt - a.addedAt);
     else if (sort === 'added') list.sort((a, b) => b.addedAt - a.addedAt);
+    else if (sort === 'oldest') list.sort((a, b) => a.addedAt - b.addedAt);
     else if (sort === 'title') list.sort((a, b) => a.title.localeCompare(b.title, 'ar'));
+    else if (sort === 'author') list.sort((a, b) => (a.author || 'ﻯ').localeCompare(b.author || 'ﻯ', 'ar') || a.title.localeCompare(b.title, 'ar'));
     else if (sort === 'progress') list.sort((a, b) => st(b).pct - st(a).pct);
     return list;
   }
 
-  function renderGrid() {
-    const list = visibleBooks();
-    const grid = $('#book-grid');
-    $('#empty-state').hidden = books.length > 0;
-    $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب'
-      : activeCat.startsWith(SHELF_PREFIX) ? '📚 ' + activeCat.slice(SHELF_PREFIX.length) : activeCat;
-    grid.innerHTML = list.map((b) => {
-      const st = states[b.id];
-      const pct = Math.round(st.pct * 100);
-      return `
+  // بطاقة كتاب واحدة (تصلح للشبكة والمضغوط والقائمة — التخطيط عبر CSS)
+  function bookCardHTML(b) {
+    const st = states[b.id];
+    const pct = Math.round(st.pct * 100);
+    return `
       <article class="book-card" data-id="${b.id}">
         <div class="bk">
           ${coverHTML(b)}
@@ -369,13 +379,15 @@ create policy "midad_own_files" on storage.objects for all
         </div>
         <div class="bc-meta">
           <b>${esc(b.title)}</b>
-          <span>${esc(b.author || '—')}</span>
+          <span class="bc-author">${esc(b.author || '—')}</span>
+          <span class="bc-extra">${esc(b.category || '')}${st.finished ? ' · ✓ مكتمل' : pct > 0 ? ' · ' + pct + '٪' : ' · لم تبدأ'}</span>
           <button class="bc-menu-btn" title="خيارات">⋯</button>
         </div>
       </article>`;
-    }).join('');
+  }
 
-    grid.querySelectorAll('.book-card').forEach((card) => {
+  function wireCards(cards) {
+    cards.forEach((card) => {
       const id = card.dataset.id;
       card.querySelector('.bk').onclick = () => openBook(id);
       card.querySelector('.bc-menu-btn').onclick = (e) => {
@@ -390,9 +402,61 @@ create policy "midad_own_files" on storage.objects for all
         b.fav = !b.fav;
         render();
       };
-      // الزر الأيمن على البطاقة يفتح القائمة أيضاً
       card.oncontextmenu = (e) => { e.preventDefault(); openCardMenu(e.clientX, e.clientY, id); };
     });
+  }
+
+  // يعرض الدفعة التالية من الكتب (تحميل تدريجي)
+  function renderChunk() {
+    const grid = $('#book-grid');
+    const slice = curList.slice(renderCursor, renderCursor + CHUNK);
+    const tmp = document.createElement('div');
+    tmp.innerHTML = slice.map((b) => bookCardHTML(b)).join('');
+    const nodes = [...tmp.children];
+    nodes.forEach((n) => grid.appendChild(n));
+    wireCards(nodes);
+    renderCursor += slice.length;
+    // حرّك الحارس إلى نهاية الشبكة أو أزله عند اكتمال العرض
+    if (renderCursor < curList.length) { grid.appendChild(gridSentinel); gridSentinel.hidden = false; }
+    else if (gridSentinel) gridSentinel.hidden = true;
+  }
+
+  function renderGrid() {
+    curList = visibleBooks();
+    renderCursor = 0;
+    const grid = $('#book-grid');
+    grid.className = 'book-grid view-' + viewMode;
+    $('#empty-state').hidden = books.length > 0;
+    $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب'
+      : activeCat.startsWith(SHELF_PREFIX) ? '📚 ' + activeCat.slice(SHELF_PREFIX.length) : activeCat;
+    { const gc = $('#grid-count'); if (gc) gc.textContent = curList.length ? curList.length + ' كتاب' : ''; }
+    grid.innerHTML = '';
+    // حارس التحميل التدريجي: مراقب تقاطع (الأجهزة الحقيقية) + احتياطي بالتمرير
+    if (!gridSentinel) { gridSentinel = document.createElement('div'); gridSentinel.id = 'grid-sentinel'; }
+    if (!gridObserver) {
+      gridObserver = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) maybeLoadMore();
+      }, { rootMargin: '800px 0px' });
+      gridObserver.observe(gridSentinel);
+      window.addEventListener('scroll', maybeLoadMore, { passive: true });
+    }
+    renderChunk();
+  }
+
+  // يحمّل الدفعة التالية عند الاقتراب من نهاية القائمة (يعمل حتى لو تعذّر قياس الشاشة)
+  function maybeLoadMore() {
+    if (renderCursor >= curList.length) return;
+    const se = document.scrollingElement || document.documentElement;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    if (se.scrollTop + vh >= se.scrollHeight - 800) renderChunk();
+  }
+
+  function setView(mode) {
+    viewMode = mode;
+    try { localStorage.setItem('midad-view', mode); } catch {}
+    const tg = $('#view-toggle');
+    if (tg) tg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
+    renderGrid();
   }
 
   /* ─── البحث الشامل داخل كل الكتب ─── */
@@ -1086,6 +1150,7 @@ create policy "midad_own_files" on storage.objects for all
       else { $('#deep-results').hidden = true; }
     };
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
+    { const tg = $('#view-toggle'); if (tg) { tg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.view === viewMode); b.onclick = () => setView(b.dataset.view); }); } }
     $('#btn-add').onclick = () => openAddModal();
     $('#btn-add-empty').onclick = () => openAddModal();
     { const bd = $('#btn-discover'); if (bd) bd.onclick = () => { if (window.Discover) Discover.open(); }; }
