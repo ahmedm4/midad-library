@@ -37,6 +37,7 @@ const Library = (() => {
   let query = '';
   let sort = 'recent';
   let viewMode = (() => { try { return localStorage.getItem('midad-view') || 'grid'; } catch { return 'grid'; } })();
+  let pairView = (() => { try { return localStorage.getItem('midad-pairview') || 'both'; } catch { return 'both'; } })(); // both | pdf | text
   const CHUNK = 40;           // عدد الكتب في كل دفعة عرض (تحميل تدريجي)
   let curList = [], renderCursor = 0, gridSentinel = null, gridObserver = null;
   let pendingFile = null;   // {kind:'pdf'|'text', blob?, text?, cover?}
@@ -339,8 +340,30 @@ create policy "midad_own_files" on storage.objects for all
     return books.filter((b) => b.category === cat).length;
   }
 
+  // يربط كل نسخة نصّية مُستخرَجة (OCR) بأصلها PDF: بالمرجع sourceId أو بلاحقة «— نص» عند غيابه
+  function twinMaps() {
+    const textTwinOf = {}; // pdfId -> textId (لهذا الـPDF نسخة نصية)
+    const pdfOf = {};      // textId -> pdfId (هذه النسخة النصية مشتقّة من PDF)
+    const pdfIds = new Set(books.filter((b) => b.type === 'pdf').map((b) => b.id));
+    const pdfByTitle = {}; books.forEach((b) => { if (b.type === 'pdf') pdfByTitle[b.title] = b.id; });
+    for (const b of books) {
+      if (b.type !== 'text') continue;
+      let src = (b.sourceId && pdfIds.has(b.sourceId)) ? b.sourceId : null;
+      if (!src && /\s*—\s*نص\s*$/.test(b.title)) { const base = b.title.replace(/\s*—\s*نص\s*$/, ''); if (pdfByTitle[base]) src = pdfByTitle[base]; }
+      if (src) { pdfOf[b.id] = src; textTwinOf[src] = b.id; }
+    }
+    return { textTwinOf, pdfOf };
+  }
+  const hasPairs = () => { const m = twinMaps(); return Object.keys(m.pdfOf).length > 0; };
+
   function visibleBooks() {
     let list = books.slice();
+    // فلتر PDF/نص: يخفي أحد طرفَي الكتاب المزدوج (الأصل PDF ونسخته النصية)
+    if (pairView !== 'both') {
+      const { textTwinOf, pdfOf } = twinMaps();
+      if (pairView === 'pdf') list = list.filter((b) => !pdfOf[b.id]);        // أخفِ النسخ النصية المشتقّة
+      else if (pairView === 'text') list = list.filter((b) => !textTwinOf[b.id]); // أخفِ الأصل PDF الذي له نسخة نصية
+    }
     if (activeCat === STATUS_FAV) list = list.filter((b) => b.fav);
     else if (activeCat === STATUS_READING) list = list.filter((b) => states[b.id].pct > 0 && !states[b.id].finished);
     else if (activeCat === STATUS_DONE) list = list.filter((b) => states[b.id].finished);
@@ -430,6 +453,7 @@ create policy "midad_own_files" on storage.objects for all
     $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب'
       : activeCat.startsWith(SHELF_PREFIX) ? '📚 ' + activeCat.slice(SHELF_PREFIX.length) : activeCat;
     { const gc = $('#grid-count'); if (gc) gc.textContent = curList.length ? curList.length + ' كتاب' : ''; }
+    { const pf = $('#pair-filter'); if (pf) pf.hidden = !hasPairs(); }
     grid.innerHTML = '';
     // حارس التحميل التدريجي: مراقب تقاطع (الأجهزة الحقيقية) + احتياطي بالتمرير
     if (!gridSentinel) { gridSentinel = document.createElement('div'); gridSentinel.id = 'grid-sentinel'; }
@@ -728,7 +752,7 @@ create policy "midad_own_files" on storage.objects for all
     const text = autoCleanText(stripRepeatedHeaders(ft.text, ft.pageStarts), true);
     const meta = {
       title: b.title + ' — نص', author: b.author || '', category: b.category || 'أخرى',
-      type: 'text', shelves: (b.shelves || []).slice(),
+      type: 'text', shelves: (b.shelves || []).slice(), sourceId: id,
     };
     if (b.cover) meta.cover = b.cover;
     const newId = await Store.addBook(meta, text);
@@ -1151,6 +1175,7 @@ create policy "midad_own_files" on storage.objects for all
     };
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
     { const tg = $('#view-toggle'); if (tg) { tg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.view === viewMode); b.onclick = () => setView(b.dataset.view); }); } }
+    { const pf = $('#pair-filter'); if (pf) { pf.value = pairView; pf.onchange = (e) => { pairView = e.target.value; try { localStorage.setItem('midad-pairview', pairView); } catch {} renderGrid(); }; } }
     $('#btn-add').onclick = () => openAddModal();
     $('#btn-add-empty').onclick = () => openAddModal();
     { const bd = $('#btn-discover'); if (bd) bd.onclick = () => { if (window.Discover) Discover.open(); }; }

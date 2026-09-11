@@ -409,9 +409,10 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .view-toggle button { width: 34px; height: 32px; border-radius: 9px; color: var(--muted); font-size: 16px; line-height: 1; transition: .15s; }
 .view-toggle button:hover { color: var(--cream); }
 .view-toggle button.on { background: rgba(217,169,79,.18); color: var(--gold-soft); }
-#sort-select { background: var(--card); border: 1px solid var(--card-line); color: var(--cream);
+#sort-select, #pair-filter { background: var(--card); border: 1px solid var(--card-line); color: var(--cream);
   padding: 9px 14px; border-radius: 12px; font-size: 13.5px; outline: none; }
-#sort-select option { background: var(--ink-2); }
+#sort-select option, #pair-filter option { background: var(--ink-2); }
+#pair-filter { border-color: rgba(217,169,79,.4); color: var(--gold-soft); }
 
 /* وضع مضغوط: أغلفة أصغر وأكثر في الشاشة */
 .book-grid.view-compact { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 24px 16px; }
