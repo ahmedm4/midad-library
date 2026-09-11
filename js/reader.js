@@ -292,6 +292,7 @@ const Reader = (() => {
       if (pdfSpreadActive()) {
         const target = spreadStart(pdfPage) + dir * 2;
         if (target < 1 || target > pageCount) return;
+        if (settings.flip === 'flip') { flipSpread(dir); return; }
         pdfPage = target; renderPdfSpread(target, true);
         state.pct = pageCount > 1 ? (target - 1) / (pageCount - 1) : 1; afterNavigate();
         return;
@@ -465,6 +466,42 @@ const Reader = (() => {
       else { wrap2.hidden = true; }
     } catch (e) { console.error('pdf spread', e); }
     if (fade) setTimeout(() => { wrap.style.opacity = '1'; wrap2.style.opacity = '1'; }, 30);
+  }
+
+  // تأثير قلب الورقة عبر العرض المزدوج (ورقة ثنائية الوجه تدور حول الطيّة الوسطى)
+  async function flipSpread(dir) {
+    const start = spreadStart(pdfPage);
+    const newStart = start + dir * 2;
+    if (newStart < 1 || newStart > pageCount) return;
+    flipping = true;
+    const layer = $('#r-flip-layer');
+    const over = dir > 0 ? $('#r-canvas-wrap2') : $('#r-canvas-wrap'); // النصف الذي تُقلب ورقته
+    const box = { l: over.offsetLeft, t: over.offsetTop, w: over.offsetWidth, h: over.offsetHeight };
+    const frontN = dir > 0 ? start + 1 : start;        // الوجه الظاهر بداية (يطابق الصفحة الحالية)
+    const backN = dir > 0 ? start + 2 : start - 1;     // الوجه الخلفي (الصفحة الجديدة)
+    const leaf = document.createElement('div');
+    leaf.className = 'r-spread-leaf';
+    leaf.style.cssText = `left:${box.l}px;top:${box.t}px;width:${box.w}px;height:${box.h}px;` +
+      `transform-origin:${dir > 0 ? 'right' : 'left'} center;border-radius:${dir > 0 ? '2px 8px 8px 2px' : '8px 2px 2px 8px'};`;
+    const mkFace = (cls) => { const f = document.createElement('div'); f.className = 'sl-face ' + cls; const cv = document.createElement('canvas'); cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'; f.appendChild(cv); leaf.appendChild(f); return cv; };
+    const fc = mkFace('sl-front'), bc = mkFace('sl-back');
+    try {
+      await drawPageInto(fc, frontN, box.w, box.h);
+      if (backN >= 1 && backN <= pageCount) await drawPageInto(bc, backN, box.w, box.h);
+      layer.appendChild(leaf);
+      // اكشف الصفحة الجديدة أسفل النصف المُصدر (مخفيّة تحت الورقة عند البداية)
+      if (dir > 0) { const ln = start + 3; if (ln <= pageCount) { await drawPageInto($('#r-canvas2'), ln, box.w, box.h); $('#r-canvas-wrap2').hidden = false; } }
+      else { await drawPageInto($('#r-canvas'), newStart, box.w, box.h); }
+      requestAnimationFrame(() => leaf.classList.add(dir > 0 ? 'turn-next' : 'turn-prev'));
+    } catch (e) { console.error('spread flip', e); }
+    setTimeout(() => {
+      pdfPage = newStart;
+      renderPdfSpread(newStart);
+      leaf.remove();
+      flipping = false;
+      state.pct = pageCount > 1 ? (newStart - 1) / (pageCount - 1) : 1;
+      afterNavigate();
+    }, 640);
   }
 
   async function renderPdf(n, fade = false, targetCanvas = null) {

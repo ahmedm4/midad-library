@@ -84,6 +84,20 @@
 #reader.pdf-spread #r-canvas-wrap2::after { content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 28px; z-index: 4;
   pointer-events: none; background: linear-gradient(to right, rgba(0,0,0,.30), transparent); }
 
+/* قلب الورقة عبر العرض المزدوج (ورقة ثنائية الوجه) */
+.r-spread-leaf { position: absolute; z-index: 31; transform-style: preserve-3d; }
+.r-spread-leaf .sl-face { position: absolute; inset: 0; backface-visibility: hidden; overflow: hidden;
+  background: var(--paper); border-radius: inherit; }
+.r-spread-leaf .sl-front { box-shadow: -12px 10px 30px rgba(0,0,0,.4); }
+.r-spread-leaf .sl-back { transform: rotateY(180deg); box-shadow: 12px 10px 30px rgba(0,0,0,.4); }
+.r-spread-leaf .sl-face canvas { mix-blend-mode: multiply; }
+#reader.pdf-dark .r-spread-leaf .sl-face { background: #1a1c22; }
+#reader.pdf-dark .r-spread-leaf .sl-face canvas { mix-blend-mode: normal; filter: invert(.9) hue-rotate(180deg) contrast(.92); }
+.r-spread-leaf.turn-next { animation: sl-next .62s cubic-bezier(.32,.1,.4,1) forwards; }
+@keyframes sl-next { to { transform: rotateY(180deg); } }
+.r-spread-leaf.turn-prev { animation: sl-prev .62s cubic-bezier(.32,.1,.4,1) forwards; }
+@keyframes sl-prev { to { transform: rotateY(-180deg); } }
+
 /* الصفحتان المتقابلتان: ورقة أعرض ككتاب مفتوح (العرض يُحسب في paginate) */
 #reader.spread .r-paper { border-radius: 10px 14px 14px 10px; }
 
