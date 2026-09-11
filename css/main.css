@@ -42,6 +42,22 @@
 :root[data-lib-theme="paper"] ::-webkit-scrollbar-thumb { background: rgba(60,45,20,0.22); }
 :root[data-lib-theme="paper"] .book-card .type-badge { background: rgba(60,45,20,0.6); }
 :root[data-lib-theme="paper"] .bg-aurora i { opacity: .5; }
+/* أسطح القوائم والنوافذ الداكنة → فاتحة في السمة الورقية (وإلا اختفى النص الداكن) */
+:root[data-lib-theme="paper"] .bc-menu,
+:root[data-lib-theme="paper"] .ui-dialog .ud-box,
+:root[data-lib-theme="paper"] .ocr-modal .om-box,
+:root[data-lib-theme="paper"] .shelf-modal .sm-box,
+:root[data-lib-theme="paper"] .disc-modal,
+:root[data-lib-theme="paper"] .disc-sheet-box { background: #fbf6ea; border-color: rgba(60,45,20,.18); box-shadow: 0 20px 60px rgba(90,70,30,.28); }
+:root[data-lib-theme="paper"] .modal { background: linear-gradient(170deg, #fdf9ef, #f2ead8 75%); }
+:root[data-lib-theme="paper"] .bc-menu button:hover,
+:root[data-lib-theme="paper"] .disc-import:hover:not(:disabled),
+:root[data-lib-theme="paper"] .disc-chip:hover { background: rgba(60,45,20,.08); }
+:root[data-lib-theme="paper"] .bc-menu button.danger { color: #c0392b; }
+:root[data-lib-theme="paper"] input:not([type=range]):not([type=checkbox]),
+:root[data-lib-theme="paper"] textarea,
+:root[data-lib-theme="paper"] select { background: #fff; color: #2c2416; border-color: rgba(60,45,20,.2); }
+:root[data-lib-theme="paper"] .menu-badge { color: #fff; }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
