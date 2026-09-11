@@ -370,17 +370,21 @@
       <p class="fld-hint" style="margin-top:8px;line-height:1.7">«ملء العرض» يجعل الصفحة تملأ عرض الشاشة (تُمرَّر عمودياً) — مناسب للقراءة على التابلت.</p>
     </section>
 
+    <section id="layout-section">
+      <h4>تخطيط الصفحات</h4>
+      <div class="bgmode-row" id="spread-row">
+        <button data-spread="0" class="active">صفحة واحدة</button>
+        <button data-spread="1">صفحتان متقابلتان</button>
+      </div>
+      <p class="fld-hint" style="margin-top:8px;line-height:1.7">«صفحتان متقابلتان» تعرض الكتاب كصفحتين جنباً إلى جنب في الوضع الأفقي (شاشة عريضة) — كالكتاب المفتوح.</p>
+    </section>
+
     <section id="typo-section">
       <h4>الخط</h4>
       <div class="font-row" id="font-row"></div>
       <label>حجم الخط <input type="range" id="set-fontsize" min="15" max="30" value="20"></label>
       <label>تباعد الأسطر <input type="range" id="set-lineheight" min="150" max="240" value="190"></label>
       <label>عرض النص <input type="range" id="set-width" min="480" max="1100" value="680"></label>
-      <h4>تخطيط الصفحات</h4>
-      <div class="bgmode-row" id="spread-row">
-        <button data-spread="0" class="active">صفحة واحدة</button>
-        <button data-spread="1">صفحتان متقابلتان</button>
-      </div>
       <h4>وضع التركيز <span class="fld-hint">(تعتيم ما حول السطر — للتمرير المتصل)</span></h4>
       <div class="bgmode-row" id="focus-row">
         <button data-focus="0" class="active">عادي</button>
