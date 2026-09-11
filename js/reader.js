@@ -225,7 +225,7 @@ const Reader = (() => {
   function paginate() {
     if (isPdf) return;
     const reader = $('#reader');
-    const spreadOn = settings.spread && settings.flip !== 'scroll' && window.innerWidth >= 900;
+    const spreadOn = settings.spread && settings.flip !== 'scroll' && spreadFits();
     reader.classList.toggle('spread', spreadOn);
 
     // الورقة تتمدد بنسب كتاب حقيقي على الشاشات الكبيرة، والخط يكبر تناسبياً
@@ -422,7 +422,9 @@ const Reader = (() => {
 
   /* ═══════ عرض PDF ═══════ */
   // العرض المزدوج: صفحتان متقابلتان في الوضع الأفقي (paged، بلا تكبير)
-  const pdfSpreadActive = () => isPdf && settings.spread && settings.flip !== 'scroll' && pdfZoom <= 1.001 && window.innerWidth >= 900;
+  // الشرط: وضع أفقي (العرض ≥ الارتفاع) وعرض كافٍ — مقاوم لتكبير المتصفح (يعتمد النسبة لا رقماً ثابتاً)
+  const spreadFits = () => window.innerWidth >= 680 && window.innerWidth >= window.innerHeight;
+  const pdfSpreadActive = () => isPdf && settings.spread && settings.flip !== 'scroll' && pdfZoom <= 1.001 && spreadFits();
   // بداية الزوج: الصفحة اليمنى (الفردية) — يمين = الأدنى في RTL
   const spreadStart = (n) => { n = Math.max(1, Math.min(n, pageCount)); return n % 2 === 0 ? n - 1 : n; };
 
@@ -1350,8 +1352,10 @@ const Reader = (() => {
     $('#spread-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => {
         settings.spread = b.dataset.spread === '1'; applySettings();
-        if (isPdf) { if (!pdfScrollActive()) showPdfPage(pdfPage); }
-        else scheduleRepaginate();
+        if (isPdf) {
+          if (pdfScrollActive()) { if (settings.spread) Library.toast('العرض المزدوج غير متاح مع «التمرير المتصل» — اختر «تقليب ورقي» أو «انزلاق»'); }
+          else { showPdfPage(pdfPage); if (settings.spread && !pdfSpreadActive()) Library.toast('العرض المزدوج يظهر في الوضع الأفقي (اجعل النافذة أعرض من ارتفاعها)'); }
+        } else scheduleRepaginate();
       };
     });
 
