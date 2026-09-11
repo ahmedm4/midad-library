@@ -72,6 +72,18 @@
 #reader.fit-width.mode-pdf #r-canvas { max-width: none; max-height: none; }
 #reader.fit-width.mode-pdf .r-book { align-items: flex-start; }
 
+/* ═══ العرض المزدوج للـPDF (كتاب مفتوح) ═══ */
+#reader.pdf-spread .r-paper { display: flex; flex-direction: row; gap: 0; align-items: center; justify-content: center; width: auto; }
+#reader.pdf-spread #r-canvas-wrap { border-radius: 8px 2px 2px 8px; box-shadow: -14px 22px 46px rgba(0,0,0,.55); }
+#reader.pdf-spread #r-canvas-wrap2 { position: relative; border-radius: 2px 8px 8px 2px; box-shadow: 14px 22px 46px rgba(0,0,0,.55); }
+#reader.pdf-spread #r-canvas, #reader.pdf-spread #r-canvas2 { max-width: none; max-height: 100%; display: block; }
+#reader.pdf-spread #r-textlayer, #reader.pdf-spread #r-hltextlayer, #reader.pdf-spread #r-draw { display: none; }
+/* ظل الطيّة الوسطى بين الصفحتين */
+#reader.pdf-spread #r-canvas-wrap::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 28px; z-index: 4;
+  pointer-events: none; background: linear-gradient(to left, rgba(0,0,0,.30), transparent); }
+#reader.pdf-spread #r-canvas-wrap2::after { content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 28px; z-index: 4;
+  pointer-events: none; background: linear-gradient(to right, rgba(0,0,0,.30), transparent); }
+
 /* الصفحتان المتقابلتان: ورقة أعرض ككتاب مفتوح (العرض يُحسب في paginate) */
 #reader.spread .r-paper { border-radius: 10px 14px 14px 10px; }
 

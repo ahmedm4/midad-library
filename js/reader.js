@@ -109,7 +109,7 @@ const Reader = (() => {
       pdfPage = (target && target.page) ? Math.min(Math.max(target.page, 1), pageCount)
                                         : Math.min(Math.max(state.page + 1, 1), pageCount);
       if (pdfScrollActive()) await buildPdfScroll();
-      else await renderPdf(pdfPage);
+      else await showPdfPage(pdfPage);
       buildPdfToc();
       if (target && target.page) { state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
     } else {
@@ -289,6 +289,13 @@ const Reader = (() => {
       return;
     }
     if (isPdf) {
+      if (pdfSpreadActive()) {
+        const target = spreadStart(pdfPage) + dir * 2;
+        if (target < 1 || target > pageCount) return;
+        pdfPage = target; renderPdfSpread(target, true);
+        state.pct = pageCount > 1 ? (target - 1) / (pageCount - 1) : 1; afterNavigate();
+        return;
+      }
       const target = pdfPage + dir;
       if (target < 1 || target > pageCount) return;
       if (settings.flip === 'flip' && pdfZoom <= 1.001) flipPdf(target, dir);
@@ -303,7 +310,7 @@ const Reader = (() => {
 
   function jumpTo(n) { // فهرس الصفحات (نصي: رقم صفحة، PDF: رقم صفحة 1-based)
     if (pdfScrollActive()) { pdfScrollTo(Math.max(1, Math.min(n, pageCount))); }
-    else if (isPdf) { pdfPage = Math.max(1, Math.min(n, pageCount)); renderPdf(pdfPage, true); state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
+    else if (isPdf) { pdfPage = Math.max(1, Math.min(n, pageCount)); showPdfPage(pdfPage, true); state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
     else if (settings.flip === 'scroll') { /* يُعالَج خارجياً */ }
     else setPage(n, false);
   }
@@ -413,8 +420,57 @@ const Reader = (() => {
   }
 
   /* ═══════ عرض PDF ═══════ */
+  // العرض المزدوج: صفحتان متقابلتان في الوضع الأفقي (paged، بلا تكبير)
+  const pdfSpreadActive = () => isPdf && settings.spread && settings.flip !== 'scroll' && pdfZoom <= 1.001 && window.innerWidth >= 900;
+  // بداية الزوج: الصفحة اليمنى (الفردية) — يمين = الأدنى في RTL
+  const spreadStart = (n) => { n = Math.max(1, Math.min(n, pageCount)); return n % 2 === 0 ? n - 1 : n; };
+
+  // موجّه العرض: يختار المفرد أو المزدوج
+  function showPdfPage(n, fade = false) {
+    if (pdfSpreadActive()) { pdfPage = spreadStart(n); renderPdfSpread(pdfPage, fade); }
+    else renderPdf(n, fade);
+  }
+
+  // يرسم صفحة PDF داخل كنفا مع ملاءمتها لصندوق (عرض×ارتفاع)
+  async function drawPageInto(canvas, n, maxW, maxH) {
+    const page = await pdfDoc.getPage(n);
+    const vp1 = page.getViewport({ scale: 1 });
+    const scale = Math.min(maxH / vp1.height, maxW / vp1.width);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const vp = page.getViewport({ scale: scale * dpr });
+    canvas.width = vp.width; canvas.height = vp.height;
+    canvas.style.width = (vp.width / dpr) + 'px';
+    canvas.style.height = (vp.height / dpr) + 'px';
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+    if (settings.enhanceScan) cleanScan(canvas.getContext('2d'), canvas.width, canvas.height);
+  }
+
+  // العرض المزدوج: يرسم الصفحة اليمنى (start) واليسرى (start+1) جنباً إلى جنب
+  async function renderPdfSpread(start, fade = false) {
+    const reader = $('#reader');
+    reader.classList.add('pdf-spread');
+    $('#r-canvas-wrap').hidden = false;
+    const wrap2 = $('#r-canvas-wrap2');
+    // طبقات التحديد/الرسم معطّلة في العرض المزدوج
+    { const tl = $('#r-textlayer'), hl = $('#r-hltextlayer'); if (tl) tl.innerHTML = ''; if (hl) hl.innerHTML = ''; }
+    const stage = $('#r-stage');
+    const availH = stage.clientHeight * 0.96;
+    const availW = Math.min(stage.clientWidth - 40, 1700);
+    const perW = (availW - 6) / 2;
+    const wrap = $('#r-canvas-wrap');
+    if (fade) { wrap.style.opacity = '0'; wrap2.style.opacity = '0'; }
+    try {
+      await drawPageInto($('#r-canvas'), start, perW, availH);
+      if (start + 1 <= pageCount) { wrap2.hidden = false; await drawPageInto($('#r-canvas2'), start + 1, perW, availH); }
+      else { wrap2.hidden = true; }
+    } catch (e) { console.error('pdf spread', e); }
+    if (fade) setTimeout(() => { wrap.style.opacity = '1'; wrap2.style.opacity = '1'; }, 30);
+  }
+
   async function renderPdf(n, fade = false, targetCanvas = null) {
     const canvas = targetCanvas || $('#r-canvas');
+    // اخرج من وضع العرض المزدوج عند الرسم المفرد
+    if (!targetCanvas) { $('#reader').classList.remove('pdf-spread'); $('#r-canvas-wrap2').hidden = true; }
     const token = targetCanvas ? -1 : ++renderToken;
     try {
       const page = await pdfDoc.getPage(n);
@@ -852,7 +908,7 @@ const Reader = (() => {
         clearSlot(s);
       }
       requestAnimationFrame(() => { pdfScrollTo(anchorPage, false); renderVisibleSlots(); });
-    } else renderPdf(pdfPage);
+    } else showPdfPage(pdfPage);
   }
 
   function setZoom(z) {
@@ -1255,7 +1311,11 @@ const Reader = (() => {
     $('#set-autospeed').oninput = (e) => { settings.autoSpeed = +e.target.value; Store.saveSettings(settings); };
 
     $('#spread-row').querySelectorAll('button').forEach((b) => {
-      b.onclick = () => { settings.spread = b.dataset.spread === '1'; applySettings(); scheduleRepaginate(); };
+      b.onclick = () => {
+        settings.spread = b.dataset.spread === '1'; applySettings();
+        if (isPdf) { if (!pdfScrollActive()) showPdfPage(pdfPage); }
+        else scheduleRepaginate();
+      };
     });
 
     { const fitr = $('#fit-row'); if (fitr) fitr.querySelectorAll('button').forEach((b) => {
@@ -2182,7 +2242,7 @@ const Reader = (() => {
           const w = pdfSlotWidth(), anchor = pdfPage;
           for (const s of pdfSlots) { s.el.style.width = w + 'px'; s.el.style.height = Math.round(w / pdfAspect) + 'px'; clearSlot(s); }
           requestAnimationFrame(() => { pdfScrollTo(anchor, false); renderVisibleSlots(); });
-        } else if (isPdf) renderPdf(pdfPage);
+        } else if (isPdf) showPdfPage(pdfPage);
         else { scheduleRepaginate(); }
       }, 200);
     });
