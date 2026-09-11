@@ -468,8 +468,13 @@ const Reader = (() => {
     let down = false, moved = false, sx = 0, sy = 0;
     const toPos = (e) => { const r = el.getBoundingClientRect(); return { x: r.right - e.clientX, y: e.clientY - r.top }; };
     el.style.touchAction = 'none';
+    const clearSel = () => { try { const s = window.getSelection && window.getSelection(); if (s && s.rangeCount) s.removeAllRanges(); } catch {} };
+    // امنع سحب الصورة الأصليّ (شبح الصورة) الذي يعطّل الطي
+    el.addEventListener('dragstart', (e) => e.preventDefault());
     el.addEventListener('pointerdown', (e) => {
       if (!pageFlip || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      e.preventDefault(); // يمنع بدء تحديد النص/سحب الصورة (كان يُبقي الصفحة ملوّنة)
+      clearSel();
       down = true; moved = false; sx = e.clientX; sy = e.clientY;
       try { el.setPointerCapture(e.pointerId); } catch {}
       pageFlip.startUserTouch(toPos(e));
@@ -479,9 +484,10 @@ const Reader = (() => {
       if (Math.abs(e.clientX - sx) > 4 || Math.abs(e.clientY - sy) > 4) moved = true;
       pageFlip.userMove(toPos(e), false);
     });
-    const end = (e) => { if (!pageFlip || !down) return; down = false; try { pageFlip.userStop(toPos(e)); } catch {} if (moved) e.stopPropagation(); };
+    const end = (e) => { if (!pageFlip || !down) return; down = false; clearSel(); try { pageFlip.userStop(toPos(e)); } catch {} if (moved) e.stopPropagation(); };
     el.addEventListener('pointerup', end);
-    el.addEventListener('pointercancel', () => { down = false; });
+    // عند إلغاء المؤشّر (فقدان الالتقاط): أوقف الطيّ ليستقرّ ولا يعلق منتصف الحركة
+    el.addEventListener('pointercancel', (e) => { if (!pageFlip || !down) { down = false; return; } down = false; try { pageFlip.userStop(toPos(e)); } catch {} });
     // امنع «نقرة» منطقة التقليب من القفز بعد سحب فعلي
     el.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
   }

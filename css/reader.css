@@ -88,6 +88,11 @@
 
 /* ═══ StPageFlip: قلب ورقة واقعي لوضع «تقليب ورقي» في PDF ═══ */
 .r-pageflip { position: absolute; inset: 0; z-index: 22; display: flex; align-items: center; justify-content: center; }
+/* منع تحديد النص/سحب الصورة أثناء الطي (كان يُلوّن الصفحة بلون التحديد ويبقى) */
+.r-pageflip, .pf-box, .pf-inner, .pf-page, .pf-img {
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none;
+}
+.pf-img { pointer-events: none; }
 #reader.pageflip-on .r-book { display: none; }
 .pf-box { position: relative; }
 .pf-box.rtl { transform: scaleX(-1); }
