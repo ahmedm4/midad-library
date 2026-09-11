@@ -465,6 +465,8 @@ create policy "midad_own_files" on storage.objects for all
     { const gc = $('#grid-count'); if (gc) gc.textContent = curList.length ? curList.length + ' كتاب' : ''; }
     { const pf = $('#pair-filter'); if (pf) pf.hidden = !hasPairs(); }
     grid.innerHTML = '';
+    // وضع القائمة: مجموعات قابلة للطي (بلا تحميل تدريجي — صفوف خفيفة)
+    if (viewMode === 'list') { renderListGrouped(); return; }
     // حارس التحميل التدريجي: مراقب تقاطع (الأجهزة الحقيقية) + احتياطي بالتمرير
     if (!gridSentinel) { gridSentinel = document.createElement('div'); gridSentinel.id = 'grid-sentinel'; }
     if (!gridObserver) {
@@ -483,6 +485,32 @@ create policy "midad_own_files" on storage.objects for all
     const se = document.scrollingElement || document.documentElement;
     const vh = window.innerHeight || document.documentElement.clientHeight || 800;
     if (se.scrollTop + vh >= se.scrollHeight - 800) renderChunk();
+  }
+
+  // حالة طيّ الأقسام (تُحفظ)
+  function getCollapsed() { try { return JSON.parse(localStorage.getItem('midad-collapsed') || '{}'); } catch { return {}; } }
+  function setCollapsed(c) { try { localStorage.setItem('midad-collapsed', JSON.stringify(c)); } catch {} }
+
+  // وضع القائمة: يجمّع الكتب حسب التصنيف برؤوس أقسام قابلة للطي
+  function renderListGrouped() {
+    const grid = $('#book-grid');
+    renderCursor = curList.length; // لا تحميل تدريجي هنا
+    const groups = new Map();
+    for (const b of curList) { const k = b.category || 'أخرى'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); }
+    const collapsed = getCollapsed();
+    grid.innerHTML = '';
+    for (const [cat, arr] of groups) {
+      const isC = !!collapsed[cat];
+      const h = document.createElement('div');
+      h.className = 'list-section-h' + (isC ? ' collapsed' : '');
+      h.innerHTML = `<span class="ls-chev">▾</span><span class="ls-name">${esc(cat)}</span><span class="ls-count">${arr.length}</span>`;
+      const body = document.createElement('div');
+      body.className = 'list-section-body'; body.hidden = isC;
+      body.innerHTML = arr.map((b) => bookCardHTML(b)).join('');
+      grid.appendChild(h); grid.appendChild(body);
+      wireCards([...body.querySelectorAll('.book-card')]);
+      h.onclick = () => { const c = getCollapsed(); c[cat] = !c[cat]; setCollapsed(c); h.classList.toggle('collapsed', c[cat]); body.hidden = c[cat]; };
+    }
   }
 
   function setView(mode) {
@@ -2067,6 +2095,10 @@ create policy "midad_own_files" on storage.objects for all
     { id: 'wine', label: 'نبيذي', bg: '#160a0e', glow: '#7f2d4a', dot: '#d9a94f' },
     { id: 'charcoal', label: 'فحمي', bg: '#121316', glow: '#4a4f5a', dot: '#d9a94f' },
     { id: 'sepia', label: 'رملي دافئ', bg: '#17120b', glow: '#7f5a2d', dot: '#d9a94f' },
+    { id: 'indigo', label: 'نيلي', bg: '#0c0a1e', glow: '#3d3da5', dot: '#d9a94f' },
+    { id: 'teal', label: 'بحري', bg: '#071518', glow: '#2d7f7a', dot: '#e0b45a' },
+    { id: 'rose', label: 'وردي', bg: '#1a0a12', glow: '#9f2d6a', dot: '#d9a94f' },
+    { id: 'paper', label: 'ورقي فاتح', bg: '#efe7d4', glow: '#d8c49a', dot: '#a9782e' },
   ];
   function applyLibTheme(id) {
     if (id && id !== 'purple') document.documentElement.setAttribute('data-lib-theme', id);
