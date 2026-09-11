@@ -886,6 +886,7 @@ create policy "midad_own_files" on storage.objects for all
       ${b.type === 'pdf' ? '<button data-act="ocr">🔎 استخراج النص (OCR)</button>' : ''}
       ${b.type === 'pdf' ? '<button data-act="totext">📄 أنشئ نسخة نصية</button>' : ''}
       ${b.type === 'text' ? '<button data-act="pdf">🖨 تصدير PDF</button>' : ''}
+      <button data-act="cover">🖼 تغيير الغلاف</button>
       <button data-act="edit">✏️ تعديل البيانات</button>
       <button data-act="export">⬇️ تصدير الملاحظات</button>
       <button data-act="reset">↺ تصفير التقدم</button>
@@ -902,6 +903,7 @@ create policy "midad_own_files" on storage.objects for all
       else if (act === 'ocr') ocrBook(id);
       else if (act === 'totext') createTextFromOcr(id);
       else if (act === 'pdf') exportPdf(id);
+      else if (act === 'cover') changeCover(id);
       else if (act === 'edit') openAddModal(b);
       else if (act === 'export') exportNotes(id);
       else if (act === 'reset') {
@@ -1602,6 +1604,73 @@ create policy "midad_own_files" on storage.objects for all
     $('#cover-url-row').hidden = true;
     $('#cover-url-input').value = '';
     toast('اختير الغلاف من الرابط ✓', 'gold');
+  }
+
+  // جلب صورة من رابط وتحويلها إلى غلاف (مع وسيط CORS احتياطي)
+  async function coverFromUrl(url) {
+    const tryFetch = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); };
+    let blob = null;
+    try { blob = await tryFetch(url); }
+    catch { try { blob = await tryFetch('https://corsproxy.io/?url=' + encodeURIComponent(url)); } catch {} }
+    return blob ? imageToCover(blob) : null;
+  }
+
+  /* ─── تغيير غلاف كتاب (من ملف صورة أو رابط) — اختصار سريع من قائمة الكتاب ─── */
+  async function changeCover(id) {
+    const b = books.find((x) => x.id === id) || (await Store.getBook(id));
+    if (!b) return;
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `<div class="ud-box" style="max-width:400px" role="dialog" aria-modal="true">
+      <div class="ud-icon">🖼</div><h3>تغيير غلاف الكتاب</h3>
+      <div class="cc-prev" id="cc-prev"></div>
+      <div class="cc-actions">
+        <button class="btn-ghost" id="cc-file">🖼 من ملف صورة</button>
+        <button class="btn-ghost" id="cc-url">🔗 من رابط صورة</button>
+      </div>
+      <div class="cc-url-row" id="cc-url-row" hidden>
+        <input id="cc-url-input" type="url" inputmode="url" placeholder="https://… رابط صورة الغلاف">
+        <button class="btn-gold" id="cc-url-go">جلب</button>
+      </div>
+      <div class="ud-actions"><button class="ud-cancel">إغلاق</button>${b.cover ? '<button class="ud-ok" id="cc-reset">↺ غلاف تلقائي</button>' : ''}</div>
+    </div>`;
+    document.body.appendChild(overlay);
+    let pending = b.cover || null;
+    const prev = overlay.querySelector('#cc-prev');
+    const renderPrev = () => { prev.innerHTML = pending ? `<img src="${pending}" alt="">` : coverHTML({ ...b, cover: null }); };
+    renderPrev();
+    const save = async (cover) => {
+      await Store.updateBook(id, { cover: cover || undefined });
+      b.cover = cover || undefined;
+      if (window.Cloud) Cloud.pushBook(id);
+      await refresh();
+    };
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.hidden = true;
+    overlay.appendChild(fileInput);
+    overlay.querySelector('#cc-file').onclick = () => fileInput.click();
+    fileInput.onchange = async () => {
+      const f = fileInput.files[0]; if (!f) return;
+      const c = await imageToCover(f); if (!c) return toast('تعذّرت قراءة الصورة');
+      pending = c; renderPrev(); await save(c); toast('تم تغيير الغلاف ✓', 'gold');
+    };
+    const urlRow = overlay.querySelector('#cc-url-row');
+    overlay.querySelector('#cc-url').onclick = () => { urlRow.hidden = !urlRow.hidden; if (!urlRow.hidden) setTimeout(() => overlay.querySelector('#cc-url-input').focus(), 50); };
+    const doUrl = async () => {
+      const url = overlay.querySelector('#cc-url-input').value.trim();
+      if (!/^https?:\/\/.+/i.test(url)) return toast('أدخل رابط صورة صحيحاً يبدأ بـ https://');
+      const go = overlay.querySelector('#cc-url-go'); const o = go.textContent; go.textContent = '⏳';
+      const c = await coverFromUrl(url); go.textContent = o;
+      if (!c) return toast('تعذّر جلب الصورة — قد يمنع الموقع التحميل المباشر');
+      pending = c; renderPrev(); urlRow.hidden = true; await save(c); toast('تم تغيير الغلاف ✓', 'gold');
+    };
+    overlay.querySelector('#cc-url-go').onclick = doUrl;
+    overlay.querySelector('#cc-url-input').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doUrl(); } };
+    overlay.querySelector('.ud-cancel').onclick = () => overlay.remove();
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    const reset = overlay.querySelector('#cc-reset');
+    if (reset) reset.onclick = async () => { pending = null; renderPrev(); await save(null); toast('عاد الغلاف التلقائي ✓', 'gold'); };
   }
 
   /* استيراد عدة ملفات دفعة واحدة */
