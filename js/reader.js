@@ -432,8 +432,13 @@ const Reader = (() => {
 
   // ═══ قلب واقعي (StPageFlip) لوضع «تقليب ورقي» في PDF ═══
   let pageFlip = null, pfAspect = 1.414, pfBuilding = false;
-  const PF_MAX_PAGES = 240; // فوقها نستخدم قلبنا الخاص (تجنّب بطء/ذاكرة تحضير كل الصفحات)
-  // نستخدم StPageFlip للعرض المزدوج (أفقي) — القلب المفرد (رأسي) يستخدم محرّكنا
+  // تحميل بنافذة متحركة: نبني كل الصفحات كإطارات فارغة (خفيفة)، ونرسم صور نافذة حول الموضع فقط
+  const PF_MAX_PAGES = 1500; // سقف أمان لعدد عناصر DOM (النافذة تحلّ مشكلة الذاكرة/البطء)
+  const PF_WINDOW = 4;       // كم صفحة تُرسَم حول الموضع في كل اتجاه
+  const PF_KEEP = 9;         // أبعد من هذا المدى تُفرَّغ صورها لتحرير الذاكرة
+  let pfLoaded = new Set();  // فهارس الصفحات المرسومة حالياً
+  let pfWinToken = 0;        // لإلغاء تحميل نافذة قديمة عند تغيّر الموضع
+  // نستخدم StPageFlip للعرض المزدوج (أفقي) — القلب المفرد (رأسي/جوال) يستخدم محرّكنا
   const pdfFlipBookActive = () => isPdf && settings.flip === 'flip' && settings.realFlip !== false && pdfZoom <= 1.001 && pageCount <= PF_MAX_PAGES && spreadFits() && !!(window.St && St.PageFlip);
 
   // موجّه العرض: StPageFlip (تقليب ورقي) أو المزدوج أو المفرد
@@ -445,6 +450,7 @@ const Reader = (() => {
   }
 
   function teardownPageFlip() {
+    pfWinToken++; pfLoaded = new Set(); // ألغِ أي تحميل نافذة جارٍ وحرّر التتبّع
     if (pageFlip) { try { pageFlip.destroy(); } catch {} pageFlip = null; }
     const c = $('#r-pageflip'); if (c) { c.hidden = true; c.innerHTML = ''; c.classList.remove('rtl'); }
     $('#reader').classList.remove('pageflip-on');
@@ -502,33 +508,64 @@ const Reader = (() => {
     box.style.width = boxW + 'px'; box.style.height = Math.round(boxH) + 'px';
   }
 
+  // يرسم صور نافذة حول الموضع (المركز أولاً) ويُفرّغ الصفحات البعيدة لتحرير الذاكرة
+  async function ensurePfWindow(centerIdx) {
+    const inner = $('#r-pageflip .pf-inner'); if (!inner) return;
+    const tok = ++pfWinToken;
+    // فرّغ الصور خارج مدى الإبقاء
+    Array.from(pfLoaded).forEach((idx) => {
+      if (idx < centerIdx - PF_KEEP || idx > centerIdx + PF_KEEP) {
+        inner.querySelectorAll('img[data-idx="' + idx + '"]').forEach((im) => im.removeAttribute('src'));
+        pfLoaded.delete(idx);
+      }
+    });
+    // رتّب: المركز ثم الجوار الأقرب فالأبعد (ليجهز التقليب في الاتجاهين والصفحة التالية أثناء الطي)
+    const order = [centerIdx];
+    for (let d = 1; d <= PF_WINDOW; d++) { order.push(centerIdx + d); order.push(centerIdx - d); }
+    for (const idx of order) {
+      if (tok !== pfWinToken) return; // بدأت نافذة أحدث
+      if (idx < 0 || idx >= pageCount || pfLoaded.has(idx)) continue;
+      const imgs = inner.querySelectorAll('img[data-idx="' + idx + '"]');
+      if (!imgs.length) continue;
+      try { const url = await renderPfImage(idx); imgs.forEach((im) => { im.src = url; }); pfLoaded.add(idx); }
+      catch {}
+    }
+  }
+
   async function buildPageFlip(gotoPage) {
     const cont = $('#r-pageflip');
     const targetIdx = Math.max(0, Math.min((gotoPage || pdfPage) - 1, pageCount - 1));
-    if (pageFlip) { pageFlip.turnToPage(targetIdx); return; }
+    if (pageFlip) { pageFlip.turnToPage(targetIdx); ensurePfWindow(targetIdx); return; }
     if (pfBuilding) return;
     pfBuilding = true;
     $('#reader').classList.add('pageflip-on');
     $('#r-canvas-wrap').hidden = true; $('#r-canvas-wrap2').hidden = true;
     $('#reader').classList.remove('pdf-spread');
     cont.hidden = false;
-    cont.innerHTML = '<div class="pf-loading"><div class="disc-spin big"></div><p>جارٍ تحضير الكتاب…</p><div class="pf-prog"><i id="pf-prog-i"></i></div></div>';
+    cont.innerHTML = '<div class="pf-loading"><div class="disc-spin big"></div><p>جارٍ فتح الكتاب…</p></div>';
     const myTok = ++renderToken;
     try {
       const p1 = await pdfDoc.getPage(1); const v = p1.getViewport({ scale: 1 }); pfAspect = v.width / v.height;
-      // حضّر كل الصفحات كصور (StPageFlip يحتاجها مسبقاً)
-      const pages = [];
-      for (let i = 0; i < pageCount; i++) {
-        if (myTok !== renderToken) { pfBuilding = false; return; } // أُغلق/تغيّر الوضع أثناء التحضير
-        const d = document.createElement('div'); d.className = 'pf-page';
-        const img = document.createElement('img'); img.className = 'pf-img'; img.src = await renderPfImage(i);
-        d.appendChild(img); pages.push(d);
-        const pi = $('#pf-prog-i'); if (pi) pi.style.width = Math.round(((i + 1) / pageCount) * 100) + '%';
-      }
-      cont.innerHTML = '';
+      if (myTok !== renderToken) { pfBuilding = false; return; }
+      // ابنِ كل الصفحات كإطارات فارغة (سريع جداً) — تُملأ صورها بالنافذة المتحركة
       const box = document.createElement('div'); box.className = 'pf-box rtl';
       const inner = document.createElement('div'); inner.className = 'pf-inner';
-      pages.forEach((d) => inner.appendChild(d));
+      for (let i = 0; i < pageCount; i++) {
+        const d = document.createElement('div'); d.className = 'pf-page';
+        const img = document.createElement('img'); img.className = 'pf-img'; img.dataset.idx = i;
+        d.appendChild(img); inner.appendChild(d);
+      }
+      // املأ الصفحة الحالية (والمقابلة في العرض المزدوج) قبل التهيئة كي يظهر المحتوى فوراً
+      pfLoaded = new Set();
+      const preIdxs = [targetIdx];
+      if (spreadFits()) preIdxs.push(targetIdx % 2 === 0 ? targetIdx + 1 : targetIdx - 1);
+      for (const i of preIdxs) {
+        if (i < 0 || i >= pageCount || pfLoaded.has(i)) continue;
+        const im = inner.querySelector('img[data-idx="' + i + '"]');
+        if (im) { try { im.src = await renderPfImage(i); pfLoaded.add(i); } catch {} }
+      }
+      if (myTok !== renderToken) { pfBuilding = false; return; }
+      cont.innerHTML = '';
       box.appendChild(inner); cont.appendChild(box);
       sizePfBox(box);
       const bookH = box.clientHeight;
@@ -543,10 +580,12 @@ const Reader = (() => {
       pageFlip.on('flip', (e) => {
         pdfPage = (e.data || 0) + 1;
         state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1;
+        ensurePfWindow(pdfPage - 1);
         afterNavigate();
       });
       wirePfDrag(inner);
       pdfPage = targetIdx + 1;
+      ensurePfWindow(targetIdx); // ارسم بقية النافذة (الجوار) في الخلفية
     } catch (e) { console.error('pageflip', e); teardownPageFlip(); renderPdf(gotoPage || pdfPage); }
     pfBuilding = false;
   }
