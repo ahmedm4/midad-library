@@ -59,12 +59,27 @@ const Discover = (() => {
     { label: '📗 لغة ومعاجم', q: 'معجم OR نحو OR لغة' },
   ];
 
+  // تصنيفات «مكتبة أهل البيت» (ablibrary.net) — كلمات بحث
+  const AB_CATS = [
+    { label: '📿 عقائد', q: 'عقائد' },
+    { label: '⚖️ فقه', q: 'فقه' },
+    { label: '📖 تفسير', q: 'تفسير' },
+    { label: '🕌 حديث', q: 'حديث' },
+    { label: '🏛 تاريخ', q: 'تاريخ' },
+    { label: '🧠 فلسفة', q: 'فلسفة' },
+    { label: '👤 سيرة وتراجم', q: 'سيرة' },
+    { label: '🌿 أخلاق', q: 'أخلاق' },
+    { label: '🪶 أدب ولغة', q: 'أدب OR لغة' },
+  ];
+
   const SOURCES = {
     archive: { name: 'أرشيف الإنترنت', sub: 'آلاف الكتب العربية المجانية — من أرشيف الإنترنت' },
     alfeker: { name: 'شبكة الفكر', sub: 'مكتبة إسلامية متخصّصة — alfeker.net (عبر خادمك)' },
     wikisource: { name: 'ويكي مصدر', sub: 'نصوص التراث العربي الحرّة — ar.wikisource.org' },
+    ablibrary: { name: 'مكتبة أهل البيت', sub: 'مكتبة إسلامية شاملة — ablibrary.net (نصّ كامل قابل للبحث)' },
   };
   const WS_API = 'https://ar.wikisource.org/w/api.php';
+  const AB_GRPC = 'https://grpc.ablibrary.net/ablibrary.services';
 
   let modal = null, grid = null, input = null, statusEl = null, sheet = null, subEl = null, chipsEl = null;
   let curReq = 0, loaded = false, source = 'archive';
@@ -85,6 +100,7 @@ const Discover = (() => {
         <div class="disc-sources">
           <button class="disc-src on" data-src="archive">🌐 ${SOURCES.archive.name}</button>
           <button class="disc-src" data-src="wikisource">📜 ${SOURCES.wikisource.name}</button>
+          <button class="disc-src" data-src="ablibrary">📚 ${SOURCES.ablibrary.name}</button>
           <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
         </div>
         <div class="disc-search">
@@ -115,7 +131,7 @@ const Discover = (() => {
   }
 
   function renderChips() {
-    const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : CATS);
+    const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : CATS));
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
     chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
       chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on'));
@@ -135,6 +151,7 @@ const Discover = (() => {
     if (first) first.classList.add('on');
     if (source === 'alfeker') search('', null, ALFEKER_CATS[0].catid);
     else if (source === 'wikisource') search('', WIKISOURCE_CATS[0].q);
+    else if (source === 'ablibrary') search('', AB_CATS[0].q);
     else search('', CATS[0].q);
   }
 
@@ -188,6 +205,16 @@ const Discover = (() => {
           }
         } catch {}
         if (my !== curReq) return;
+      } else if (source === 'ablibrary') {
+        const term = (q || catQ || '').trim();
+        let books;
+        if (term) { const j = await abCall('search_service.SearchService', 'Search', { query: term }); books = (j.results || []).map((r) => r.book).filter(Boolean); }
+        else { const j = await abCall('book_service.BookService', 'List', {}); books = j.books || []; }
+        if (my !== curReq) return;
+        cards = books.filter(abIsArabic).slice(0, 48).map((b) => ({
+          source: 'ablibrary', id: b.id, title: b.title || 'بدون عنوان', author: abAuthor(b), cover: '',
+          meta: b.pagesCount ? (b.pagesCount + ' صفحة') : '',
+        }));
       } else {
         const term = (q || catQ || '').trim();
         const scope = 'mediatype:texts AND language:(Arabic OR ara)';
@@ -215,7 +242,7 @@ const Discover = (() => {
         <div class="disc-cover">
           <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
           <span class="disc-fallback">${esc((c.title || '؟').trim().slice(0, 1))}</span>
-          ${c.source === 'wikisource' ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
+          ${(c.source === 'wikisource' || c.source === 'ablibrary') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
         <div class="disc-info">
           <b title="${esc(c.title)}">${esc(c.title)}</b>
@@ -225,7 +252,12 @@ const Discover = (() => {
       </button>`).join('');
     grid.querySelectorAll('.disc-card').forEach((el) => {
       const qa = el.querySelector('.disc-quickadd');
-      if (qa) qa.onclick = (e) => { e.stopPropagation(); importWikisource(el.dataset, { title: el.dataset.title }, qa); };
+      if (qa) qa.onclick = (e) => {
+        e.stopPropagation();
+        const meta = { title: el.dataset.title, author: el.dataset.author };
+        if (el.dataset.src === 'ablibrary') importAblibrary(el.dataset, meta, qa);
+        else importWikisource(el.dataset, meta, qa);
+      };
       el.onclick = () => openDetail(el.dataset);
     });
   }
@@ -233,6 +265,7 @@ const Discover = (() => {
   async function openDetail(ds) {
     if (ds.src === 'alfeker') return openAlfekerDetail(ds);
     if (ds.src === 'wikisource') return openWikisourceDetail(ds);
+    if (ds.src === 'ablibrary') return openAblibraryDetail(ds);
     const id = ds.id;
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -563,6 +596,89 @@ const Discover = (() => {
         blob: full, name: title, kind: 'text',
         title, author: 'ويكي مصدر', category: 'أخرى',
       });
+      btn.classList.remove('loading'); btn.classList.add('done');
+      setBtn('✓ أُضيف');
+      Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+      const fmts = sheet.querySelector('.disc-formats');
+      if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
+        const rn = document.createElement('button');
+        rn.className = 'disc-readnow'; rn.innerHTML = '📖 اقرأ الآن';
+        rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+        fmts.prepend(rn);
+      }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
+      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+    }
+  }
+
+  // ── «مكتبة أهل البيت» (ablibrary.net) — عبر Connect/JSON (CORS مفتوح) ──
+  async function abCall(service, method, body) {
+    const r = await fetch(`${AB_GRPC}.${service}/${method}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Connect-Protocol-Version': '1' }, body: JSON.stringify(body),
+    });
+    if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); if (j.message) m = j.message; } catch {} throw new Error(m); }
+    return r.json();
+  }
+  const abAuthor = (b) => ((b.contributors || []).filter((c) => c.role && c.role.slug === 'author').map((c) => c.contributor && c.contributor.name).filter(Boolean).join('، '));
+  const abIsArabic = (b) => (b.languages || []).some((l) => l.id === 'ar');
+
+  async function openAblibraryDetail(ds) {
+    sheet.hidden = false;
+    sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
+    let d;
+    try { const j = await abCall('book_service.BookService', 'Details', { id: ds.id }); d = j.book; }
+    catch (e) { sheet.innerHTML = `<div class="disc-sheet-box"><p>تعذّر جلب التفاصيل: ${esc(e.message || e)}</p><button class="btn-ghost disc-back">رجوع</button></div>`; sheet.querySelector('.disc-back').onclick = closeSheet; return; }
+    const title = d.title || ds.title || 'بدون عنوان';
+    const author = abAuthor(d) || ds.author || '';
+    const cats = (d.categories || []).map((c) => c.name).filter(Boolean).join('، ');
+    const pageUrl = 'https://ablibrary.net/books/' + encodeURIComponent(ds.id);
+    sheet.innerHTML = `
+      <div class="disc-sheet-box">
+        <button class="disc-back" title="رجوع">→ رجوع</button>
+        <div class="disc-detail">
+          <div class="disc-detail-cover no-img"><span class="disc-fallback">${esc(title.trim().slice(0, 1))}</span></div>
+          <div class="disc-detail-meta">
+            <h3>${esc(title)}</h3>
+            ${author ? `<p class="dd-author">${esc(author)}</p>` : ''}
+            <p class="dd-desc">${cats ? 'القسم: ' + esc(cats) + '<br>' : ''}${d.pagesCount ? 'عدد الصفحات: ' + esc(d.pagesCount) : ''}</p>
+            <a class="dd-link" href="${pageUrl}" target="_blank" rel="noopener">↗ افتح الكتاب في مكتبة أهل البيت</a>
+          </div>
+        </div>
+        <div class="disc-formats">
+          <h4>أضِفه إلى مكتبتك كنصّ كامل قابل للبحث:</h4>
+          <button class="disc-import"><span class="di-label">📄 أضِف النص الكامل<em>يُجلب مباشرةً ويُفهرَس للبحث</em></span></button>
+        </div>
+      </div>`;
+    sheet.querySelector('.disc-back').onclick = closeSheet;
+    const ib = sheet.querySelector('.disc-import');
+    ib.onclick = () => importAblibrary(ds, { title, author }, ib);
+  }
+
+  async function importAblibrary(ds, meta, btn) {
+    if (!window.Library || !Library.addRemoteBook) return;
+    const orig = btn.innerHTML;
+    const compact = btn.classList.contains('disc-quickadd');
+    const setBtn = (html) => { btn.innerHTML = compact ? html : `<span class="di-label">${html}</span>`; };
+    btn.disabled = true; btn.classList.add('loading');
+    setBtn('<span class="disc-spin"></span> جارٍ جلب النص…');
+    try {
+      const j = await abCall('book_service.BookService', 'Contents', { bookId: ds.id });
+      const pages = (j.abx && j.abx.pages) || [];
+      if (!pages.length) throw new Error('لا يوجد نصّ متاح لهذا الكتاب');
+      const parts = [];
+      for (const p of pages) {
+        let cs = (p.contents || []).filter((c) => c.languageId === 'ar');
+        if (!cs.length) cs = p.contents || [];
+        cs = cs.slice().sort((a, b) => (a.weight || 0) - (b.weight || 0));
+        const t = cs.map((c) => (c.text && c.text.text) || '').join('\n').trim();
+        if (t) parts.push(t);
+      }
+      const body = parts.join('\n\n');
+      if (!body.trim()) throw new Error('النصّ فارغ');
+      const full = `# ${meta.title}\n\n${body}`;
+      setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
+      const bookId = await Library.addRemoteBook({ blob: full, name: meta.title, kind: 'text', title: meta.title, author: meta.author || '', category: 'أخرى' });
       btn.classList.remove('loading'); btn.classList.add('done');
       setBtn('✓ أُضيف');
       Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
