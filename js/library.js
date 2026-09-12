@@ -2422,26 +2422,46 @@ create policy "midad_own_files" on storage.objects for all
     $('#stats-modal').hidden = false;
   }
 
-  const blobToDataURL = (blob) => new Promise((res) => {
-    const fr = new FileReader();
-    fr.onload = () => res(fr.result);
-    fr.readAsDataURL(blob);
-  });
+  // كل مفاتيح الإعدادات المحلية (midad-*) لتُحفظ وتُستعاد ضمن النسخة الاحتياطية
+  function collectLocalSettings() {
+    const s = {};
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('midad') === 0) s[k] = localStorage.getItem(k); } } catch {}
+    return s;
+  }
 
+  // نسخة احتياطية كاملة كملف ZIP: بيان + ملفات الكتب + النص المفهرس (أخفّ بكثير من base64)
   async function exportBackup() {
     toast('⏳ جارٍ تجهيز النسخة الاحتياطية…');
     try {
+      const zipObj = {};
       const items = [];
       for (const b of books) {
         const payload = await Store.getPayload(b.id);
         const state = await Store.getState(b.id);
-        if (payload instanceof Blob) items.push({ meta: b, state, payloadKind: 'pdf', payload: await blobToDataURL(payload) });
-        else items.push({ meta: b, state, payloadKind: 'text', payload: payload || '' });
+        let deck = null; try { deck = await Store.getDeck(b.id); } catch {}
+        let fulltext = null; try { fulltext = await Store.getFulltext(b.id); } catch {}
+        const it = { meta: b, state, deck: deck || null };
+        if (payload instanceof Blob) {
+          it.payloadKind = 'pdf'; it.payloadFile = `files/${b.id}.pdf`;
+          zipObj[it.payloadFile] = [new Uint8Array(await payload.arrayBuffer()), { level: 0 }]; // PDF مضغوط أصلاً
+        } else {
+          it.payloadKind = 'text'; it.payloadFile = `files/${b.id}.txt`;
+          zipObj[it.payloadFile] = [fflate.strToU8(payload || ''), { level: 8 }];
+        }
+        if (fulltext != null) {
+          it.fulltextFile = `fulltext/${b.id}.txt`;
+          const ft = typeof fulltext === 'string' ? fulltext : JSON.stringify(fulltext);
+          zipObj[it.fulltextFile] = [fflate.strToU8(ft), { level: 8 }];
+          it.fulltextObj = typeof fulltext === 'string' ? 0 : 1; // 1 = كان كائناً (JSON)
+        }
+        items.push(it);
       }
-      const json = JSON.stringify({ app: 'midad', version: 1, exportedAt: Date.now(), books: items });
+      const manifest = { app: 'midad', version: 2, exportedAt: Date.now(), settings: collectLocalSettings(), books: items };
+      zipObj['manifest.json'] = [fflate.strToU8(JSON.stringify(manifest)), { level: 8 }];
+      const zipped = fflate.zipSync(zipObj);
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-      a.download = `مِداد - نسخة احتياطية ${new Date().toISOString().slice(0, 10)}.json`;
+      a.href = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }));
+      a.download = `مِداد - نسخة احتياطية ${new Date().toISOString().slice(0, 10)}.midad.zip`;
       a.click();
       URL.revokeObjectURL(a.href);
       toast(`صُدّرت مكتبتك كاملة (${items.length} كتاباً) 📦`, 'gold');
@@ -2450,7 +2470,11 @@ create policy "midad_own_files" on storage.objects for all
 
   async function importBackup(file) {
     try {
-      const data = JSON.parse(await file.text());
+      const ab = await file.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      if (bytes[0] === 0x50 && bytes[1] === 0x4B) { await importBackupZip(bytes); return; } // ZIP (PK)
+      // نسق قديم (JSON مع base64)
+      const data = JSON.parse(new TextDecoder('utf-8').decode(bytes));
       if (data.app !== 'midad' || !Array.isArray(data.books)) throw new Error('bad format');
       toast(`⏳ جارٍ استيراد ${data.books.length} كتاباً…`);
       let n = 0;
@@ -2465,6 +2489,33 @@ create policy "midad_own_files" on storage.objects for all
       await refresh();
       toast(`استُعيد ${n} كتاباً بكل ملاحظاتها وتقدمها ✓`, 'gold');
     } catch (err) { console.error(err); toast('ملف النسخة الاحتياطية غير صالح'); }
+  }
+
+  async function importBackupZip(bytes) {
+    const files = fflate.unzipSync(bytes);
+    if (!files['manifest.json']) throw new Error('no manifest');
+    const manifest = JSON.parse(fflate.strFromU8(files['manifest.json']));
+    if (manifest.app !== 'midad' || !Array.isArray(manifest.books)) throw new Error('bad format');
+    toast(`⏳ جارٍ استيراد ${manifest.books.length} كتاباً…`);
+    // استعد الإعدادات المحلية (سمة، عرض، أهداف…)
+    if (manifest.settings) { try { for (const k in manifest.settings) localStorage.setItem(k, manifest.settings[k]); } catch {} }
+    let n = 0;
+    for (const it of manifest.books) {
+      const raw = files[it.payloadFile];
+      let payload;
+      if (it.payloadKind === 'pdf') payload = raw ? new Blob([raw], { type: 'application/pdf' }) : null;
+      else payload = raw ? fflate.strFromU8(raw) : '';
+      await Store.addBook(it.meta, payload);
+      if (it.state) { it.state.bookId = it.meta.id; await Store.saveState(it.state); }
+      if (it.deck && it.deck.cards) { try { await Store.saveDeck(it.meta.id, it.deck.cards); } catch {} }
+      if (it.fulltextFile && files[it.fulltextFile]) {
+        try { const ft = fflate.strFromU8(files[it.fulltextFile]); await Store.saveFulltext(it.meta.id, it.fulltextObj ? JSON.parse(ft) : ft); } catch {}
+      }
+      if (window.Cloud) Cloud.pushBook(it.meta.id);
+      n++;
+    }
+    await refresh();
+    toast(`استُعيد ${n} كتاباً بملاحظاتها وبطاقاتها وإعداداتها ✓`, 'gold');
   }
 
   /* ─── أدوات عامة ─── */
