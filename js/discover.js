@@ -88,6 +88,7 @@ const Discover = (() => {
 
   let modal = null, grid = null, input = null, statusEl = null, sheet = null, subEl = null, chipsEl = null;
   let curReq = 0, loaded = false, source = 'archive';
+  let moreFn = null; // دالة «عرض المزيد» للمصدر الحالي (تعيد دفعة بطاقات إضافية أو لا شيء)
 
   function ensureUI() {
     if (modal) return;
@@ -157,7 +158,7 @@ const Discover = (() => {
     if (first) first.classList.add('on');
     if (source === 'alfeker') search('', null, ALFEKER_CATS[0].catid);
     else if (source === 'wikisource') search('', WIKISOURCE_CATS[0].q);
-    else if (source === 'ablibrary') search('', AB_CATS[0].q);
+    else if (source === 'ablibrary') { chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on')); search('', ''); } // تصفّح الكل افتراضياً
     else if (source === 'narjes') search('', NARJES_CATS[0].q);
     else search('', CATS[0].q);
   }
@@ -175,6 +176,7 @@ const Discover = (() => {
   async function search(q, catQ, catid) {
     const my = ++curReq;
     closeSheet();
+    moreFn = null;
     status(`<div class="disc-spin"></div> جارٍ البحث في ${SOURCES[source].name}…`);
     grid.innerHTML = '';
     try {
@@ -214,14 +216,26 @@ const Discover = (() => {
         if (my !== curReq) return;
       } else if (source === 'ablibrary') {
         const term = (q || catQ || '').trim();
-        let books;
-        if (term) { const j = await abCall('search_service.SearchService', 'Search', { query: term }); books = (j.results || []).map((r) => r.book).filter(Boolean); }
-        else { const j = await abCall('book_service.BookService', 'List', {}); books = j.books || []; }
-        if (my !== curReq) return;
-        cards = books.filter(abIsArabic).slice(0, 48).map((b) => ({
-          source: 'ablibrary', id: b.id, title: b.title || 'بدون عنوان', author: abAuthor(b), cover: '',
-          meta: b.pagesCount ? (b.pagesCount + ' صفحة') : '',
-        }));
+        const mapAb = (b) => ({ source: 'ablibrary', id: b.id, title: b.title || 'بدون عنوان', author: abAuthor(b), cover: '', meta: b.pagesCount ? (b.pagesCount + ' صفحة') : '' });
+        if (term) {
+          const j = await abCall('search_service.SearchService', 'Search', { query: term });
+          if (my !== curReq) return;
+          cards = (j.results || []).map((r) => r.book).filter(Boolean).filter(abIsArabic).map(mapAb);
+        } else {
+          // تصفّح كل الكتب مع ترقيم صفحات (الآلاف) عبر زر «عرض المزيد»
+          let page = 1;
+          const j = await abCall('book_service.BookService', 'List', { page: 1, pageSize: 60 });
+          if (my !== curReq) return;
+          const totalPages = (j.pagination && j.pagination.totalPages) || 1;
+          cards = (j.books || []).filter(abIsArabic).map(mapAb);
+          moreFn = async () => {
+            if (page >= totalPages) { moreFn = null; return []; }
+            page++;
+            const jj = await abCall('book_service.BookService', 'List', { page, pageSize: 60 });
+            if (page >= totalPages) moreFn = null;
+            return (jj.books || []).filter(abIsArabic).map(mapAb);
+          };
+        }
       } else if (source === 'narjes') {
         if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) status('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «مكتبة نرجس».'); return; }
         await njEnsureCatalog();
@@ -229,10 +243,10 @@ const Discover = (() => {
         const term = (q || catQ || '').trim().toLowerCase();
         let items = njCatalog;
         if (term) items = njCatalog.filter((it) => (((it.title || '') + ' ' + (it.author || '') + ' ' + (it.leadin || '')).toLowerCase().includes(term)));
-        cards = items.slice(0, 60).map((it) => ({
-          source: 'narjes', id: String(it.id), title: it.title || 'بدون عنوان', author: njAuthor(it),
-          cover: it.thumbnail || it.originalThumbnail || '', meta: njPages(it),
-        }));
+        const mapNj = (it) => ({ source: 'narjes', id: String(it.id), title: it.title || 'بدون عنوان', author: njAuthor(it), cover: it.thumbnail || it.originalThumbnail || '', meta: njPages(it) });
+        let shown = 60;
+        cards = items.slice(0, shown).map(mapNj);
+        if (items.length > shown) moreFn = async () => { const batch = items.slice(shown, shown + 60).map(mapNj); shown += 60; if (shown >= items.length) moreFn = null; return batch; };
       } else {
         const term = (q || catQ || '').trim();
         const scope = 'mediatype:texts AND language:(Arabic OR ara)';
@@ -252,10 +266,7 @@ const Discover = (() => {
     }
   }
 
-  function render(cards) {
-    if (!cards.length) { grid.innerHTML = ''; status('لا توجد نتائج مطابقة — جرّب كلمةً أخرى.'); return; }
-    status('');
-    grid.innerHTML = cards.map((c) => `
+  const cardHTML = (c) => `
       <button class="disc-card" data-src="${c.source}" data-id="${esc(c.id)}" data-title="${esc(c.title)}" data-author="${esc(c.author || '')}" data-cover="${esc(c.cover || '')}">
         <div class="disc-cover">
           <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
@@ -267,8 +278,11 @@ const Discover = (() => {
           <span>${esc(c.author || '—')}</span>
           <i>${esc(c.meta || '')}</i>
         </div>
-      </button>`).join('');
+      </button>`;
+
+  function wireCards() {
     grid.querySelectorAll('.disc-card').forEach((el) => {
+      if (el.__wired) return; el.__wired = true;
       const qa = el.querySelector('.disc-quickadd');
       if (qa) qa.onclick = (e) => {
         e.stopPropagation();
@@ -279,6 +293,34 @@ const Discover = (() => {
       };
       el.onclick = () => openDetail(el.dataset);
     });
+  }
+
+  // زر «عرض المزيد»: يجلب دفعة إضافية من moreFn ويلحقها بالشبكة
+  function refreshMoreButton() {
+    const old = grid.querySelector('.disc-more'); if (old) old.remove();
+    if (!moreFn) return;
+    const btn = document.createElement('button');
+    btn.className = 'disc-more'; btn.textContent = 'عرض المزيد';
+    btn.onclick = async () => {
+      const fn = moreFn; if (!fn) return;
+      btn.disabled = true; btn.textContent = 'جارٍ التحميل…';
+      let more = []; try { more = await fn(); } catch {}
+      if (moreFn !== fn) return; // تغيّر المصدر/البحث أثناء التحميل
+      if (!more || !more.length) { moreFn = null; btn.remove(); return; }
+      btn.insertAdjacentHTML('beforebegin', more.map(cardHTML).join(''));
+      wireCards();
+      btn.disabled = false; btn.textContent = 'عرض المزيد';
+      refreshMoreButton();
+    };
+    grid.appendChild(btn);
+  }
+
+  function render(cards) {
+    if (!cards.length) { grid.innerHTML = ''; status('لا توجد نتائج مطابقة — جرّب كلمةً أخرى.'); return; }
+    status('');
+    grid.innerHTML = cards.map(cardHTML).join('');
+    wireCards();
+    refreshMoreButton();
   }
 
   async function openDetail(ds) {

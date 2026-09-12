@@ -337,6 +337,13 @@ input, select, textarea { font-family: inherit; }
 .disc-info span { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .disc-info i { font-size: 10.5px; color: var(--gold-soft); opacity: .8; font-style: normal; }
+/* زر «عرض المزيد» في شبكة الاستكشاف */
+.disc-more { grid-column: 1 / -1; justify-self: center; margin: 10px auto 4px; padding: 10px 26px;
+  font-family: inherit; font-size: 13px; font-weight: 700; color: var(--cream);
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line); border-radius: 999px; cursor: pointer;
+  transition: background .15s, border-color .15s; }
+.disc-more:hover { background: rgba(217,169,79,.14); border-color: rgba(217,169,79,.5); }
+.disc-more:disabled { opacity: .6; cursor: default; }
 
 .disc-spin { width: 15px; height: 15px; border: 2px solid rgba(217,169,79,.3); border-top-color: var(--gold);
   border-radius: 50%; animation: disc-rot .7s linear infinite; display: inline-block; vertical-align: middle; }
@@ -354,7 +361,7 @@ input, select, textarea { font-family: inherit; }
   color: var(--muted); background: rgba(255,255,255,.05); border: 1px solid var(--card-line); cursor: pointer; }
 .disc-back:hover { color: var(--cream); }
 .disc-detail { display: flex; gap: 18px; margin-bottom: 18px; }
-.disc-detail-cover { flex: none; width: 120px; aspect-ratio: 3/4.2; border-radius: 10px; overflow: hidden;
+.disc-detail-cover { position: relative; flex: none; width: 120px; aspect-ratio: 3/4.2; border-radius: 10px; overflow: hidden;
   background: #241c3a; border: 1px solid var(--card-line); }
 .disc-detail-cover img { width: 100%; height: 100%; object-fit: cover; }
 .disc-detail-meta h3 { font-size: 18px; color: var(--cream); font-weight: 800; line-height: 1.4; }
