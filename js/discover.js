@@ -176,6 +176,18 @@ const Discover = (() => {
           cards.push({ source: 'wikisource', id: root, title: root, author: '', cover: '', meta: '' });
           if (cards.length >= 48) break;
         }
+        // أغلفة حقيقية عبر PageImages (متوفّرة لبعض الأعمال، وإلا يبقى الحرف البديل)
+        try {
+          const titles = cards.map((c) => c.id);
+          for (let i = 0; i < titles.length; i += 40) {
+            const batch = titles.slice(i, i + 40);
+            const pj = await (await fetch(`${WS_API}?action=query&prop=pageimages&piprop=thumbnail&pithumbsize=300&pilimit=40&titles=${encodeURIComponent(batch.join('|'))}&format=json&origin=*`)).json();
+            const pages = pj.query && pj.query.pages || {};
+            const byTitle = {}; for (const k in pages) { const p = pages[k]; if (p.title && p.thumbnail) byTitle[p.title] = p.thumbnail.source; }
+            cards.forEach((c) => { if (byTitle[c.id]) c.cover = byTitle[c.id]; });
+          }
+        } catch {}
+        if (my !== curReq) return;
       } else {
         const term = (q || catQ || '').trim();
         const scope = 'mediatype:texts AND language:(Arabic OR ara)';
@@ -201,8 +213,9 @@ const Discover = (() => {
     grid.innerHTML = cards.map((c) => `
       <button class="disc-card" data-src="${c.source}" data-id="${esc(c.id)}" data-title="${esc(c.title)}" data-author="${esc(c.author || '')}" data-cover="${esc(c.cover || '')}">
         <div class="disc-cover">
-          <img loading="lazy" src="${esc(c.cover || '')}" alt="" onerror="this.parentNode.classList.add('no-img')">
+          <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
           <span class="disc-fallback">${esc((c.title || '؟').trim().slice(0, 1))}</span>
+          ${c.source === 'wikisource' ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
         <div class="disc-info">
           <b title="${esc(c.title)}">${esc(c.title)}</b>
@@ -210,7 +223,11 @@ const Discover = (() => {
           <i>${esc(c.meta || '')}</i>
         </div>
       </button>`).join('');
-    grid.querySelectorAll('.disc-card').forEach((el) => el.onclick = () => openDetail(el.dataset));
+    grid.querySelectorAll('.disc-card').forEach((el) => {
+      const qa = el.querySelector('.disc-quickadd');
+      if (qa) qa.onclick = (e) => { e.stopPropagation(); importWikisource(el.dataset, { title: el.dataset.title }, qa); };
+      el.onclick = () => openDetail(el.dataset);
+    });
   }
 
   async function openDetail(ds) {
@@ -491,8 +508,10 @@ const Discover = (() => {
     if (!window.Library || !Library.addRemoteBook) return;
     const title = ds.id;
     const orig = btn.innerHTML;
+    const compact = btn.classList.contains('disc-quickadd'); // زر مصغّر على البطاقة
+    const setBtn = (html) => { btn.innerHTML = compact ? html : `<span class="di-label">${html}</span>`; };
     btn.disabled = true; btn.classList.add('loading');
-    btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ تجهيز الفهرس…</span>`;
+    setBtn('<span class="disc-spin"></span> تجهيز…');
     try {
       // 1) ترتيب القراءة من روابط الصفحة الرئيسة
       let order = [];
@@ -529,7 +548,7 @@ const Discover = (() => {
         for (let i = 0; i < order.length; i++) {
           let txt = ''; try { txt = await wsPageText(order[i]); } catch {}
           if (txt) parts.push(`# ${order[i].slice(title.length + 1)}\n\n${txt}`);
-          btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ الجلب… ${i + 1}/${order.length}</span>`;
+          setBtn(`<span class="disc-spin"></span> ${i + 1}/${order.length}`);
           if (i < order.length - 1) await sleep(60); // تخفيف الضغط على الخادم
         }
         body = parts.join('\n\n');
@@ -539,13 +558,13 @@ const Discover = (() => {
       if (!body.trim()) throw new Error('لم يُعثر على نصّ قابل للقراءة');
       const full = `# ${title}\n\n${body}`;
 
-      btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ الإضافة…</span>`;
+      setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
       const bookId = await Library.addRemoteBook({
         blob: full, name: title, kind: 'text',
         title, author: 'ويكي مصدر', category: 'أخرى',
       });
       btn.classList.remove('loading'); btn.classList.add('done');
-      btn.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;
+      setBtn('✓ أُضيف');
       Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
       const fmts = sheet.querySelector('.disc-formats');
       if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
