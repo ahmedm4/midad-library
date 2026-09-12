@@ -270,7 +270,7 @@ const Discover = (() => {
       <button class="disc-card" data-src="${c.source}" data-id="${esc(c.id)}" data-title="${esc(c.title)}" data-author="${esc(c.author || '')}" data-cover="${esc(c.cover || '')}">
         <div class="disc-cover">
           <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
-          <span class="disc-fallback">${esc((c.title || '؟').trim().slice(0, 1))}</span>
+          <span class="disc-fallback gen">${esc((c.title || '؟').trim())}</span>
           ${(c.source === 'wikisource' || c.source === 'ablibrary' || c.source === 'narjes') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
         <div class="disc-info">

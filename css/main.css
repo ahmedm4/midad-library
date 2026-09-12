@@ -321,6 +321,11 @@ input, select, textarea { font-family: inherit; }
 .disc-cover img { width: 100%; height: 100%; object-fit: cover; display: block; position: relative; z-index: 2; }
 .disc-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-family: 'Amiri', serif; font-size: 40px; color: var(--gold-soft); opacity: .5; z-index: 1; }
+/* غلاف مُولّد من العنوان (للمصادر بلا صور غلاف مثل مكتبة أهل البيت) */
+.disc-fallback.gen { opacity: 1; padding: 14px 12px; font-size: 15px; line-height: 1.6; font-weight: 700; text-align: center;
+  color: #e7d6ad; background: linear-gradient(155deg, #2b2247 0%, #1b1531 100%);
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical;
+  box-shadow: inset 0 0 0 1px rgba(217,169,79,.22), inset 0 0 40px rgba(0,0,0,.25); }
 /* زر «أضف» المباشر على بطاقة الاستكشاف */
 .disc-quickadd { position: absolute; bottom: 6px; left: 6px; right: 6px; z-index: 3;
   display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px;
