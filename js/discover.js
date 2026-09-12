@@ -694,6 +694,7 @@ const Discover = (() => {
     const title = d.title || ds.title || 'بدون عنوان';
     const author = abAuthor(d) || ds.author || '';
     const cats = (d.categories || []).map((c) => c.name).filter(Boolean).join('، ');
+    const hasPdf = (d.attachments || []).some((a) => a.context === 'BOOK_ATTACHMENT_CONTEXT_PDF');
     const pageUrl = 'https://ablibrary.net/books/' + encodeURIComponent(ds.id);
     sheet.innerHTML = `
       <div class="disc-sheet-box">
@@ -708,13 +709,49 @@ const Discover = (() => {
           </div>
         </div>
         <div class="disc-formats">
-          <h4>أضِفه إلى مكتبتك كنصّ كامل قابل للبحث:</h4>
-          <button class="disc-import"><span class="di-label">📄 أضِف النص الكامل<em>يُجلب مباشرةً ويُفهرَس للبحث</em></span></button>
+          <h4>اختر صيغة الإضافة:</h4>
+          <button class="disc-import" data-fmt="text"><span class="di-label">📄 النص الكامل<em>قابل للبحث ويتكيّف مع الخط والسمة — الأفضل للقراءة</em></span></button>
+          ${hasPdf ? `<button class="disc-import" data-fmt="pdf"><span class="di-label">📕 نسخة PDF مصوّرة<em>وفيّة للأصل — أثقل حجماً</em></span></button>` : ''}
         </div>
       </div>`;
     sheet.querySelector('.disc-back').onclick = closeSheet;
-    const ib = sheet.querySelector('.disc-import');
-    ib.onclick = () => importAblibrary(ds, { title, author }, ib);
+    sheet.querySelectorAll('.disc-import').forEach((ib) => {
+      ib.onclick = () => (ib.dataset.fmt === 'pdf' ? importAblibraryPdf(ds, { title, author }, ib) : importAblibrary(ds, { title, author }, ib));
+    });
+  }
+
+  async function importAblibraryPdf(ds, meta, btn) {
+    if (!window.Library || !Library.addRemoteBook) return;
+    const orig = btn.innerHTML;
+    const compact = btn.classList.contains('disc-quickadd');
+    const setBtn = (html) => { btn.innerHTML = compact ? html : `<span class="di-label">${html}</span>`; };
+    btn.disabled = true; btn.classList.add('loading');
+    setBtn('<span class="disc-spin"></span> جارٍ تنزيل PDF…');
+    try {
+      const url = 'https://grpc.ablibrary.net/download/pdf/' + encodeURIComponent(ds.id);
+      let blob = null;
+      try { const r = await fetch(url); if (r.ok && /pdf/i.test(r.headers.get('content-type') || '')) blob = await r.blob(); } catch {}
+      // احتياط: عبر خادمك إن مُنع الجلب المباشر
+      if (!blob && window.Cloud && Cloud.invokeFnRaw) {
+        try { const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url }); const ct = r.headers.get('content-type') || ''; if (r.ok && !/json/i.test(ct)) blob = await r.blob(); } catch {}
+      }
+      if (!blob) throw new Error('تعذّر تنزيل ملف PDF لهذا الكتاب');
+      setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
+      const bookId = await Library.addRemoteBook({ blob, name: meta.title, kind: 'pdf', title: meta.title, author: meta.author || '', category: 'أخرى' });
+      btn.classList.remove('loading'); btn.classList.add('done');
+      setBtn('✓ أُضيف');
+      Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+      const fmts = sheet.querySelector('.disc-formats');
+      if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
+        const rn = document.createElement('button');
+        rn.className = 'disc-readnow'; rn.innerHTML = '📖 اقرأ الآن';
+        rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+        fmts.prepend(rn);
+      }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
+      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+    }
   }
 
   async function importAblibrary(ds, meta, btn) {
