@@ -72,14 +72,19 @@ const Discover = (() => {
     { label: '🪶 أدب ولغة', q: 'أدب OR لغة' },
   ];
 
+  const NARJES_CATS = [{ label: '📚 كل الكتب', q: '' }];
+
   const SOURCES = {
     archive: { name: 'أرشيف الإنترنت', sub: 'آلاف الكتب العربية المجانية — من أرشيف الإنترنت' },
     alfeker: { name: 'شبكة الفكر', sub: 'مكتبة إسلامية متخصّصة — alfeker.net (عبر خادمك)' },
     wikisource: { name: 'ويكي مصدر', sub: 'نصوص التراث العربي الحرّة — ar.wikisource.org' },
     ablibrary: { name: 'مكتبة أهل البيت', sub: 'مكتبة إسلامية شاملة — ablibrary.net (نصّ كامل قابل للبحث)' },
+    narjes: { name: 'مكتبة نرجس', sub: 'كتب عربية مصوّرة (PDF) — narjeslibrary.com (عبر خادمك)' },
   };
   const WS_API = 'https://ar.wikisource.org/w/api.php';
   const AB_GRPC = 'https://grpc.ablibrary.net/ablibrary.services';
+  const NJ_SITE = '2015198', NJ_SEC = '30705272'; // معرّفات مكتبة نرجس على منصّة ww-api
+  let njCatalog = [], njLoaded = false;
 
   let modal = null, grid = null, input = null, statusEl = null, sheet = null, subEl = null, chipsEl = null;
   let curReq = 0, loaded = false, source = 'archive';
@@ -101,6 +106,7 @@ const Discover = (() => {
           <button class="disc-src on" data-src="archive">🌐 ${SOURCES.archive.name}</button>
           <button class="disc-src" data-src="wikisource">📜 ${SOURCES.wikisource.name}</button>
           <button class="disc-src" data-src="ablibrary">📚 ${SOURCES.ablibrary.name}</button>
+          <button class="disc-src" data-src="narjes">📕 ${SOURCES.narjes.name}</button>
           <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
         </div>
         <div class="disc-search">
@@ -131,7 +137,7 @@ const Discover = (() => {
   }
 
   function renderChips() {
-    const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : CATS));
+    const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : (source === 'narjes' ? NARJES_CATS : CATS)));
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
     chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
       chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on'));
@@ -152,6 +158,7 @@ const Discover = (() => {
     if (source === 'alfeker') search('', null, ALFEKER_CATS[0].catid);
     else if (source === 'wikisource') search('', WIKISOURCE_CATS[0].q);
     else if (source === 'ablibrary') search('', AB_CATS[0].q);
+    else if (source === 'narjes') search('', NARJES_CATS[0].q);
     else search('', CATS[0].q);
   }
 
@@ -215,6 +222,17 @@ const Discover = (() => {
           source: 'ablibrary', id: b.id, title: b.title || 'بدون عنوان', author: abAuthor(b), cover: '',
           meta: b.pagesCount ? (b.pagesCount + ' صفحة') : '',
         }));
+      } else if (source === 'narjes') {
+        if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) status('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «مكتبة نرجس».'); return; }
+        await njEnsureCatalog();
+        if (my !== curReq) return;
+        const term = (q || catQ || '').trim().toLowerCase();
+        let items = njCatalog;
+        if (term) items = njCatalog.filter((it) => (((it.title || '') + ' ' + (it.author || '') + ' ' + (it.leadin || '')).toLowerCase().includes(term)));
+        cards = items.slice(0, 60).map((it) => ({
+          source: 'narjes', id: String(it.id), title: it.title || 'بدون عنوان', author: njAuthor(it),
+          cover: it.thumbnail || it.originalThumbnail || '', meta: njPages(it),
+        }));
       } else {
         const term = (q || catQ || '').trim();
         const scope = 'mediatype:texts AND language:(Arabic OR ara)';
@@ -242,7 +260,7 @@ const Discover = (() => {
         <div class="disc-cover">
           <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
           <span class="disc-fallback">${esc((c.title || '؟').trim().slice(0, 1))}</span>
-          ${(c.source === 'wikisource' || c.source === 'ablibrary') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
+          ${(c.source === 'wikisource' || c.source === 'ablibrary' || c.source === 'narjes') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
         <div class="disc-info">
           <b title="${esc(c.title)}">${esc(c.title)}</b>
@@ -256,6 +274,7 @@ const Discover = (() => {
         e.stopPropagation();
         const meta = { title: el.dataset.title, author: el.dataset.author };
         if (el.dataset.src === 'ablibrary') importAblibrary(el.dataset, meta, qa);
+        else if (el.dataset.src === 'narjes') importNarjes(el.dataset, meta, qa);
         else importWikisource(el.dataset, meta, qa);
       };
       el.onclick = () => openDetail(el.dataset);
@@ -266,6 +285,7 @@ const Discover = (() => {
     if (ds.src === 'alfeker') return openAlfekerDetail(ds);
     if (ds.src === 'wikisource') return openWikisourceDetail(ds);
     if (ds.src === 'ablibrary') return openAblibraryDetail(ds);
+    if (ds.src === 'narjes') return openNarjesDetail(ds);
     const id = ds.id;
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -679,6 +699,92 @@ const Discover = (() => {
       const full = `# ${meta.title}\n\n${body}`;
       setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
       const bookId = await Library.addRemoteBook({ blob: full, name: meta.title, kind: 'text', title: meta.title, author: meta.author || '', category: 'أخرى' });
+      btn.classList.remove('loading'); btn.classList.add('done');
+      setBtn('✓ أُضيف');
+      Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+      const fmts = sheet.querySelector('.disc-formats');
+      if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
+        const rn = document.createElement('button');
+        rn.className = 'disc-readnow'; rn.innerHTML = '📖 اقرأ الآن';
+        rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+        fmts.prepend(rn);
+      }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
+      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+    }
+  }
+
+  // ── «مكتبة نرجس» (narjeslibrary.com على منصّة ww-api) — عبر خادمك (بلا CORS) ──
+  const njAuthor = (it) => { const m = (it.leadin || '').match(/المؤلف\s*:?\s*(.+)/); return m ? m[1].trim().split(/[\r\n]/)[0] : ''; };
+  const njPages = (it) => { const m = (it.leadin || '').match(/عدد\s*الصفحات\s*:?\s*(\d+)/); return m ? (m[1] + ' صفحة') : ''; };
+
+  async function njProxyJson(url) {
+    if (!window.Cloud || !Cloud.invokeFnRaw) throw new Error('فعّل المزامنة السحابية أولاً');
+    const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url });
+    const ct = r.headers.get('content-type') || '';
+    if (!/json/i.test(ct)) { let m = 'تعذّر الجلب'; try { const j = await r.json(); if (j.error) m = j.error; } catch {} throw new Error(m); }
+    return r.json();
+  }
+
+  async function njEnsureCatalog() {
+    if (njLoaded) return;
+    let url = `https://api.ww-api.com/front/get_items/${NJ_SITE}/${NJ_SEC}/?category_id=0&per_page=48`;
+    const all = []; let pages = 0;
+    while (url && pages < 6) { const j = await njProxyJson(url); (j.items || []).forEach((it) => all.push(it)); url = j.next_page; pages++; }
+    njCatalog = all; njLoaded = true;
+  }
+
+  async function openNarjesDetail(ds) {
+    const item = njCatalog.find((x) => String(x.id) === String(ds.id)) || {};
+    const title = ds.title || item.title || 'بدون عنوان';
+    const author = njAuthor(item) || ds.author || '';
+    const cover = ds.cover || item.originalThumbnail || item.thumbnail || '';
+    const desc = (item.leadin || item.summary || '').replace(/\r/g, '').slice(0, 400);
+    sheet.hidden = false;
+    sheet.innerHTML = `
+      <div class="disc-sheet-box">
+        <button class="disc-back" title="رجوع">→ رجوع</button>
+        <div class="disc-detail">
+          <div class="disc-detail-cover${cover ? '' : ' no-img'}">${cover ? `<img src="${esc(cover)}" alt="" onerror="this.style.display='none'">` : `<span class="disc-fallback">${esc(title.trim().slice(0, 1))}</span>`}</div>
+          <div class="disc-detail-meta">
+            <h3>${esc(title)}</h3>
+            ${author ? `<p class="dd-author">${esc(author)}</p>` : ''}
+            ${desc ? `<p class="dd-desc">${esc(desc)}</p>` : ''}
+            ${item.url ? `<a class="dd-link" href="${esc(item.url)}" target="_blank" rel="noopener">↗ افتح الكتاب في مكتبة نرجس</a>` : ''}
+          </div>
+        </div>
+        <div class="disc-formats">
+          <h4>أضِفه إلى مكتبتك (PDF مصوّر):</h4>
+          <button class="disc-import"><span class="di-label">📕 أضِف الكتاب<em>يُنزَّل عبر خادمك ويُضاف كـ PDF</em></span></button>
+        </div>
+      </div>`;
+    sheet.querySelector('.disc-back').onclick = closeSheet;
+    const ib = sheet.querySelector('.disc-import');
+    ib.onclick = () => importNarjes(ds, { title, author, cover }, ib);
+  }
+
+  async function importNarjes(ds, meta, btn) {
+    if (!window.Library || !Library.addRemoteBook) return;
+    const orig = btn.innerHTML;
+    const compact = btn.classList.contains('disc-quickadd');
+    const setBtn = (html) => { btn.innerHTML = compact ? html : `<span class="di-label">${html}</span>`; };
+    btn.disabled = true; btn.classList.add('loading');
+    setBtn('<span class="disc-spin"></span> جارٍ التحضير…');
+    try {
+      let item = njCatalog.find((x) => String(x.id) === String(ds.id));
+      let content = item && item.content;
+      if (!content) { const j = await njProxyJson(`https://api.ww-api.com/front/get_item/${NJ_SITE}/${NJ_SEC}/${ds.id}/`); item = (j.items || [])[0] || {}; content = item.content || ''; }
+      const m = (content || '').match(/apiv3\/attachment\/download\/(\d+)/);
+      if (!m) throw new Error('لا يوجد ملف قابل للتنزيل لهذا الكتاب');
+      setBtn('<span class="disc-spin"></span> جارٍ التنزيل…');
+      const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url: `https://www.narjeslibrary.com/apiv3/attachment/download/${m[1]}/` });
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok || /application\/json/i.test(ct)) { let msg = 'تعذّر تنزيل الملف'; try { const j = await r.json(); if (j.error) msg = j.error; } catch {} throw new Error(msg); }
+      const blob = await r.blob();
+      setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
+      const cover = (ds.cover || (item && (item.originalThumbnail || item.thumbnail)) || '');
+      const bookId = await Library.addRemoteBook({ blob, name: meta.title, kind: 'pdf', title: meta.title, author: meta.author || njAuthor(item || {}) || '', category: 'أخرى', cover });
       btn.classList.remove('loading'); btn.classList.add('done');
       setBtn('✓ أُضيف');
       Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
