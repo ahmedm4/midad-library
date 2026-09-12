@@ -1306,9 +1306,50 @@ const Reader = (() => {
     });
   }
 
+  // نصّ الفصل/القسم الحالي (نصي: من عنوان لعنوان؛ PDF: نطاق صفحات الفصل أو نافذة حوله)
+  async function currentChapterText() {
+    if (!isPdf && tocItems.length) {
+      let idx = 0; tocItems.forEach((t, i) => { if (t.el && elementPage(t.el) <= curPage) idx = i; });
+      const startEl = tocItems[idx] && tocItems[idx].el, endEl = tocItems[idx + 1] && tocItems[idx + 1].el;
+      if (startEl) {
+        let txt = '', node = startEl;
+        while (node && node !== endEl) { txt += (node.textContent || '') + '\n'; node = node.nextElementSibling; }
+        return { label: tocItems[idx].label, text: txt };
+      }
+    }
+    if (isPdf) {
+      try { await Library.getBookText(book.id); } catch {} // يضمن فهرسة النص + pageStarts
+      const s = await Store.getFulltext(book.id);
+      if (s && s.text) {
+        const ps = s.pageStarts || [];
+        if (ps.length && tocItems.length) {
+          let idx = 0; tocItems.forEach((t, i) => { if (t.page && t.page <= pdfPage) idx = i; });
+          const sp = tocItems[idx].page || 1, ep = (tocItems[idx + 1] && tocItems[idx + 1].page) || (ps.length + 1);
+          const a = ps[sp - 1] || 0, e = ps[ep - 1] != null ? ps[ep - 1] : s.text.length;
+          return { label: tocItems[idx].label, text: s.text.slice(a, e) };
+        }
+        if (ps.length) { // بلا فهرس: نافذة صفحات حول الموضع
+          const lo = Math.max(0, pdfPage - 11), hi = Math.min(ps.length - 1, pdfPage + 9);
+          const a = ps[lo] || 0, e = ps[hi + 1] != null ? ps[hi + 1] : s.text.length;
+          return { label: `صفحات ${lo + 1}–${hi + 1}`, text: s.text.slice(a, e) };
+        }
+        return { label: '', text: s.text };
+      }
+    }
+    // نصي بلا فهرس
+    try { const all = await Library.getBookText(book.id); if (all) return { label: '', text: all }; } catch {}
+    return null;
+  }
+
+  // نصّ تظليلات القارئ (نصية + PDF) مع ملاحظاته — لتوليد بطاقات منها
+  function highlightsText() {
+    const hs = [...(state.highlights || []), ...(state.pdfHighlights || [])];
+    return hs.map((h) => { let s = (h.text || '').trim(); if (h.note) s += `\n(ملاحظتي: ${h.note})`; return s; }).filter(Boolean).join('\n\n---\n\n');
+  }
+
   async function runAI(action, extra = {}) {
     if (aiBusy) return;
-    const labels = { summarize: '📄 لخّص الكتاب', keypoints: '💡 أبرز نقاط الكتاب', flashcards: '🃏 بطاقات مراجعة', quiz: '📝 اختبرني' };
+    const labels = { summarize: '📄 لخّص الكتاب', chapter: '📑 لخّص هذا الفصل', keypoints: '💡 أبرز نقاط الكتاب', flashcards: '🃏 بطاقات من الكتاب', hlcards: '🖍 بطاقات من تظليلاتي', quiz: '📝 اختبرني' };
     if (action === 'ask') {
       const q = $('#ai-input').value.trim();
       if (!q) return;
@@ -1321,12 +1362,21 @@ const Reader = (() => {
     const loading = addAiMsg('ai loading', '<span class="ai-typing"><i></i><i></i><i></i></span>');
     aiBusy = true;
     try {
-      const body = { action, title: book.title, question: extra.question || '' };
-      if (action === 'explain') body.text = extra.selection || '';
-      else body.text = await Library.getBookText(book.id);
+      let body;
+      if (action === 'explain') body = { action, title: book.title, text: extra.selection || '' };
+      else if (action === 'chapter') {
+        const ch = await currentChapterText();
+        if (!ch || !ch.text.trim()) { loading.classList.remove('loading'); loading.innerHTML = 'تعذّر تحديد نصّ الفصل الحالي — إن كان الكتاب مصوّراً فاستخرج نصّه أولاً.'; return; }
+        body = { action: 'sumtext', title: book.title, text: `لخّص القسم${ch.label ? ` «${ch.label}»` : ''} من كتاب «${book.title}» تلخيصاً وافياً: الفكرة العامة، ثم أبرز الأفكار في نقاط، ثم خلاصة قصيرة.\n\n=== نص القسم ===\n${ch.text.slice(0, 120000)}` };
+      } else if (action === 'hlcards') {
+        const t = highlightsText();
+        if (!t) { loading.classList.remove('loading'); loading.innerHTML = 'لا توجد تظليلات بعد. ظلّل مقاطع مهمّة أثناء القراءة ثم أنشئ منها بطاقات.'; return; }
+        body = { action: 'flashcards', title: book.title, text: t };
+      } else if (action === 'ask') body = { action, title: book.title, question: extra.question || '', text: await Library.getBookText(book.id) };
+      else body = { action, title: book.title, text: await Library.getBookText(book.id) };
       const res = await Cloud.aiInvoke(body);
       loading.classList.remove('loading');
-      if (action === 'flashcards') renderFlashcards(loading, res);
+      if (action === 'flashcards' || action === 'hlcards') renderFlashcards(loading, res);
       else if (action === 'quiz') renderQuiz(loading, res);
       else loading.innerHTML = mdToHtml(res);
     } catch (e) {
