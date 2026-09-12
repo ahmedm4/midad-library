@@ -46,10 +46,25 @@ const Discover = (() => {
     { label: '🗺 التاريخ', catid: '64' },
   ];
 
+  // تصنيفات «ويكي مصدر» — كلمات بحث في ar.wikisource.org
+  const WIKISOURCE_CATS = [
+    { label: '📖 قصص وروايات', q: 'رواية OR قصة' },
+    { label: '🪶 شعر ودواوين', q: 'ديوان OR شعر' },
+    { label: '🏛 تاريخ', q: 'تاريخ' },
+    { label: '🧠 فلسفة ومنطق', q: 'فلسفة OR منطق' },
+    { label: '📜 تراث وأدب', q: 'أدب OR مقامات OR رسائل' },
+    { label: '🕌 دين', q: 'تفسير OR فقه OR حديث' },
+    { label: '👤 تراجم وسير', q: 'سيرة OR ترجمة' },
+    { label: '🌍 رحلات', q: 'رحلة OR رحلات' },
+    { label: '📗 لغة ومعاجم', q: 'معجم OR نحو OR لغة' },
+  ];
+
   const SOURCES = {
     archive: { name: 'أرشيف الإنترنت', sub: 'آلاف الكتب العربية المجانية — من أرشيف الإنترنت' },
     alfeker: { name: 'شبكة الفكر', sub: 'مكتبة إسلامية متخصّصة — alfeker.net (عبر خادمك)' },
+    wikisource: { name: 'ويكي مصدر', sub: 'نصوص التراث العربي الحرّة — ar.wikisource.org' },
   };
+  const WS_API = 'https://ar.wikisource.org/w/api.php';
 
   let modal = null, grid = null, input = null, statusEl = null, sheet = null, subEl = null, chipsEl = null;
   let curReq = 0, loaded = false, source = 'archive';
@@ -69,6 +84,7 @@ const Discover = (() => {
         </div>
         <div class="disc-sources">
           <button class="disc-src on" data-src="archive">🌐 ${SOURCES.archive.name}</button>
+          <button class="disc-src" data-src="wikisource">📜 ${SOURCES.wikisource.name}</button>
           <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
         </div>
         <div class="disc-search">
@@ -99,7 +115,7 @@ const Discover = (() => {
   }
 
   function renderChips() {
-    const cats = source === 'alfeker' ? ALFEKER_CATS : CATS;
+    const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : CATS);
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
     chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
       chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on'));
@@ -118,6 +134,7 @@ const Discover = (() => {
     const first = chipsEl.querySelector('.disc-chip');
     if (first) first.classList.add('on');
     if (source === 'alfeker') search('', null, ALFEKER_CATS[0].catid);
+    else if (source === 'wikisource') search('', WIKISOURCE_CATS[0].q);
     else search('', CATS[0].q);
   }
 
@@ -145,6 +162,20 @@ const Discover = (() => {
         if (my !== curReq) return;
         // استخدم الغلاف الكامل بدل المصغّرة المنخفضة الدقة (…/.thumb/… → …/…)
         cards = (data.books || []).map((b) => ({ source: 'alfeker', id: b.id, title: b.title, author: b.author, cover: (b.cover || '').replace('/.thumb/', '/'), meta: b.views ? ('👁 ' + fmtNum(b.views)) : '' }));
+      } else if (source === 'wikisource') {
+        const term = (q || catQ || '').trim() || 'كتاب';
+        const url = `${WS_API}?action=query&list=search&srsearch=${encodeURIComponent(term)}&srnamespace=0&srlimit=150&format=json&origin=*`;
+        const d = await (await fetch(url)).json();
+        if (my !== curReq) return;
+        // نتائج البحث غالباً فصول فرعية؛ نأخذ العمل الجذر (قبل أول «/») ونزيل التكرار لتظهر الكتب
+        const seen = new Set(); cards = [];
+        for (const h of (d.query && d.query.search || [])) {
+          const root = h.title.split('/')[0].trim();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          cards.push({ source: 'wikisource', id: root, title: root, author: '', cover: '', meta: '' });
+          if (cards.length >= 48) break;
+        }
       } else {
         const term = (q || catQ || '').trim();
         const scope = 'mediatype:texts AND language:(Arabic OR ara)';
@@ -184,6 +215,7 @@ const Discover = (() => {
 
   async function openDetail(ds) {
     if (ds.src === 'alfeker') return openAlfekerDetail(ds);
+    if (ds.src === 'wikisource') return openWikisourceDetail(ds);
     const id = ds.id;
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -382,6 +414,135 @@ const Discover = (() => {
       const bookId = await Library.addRemoteBook({
         blob, name: meta.title, kind: 'pdf',
         title: meta.title, author: meta.author, category: meta.category || 'أخرى', cover: meta.cover || '',
+      });
+      btn.classList.remove('loading'); btn.classList.add('done');
+      btn.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;
+      Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+      const fmts = sheet.querySelector('.disc-formats');
+      if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
+        const rn = document.createElement('button');
+        rn.className = 'disc-readnow'; rn.innerHTML = '📖 اقرأ الآن';
+        rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+        fmts.prepend(rn);
+      }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
+      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+    }
+  }
+
+  // ── تفاصيل كتاب «ويكي مصدر» ──
+  async function openWikisourceDetail(ds) {
+    const title = ds.id;
+    sheet.hidden = false;
+    sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب مقدّمة الكتاب…</p></div>`;
+    let intro = '', subCount = 0;
+    try {
+      const j = await (await fetch(`${WS_API}?action=query&prop=extracts&exintro=1&explaintext=1&titles=${encodeURIComponent(title)}&format=json&origin=*`)).json();
+      const pages = j.query && j.query.pages || {};
+      intro = ((Object.values(pages)[0] || {}).extract || '').trim().slice(0, 400);
+      const ap = await (await fetch(`${WS_API}?action=query&list=allpages&apprefix=${encodeURIComponent(title + '/')}&apnamespace=0&aplimit=500&format=json&origin=*`)).json();
+      subCount = (ap.query && ap.query.allpages || []).length;
+    } catch {}
+    const pageUrl = 'https://ar.wikisource.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_'));
+    sheet.innerHTML = `
+      <div class="disc-sheet-box">
+        <button class="disc-back" title="رجوع">→ رجوع</button>
+        <div class="disc-detail">
+          <div class="disc-detail-cover no-img"><span class="disc-fallback">${esc(title.trim().slice(0, 1))}</span></div>
+          <div class="disc-detail-meta">
+            <h3>${esc(title)}</h3>
+            <p class="dd-author">ويكي مصدر — نصّ حرّ${subCount ? ` · ${subCount} فصلاً` : ''}</p>
+            ${intro ? `<p class="dd-desc">${esc(intro)}…</p>` : ''}
+            <a class="dd-link" href="${pageUrl}" target="_blank" rel="noopener">↗ افتح الصفحة في ويكي مصدر</a>
+          </div>
+        </div>
+        <div class="disc-formats">
+          <h4>أضِفه إلى مكتبتك كنصّ قابل للقراءة الكاملة:</h4>
+          <button class="disc-import">
+            <span class="di-label">📄 أضِف النص${subCount ? ` (بكل فصوله ${subCount})` : ''}<em>يُجلب مباشرةً من ويكي مصدر ويُبنى له فهرس</em></span>
+          </button>
+        </div>
+      </div>`;
+    sheet.querySelector('.disc-back').onclick = closeSheet;
+    const ib = sheet.querySelector('.disc-import');
+    ib.onclick = () => importWikisource(ds, { title }, ib);
+  }
+
+  // ترتيب طبيعي (يراعي الأرقام) لأسماء الفصول
+  const natCmp = (a, b) => a.localeCompare(b, 'ar', { numeric: true });
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // نصّ صفحة ويكي مصدر: نُصيّر الصفحة (parse) لأنّ كثيراً من الفصول مبنيّة بالتضمين، ثم ننظّف HTML
+  async function wsPageText(title, retry = 2) {
+    const r = await fetch(`${WS_API}?action=parse&page=${encodeURIComponent(title)}&prop=text&format=json&origin=*&disablelimitreport=1&disabletoc=1`);
+    if (r.status === 429 && retry > 0) { await sleep(800); return wsPageText(title, retry - 1); } // تجاوز حدّ الطلبات
+    const j = await r.json();
+    const html = (j.parse && j.parse.text && j.parse.text['*']) || '';
+    if (!html) return '';
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('.mw-editsection, sup.reference, .reference, style, script, .noprint, .ws-noexport, table.header, .navigation-not-searchable, #headertemplate, .catlinks, .mw-empty-elt, link, .dholiday, .printfooter').forEach((el) => el.remove());
+    const root = doc.querySelector('.mw-parser-output') || doc.body;
+    return (root.textContent || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  async function importWikisource(ds, meta, btn) {
+    if (!window.Library || !Library.addRemoteBook) return;
+    const title = ds.id;
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.classList.add('loading');
+    btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ تجهيز الفهرس…</span>`;
+    try {
+      // 1) ترتيب القراءة من روابط الصفحة الرئيسة
+      let order = [];
+      try {
+        const wt = await (await fetch(`${WS_API}?action=parse&page=${encodeURIComponent(title)}&prop=wikitext&format=json&origin=*`)).json();
+        const wikitext = (wt.parse && wt.parse.wikitext && wt.parse.wikitext['*']) || '';
+        const re = /\[\[([^\]|#]+)/g; let m;
+        while ((m = re.exec(wikitext))) {
+          let t = m[1].trim().replace(/_/g, ' ');
+          if (t.startsWith('/')) t = title + t;
+          if (t.startsWith(title + '/') && order.indexOf(t) === -1) order.push(t);
+        }
+      } catch {}
+      // 2) القائمة المرجعية لكل الصفحات الفرعية (تضمن عدم إغفال فصل) — تُدمج مع الترتيب أعلاه
+      try {
+        const ap = await (await fetch(`${WS_API}?action=query&list=allpages&apprefix=${encodeURIComponent(title + '/')}&apnamespace=0&aplimit=500&format=json&origin=*`)).json();
+        const subs = (ap.query && ap.query.allpages || []).map((p) => p.title);
+        const set = new Set(order);
+        subs.sort(natCmp).forEach((s) => { if (!set.has(s)) { order.push(s); set.add(s); } });
+        // أبقِ فقط الروابط التي هي صفحات فرعية موجودة فعلاً
+        const exist = new Set(subs);
+        order = order.filter((t) => exist.has(t));
+      } catch {}
+
+      // عمل ضخم: نبّه المستخدم قبل جلب عشرات الطلبات
+      if (order.length > 60 && Library.confirm) {
+        const ok = await Library.confirm(`هذا عمل كبير (${order.length} فصلاً) وقد يستغرق جلبه دقيقة أو أكثر. هل تريد المتابعة؟`, { title: 'عمل كبير', okText: 'تابِع', icon: '📚' });
+        if (!ok) { btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig; return; }
+      }
+
+      let body = '';
+      if (order.length) {
+        const parts = [];
+        for (let i = 0; i < order.length; i++) {
+          let txt = ''; try { txt = await wsPageText(order[i]); } catch {}
+          if (txt) parts.push(`# ${order[i].slice(title.length + 1)}\n\n${txt}`);
+          btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ الجلب… ${i + 1}/${order.length}</span>`;
+          if (i < order.length - 1) await sleep(60); // تخفيف الضغط على الخادم
+        }
+        body = parts.join('\n\n');
+      } else {
+        body = await wsPageText(title); // كتاب في صفحة واحدة
+      }
+      if (!body.trim()) throw new Error('لم يُعثر على نصّ قابل للقراءة');
+      const full = `# ${title}\n\n${body}`;
+
+      btn.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ الإضافة…</span>`;
+      const bookId = await Library.addRemoteBook({
+        blob: full, name: title, kind: 'text',
+        title, author: 'ويكي مصدر', category: 'أخرى',
       });
       btn.classList.remove('loading'); btn.classList.add('done');
       btn.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;
