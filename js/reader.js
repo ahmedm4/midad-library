@@ -310,9 +310,23 @@ const Reader = (() => {
     } else {
       const target = curPage + dir;
       if (target < 0 || target > pageCount - 1) return;
-      if (settings.flip === 'flip') flipText(target, dir);
-      else setPage(target, true);
+      // في العرض المزدوج، تقليب الورقة يقلب الصفحتين معاً (شكل غريب) — فنستخدم انزلاقاً نظيفاً للصفحة المزدوجة
+      const textSpread = $('#reader').classList.contains('spread');
+      if (settings.flip === 'flip' && !textSpread) flipText(target, dir);
+      else slidePage(target);
     }
+  }
+
+  // انزلاق مُتحرّك لصفحة نصية (يُستخدم لوضع الانزلاق وللعرض المزدوج في وضع التقليب)
+  function slidePage(n) {
+    n = Math.max(0, Math.min(n, pageCount - 1));
+    $('#reader').classList.remove('no-anim');
+    flipping = true;
+    contentEl.style.transform = `translateX(${n * (pageW + GAP)}px)`;
+    curPage = n;
+    state.pct = pageCount > 1 ? n / (pageCount - 1) : 1;
+    afterNavigate();
+    setTimeout(() => { flipping = false; }, 470);
   }
 
   function jumpTo(n) { // فهرس الصفحات (نصي: رقم صفحة، PDF: رقم صفحة 1-based)
