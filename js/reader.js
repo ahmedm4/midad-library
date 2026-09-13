@@ -1994,9 +1994,12 @@ const Reader = (() => {
     pop.hidden = false;
     $('#hl-del-btn').hidden = !existing;
     $('#hl-note-btn').textContent = existing ? '📝 تعديل الملاحظة' : '📝 تظليل + ملاحظة';
-    const w = pop.offsetWidth || 300;
+    const w = pop.offsetWidth || 300, h = pop.offsetHeight || 100;
     pop.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, innerWidth - w - 8)) + 'px';
-    pop.style.top = Math.max(8, rect.top - 54) + 'px';
+    // فوق التحديد مع فسحة كافية حتى لا يحجبه؛ فإن لم يتّسع فوقه فأسفله
+    let top = rect.top - h - 12;
+    if (top < 8) top = Math.min(rect.bottom + 12, innerHeight - h - 8);
+    pop.style.top = Math.max(8, top) + 'px';
   }
   function hideHlPopup() { $('#hl-popup').hidden = true; pendingSel = null; pendingPdfSel = null; }
 
