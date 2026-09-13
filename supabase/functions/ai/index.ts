@@ -103,6 +103,53 @@ async function callGemini(model: string, keys: string[], parts: unknown[], genCf
   return { ok: false, error: lastErr, status: lastStatus };
 }
 
+// يلفّ بايتات PCM (16-bit mono) بترويسة WAV ويعيدها Base64 — ليشغّلها المتصفح مباشرة
+function pcmToWavBase64(b64pcm: string, sampleRate: number): string {
+  const pcm = Uint8Array.from(atob(b64pcm), (c) => c.charCodeAt(0));
+  const numCh = 1, bits = 16, blockAlign = (numCh * bits) / 8, byteRate = sampleRate * blockAlign;
+  const buf = new ArrayBuffer(44 + pcm.length), dv = new DataView(buf);
+  const ws = (o: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, "RIFF"); dv.setUint32(4, 36 + pcm.length, true); ws(8, "WAVE"); ws(12, "fmt ");
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, numCh, true);
+  dv.setUint32(24, sampleRate, true); dv.setUint32(28, byteRate, true); dv.setUint16(32, blockAlign, true); dv.setUint16(34, bits, true);
+  ws(36, "data"); dv.setUint32(40, pcm.length, true); new Uint8Array(buf, 44).set(pcm);
+  const out = new Uint8Array(buf); let bin = ""; const CH = 0x8000;
+  for (let i = 0; i < out.length; i += CH) bin += String.fromCharCode.apply(null, Array.from(out.subarray(i, i + CH)));
+  return btoa(bin);
+}
+
+// تحويل نص إلى كلام عبر نموذج Gemini TTS مع تدوير المفاتيح
+async function geminiTTS(model: string, keys: string[], text: string, voice: string) {
+  let lastErr = "خطأ من Gemini TTS", lastStatus = 500;
+  const start = Math.floor(Math.random() * keys.length);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[(start + i) % keys.length];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    let res: Response, data: any;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text }] }],
+          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+        }),
+      });
+      data = await res.json();
+    } catch (e) { lastErr = String((e as Error)?.message || e); lastStatus = 502; continue; }
+    if (res.ok) {
+      const part = (data?.candidates?.[0]?.content?.parts || []).find((p: any) => p.inlineData);
+      const b64 = part?.inlineData?.data;
+      if (!b64) { lastErr = "لم يصل صوت من النموذج"; lastStatus = 502; continue; }
+      const rate = parseInt((String(part?.inlineData?.mimeType || "").match(/rate=(\d+)/) || [])[1] || "24000", 10);
+      return { ok: true, wav: pcmToWavBase64(b64, rate), status: 200 };
+    }
+    lastErr = data?.error?.message || "خطأ من Gemini TTS"; lastStatus = res.status;
+    if (!isQuota(res.status, lastErr) && !isKeyError(res.status, lastErr)) return { ok: false, error: lastErr, status: res.status };
+  }
+  return { ok: false, error: lastErr, status: lastStatus };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -126,6 +173,18 @@ Deno.serve(async (req) => {
         `النموذج: ${MODEL}\n` +
         `OpenAI — ${OAI_KEY ? "مضبوط ✓ (…" + OAI_KEY.slice(-4) + ") نموذج: " + OAI_MODEL : "غير مضبوط"}\n` +
         `OpenRouter — ${OR_KEY ? "مضبوط ✓ (…" + OR_KEY.slice(-4) + ") نموذج: " + OR_MODEL : "غير مضبوط"}` });
+    }
+
+    // ── تحويل النص إلى كلام طبيعي (Gemini TTS) ──
+    if (action === "tts") {
+      const text = String(b.text || "").slice(0, 3000).trim();
+      if (!text) return json({ error: "لا يوجد نص للنطق" }, 400);
+      if (!KEYS.length) return json({ error: "الصوت الطبيعي يحتاج Gemini مضبوطاً في الخادم" }, 400);
+      const voice = String(b.voice || Deno.env.get("GEMINI_TTS_VOICE") || "Kore");
+      const ttsModel = Deno.env.get("GEMINI_TTS_MODEL") || "gemini-2.5-flash-preview-tts";
+      const r = await geminiTTS(ttsModel, KEYS, text, voice);
+      if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
+      return json({ audio: r.wav, mime: "audio/wav" });
     }
 
     // ── جهّز الموجّه/الصورة حسب الإجراء ──

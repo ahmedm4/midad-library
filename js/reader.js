@@ -1114,12 +1114,21 @@ const Reader = (() => {
     relayoutPdf();
   }
 
-  /* ═══════ القراءة الصوتية ═══════ */
-  let ttsOn = false, ttsIdx = 0, ttsEls = [];
+  /* ═══════ القراءة الصوتية (صوت الجهاز + صوت طبيعي سحابي) ═══════ */
+  let ttsOn = false, ttsIdx = 0, ttsEls = [], ttsPaused = false;
+  let ttsEngine = 'device';        // المحرّك الفعّال في الجلسة
+  let ttsAudio = null;             // مشغّل الصوت الطبيعي (Audio)
+  const ttsCache = new Map();      // نص → WAV dataURL (تخزين مؤقت + جلب مسبق)
+  const ttsInflight = new Map();   // نص → وعد جلب جارٍ (منع الازدواج)
+  let ttsGapResolve = null;        // لإنهاء انتظار المقطع فوراً عند الإيقاف/التخطّي
+  let ttsSleepTid = null;
 
+  // أفضل صوت عربي متاح على الجهاز (يفضّل الطبيعي/الشبكي على الآلي المحلّي)
   function pickVoice() {
-    const vs = speechSynthesis.getVoices();
-    return vs.find((v) => /^ar/i.test(v.lang)) || null;
+    const vs = speechSynthesis.getVoices().filter((v) => /^ar/i.test(v.lang));
+    if (!vs.length) return null;
+    const score = (v) => (/(natural|online|neural|premium|enhanced)/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 2 : 0) + (v.localService ? 0 : 1);
+    return vs.slice().sort((a, b) => score(b) - score(a))[0];
   }
 
   async function pdfHasReadableText() {
@@ -1144,7 +1153,7 @@ const Reader = (() => {
 
   async function ttsToggle() {
     if (ttsOn) return ttsStop();
-    if (!('speechSynthesis' in window)) return Library.toast('القراءة الصوتية غير مدعومة في متصفحك');
+    if (!('speechSynthesis' in window) && !(window.Cloud && Cloud.aiReady && Cloud.aiReady())) return Library.toast('القراءة الصوتية غير مدعومة في متصفحك');
     if (isPdf && !(await pdfHasReadableText())) {
       if (window.Cloud && Cloud.aiReady && Cloud.aiReady() && Library.ocrBook) {
         const bid = book.id;
@@ -1167,59 +1176,181 @@ const Reader = (() => {
       }
       if (ttsIdx < 0) ttsIdx = 0;
     }
-    ttsOn = true;
+    // اختر المحرّك: طبيعي (سحابي) إن طُلب وكان متاحاً، وإلا صوت الجهاز
+    const wantNatural = settings.ttsEngine === 'natural' && window.Cloud && Cloud.aiReady && Cloud.aiReady();
+    ttsEngine = wantNatural ? 'natural' : 'device';
+    ttsOn = true; ttsPaused = false;
     $('#r-btn-tts').classList.add('on');
-    Library.toast('بدأت القراءة الصوتية 🔊 — اضغط الزر ذاته للإيقاف');
-    speakNext();
+    setupMediaSession();
+    startSleepTimer();
+    Library.toast(ttsEngine === 'natural' ? 'بدأ الاستماع بصوت طبيعي 🔊' : 'بدأت القراءة الصوتية 🔊 — اضغط الزر ذاته للإيقاف');
+    if (ttsEngine === 'natural') speakNatural(); else speakNext();
   }
 
-  async function speakNext() {
-    if (!ttsOn) return;
-    let text = '', el = null;
+  // نصّ الوحدة الحالية (فقرة نصية أو صفحة PDF) + تمييزها وتمرير الصفحة إليها
+  async function currentUnit(highlight = true) {
     if (isPdf) {
-      try {
-        const page = await pdfDoc.getPage(pdfPage);
-        const tc = await page.getTextContent();
-        text = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
-      } catch { text = ''; }
-      if (!text) text = ocrPageText(pdfPage); // احتياطي: نص الـOCR
-      if (!text) {
-        if (pdfPage < pageCount) { jumpTo(pdfPage + 1); return speakNext(); }
-        return ttsStop(true);
-      }
-    } else {
-      if (ttsIdx >= ttsEls.length) return ttsStop(true);
-      el = ttsEls[ttsIdx];
-      if (settings.flip === 'scroll') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      else {
-        const pg = elementPage(el);
-        if (pg !== curPage) setPage(pg, false);
-      }
-      el.classList.add('tts-now');
-      text = el.textContent;
+      let text = '';
+      try { const page = await pdfDoc.getPage(pdfPage); const tc = await page.getTextContent(); text = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim(); } catch {}
+      if (!text) text = ocrPageText(pdfPage);
+      return { text, el: null };
     }
-    const u = new SpeechSynthesisUtterance(text);
+    if (ttsIdx >= ttsEls.length) return null;
+    const el = ttsEls[ttsIdx];
+    if (highlight) {
+      if (settings.flip === 'scroll') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      else { const pg = elementPage(el); if (pg !== curPage) setPage(pg, false); }
+      el.classList.add('tts-now');
+    }
+    return { text: el.textContent, el };
+  }
+
+  // انتقل للوحدة التالية؛ يعيد false عند النهاية
+  function ttsAdvance() {
+    if (isPdf) { if (pdfPage >= pageCount) return false; jumpTo(pdfPage + 1); return true; }
+    ttsIdx++; return ttsIdx < ttsEls.length;
+  }
+
+  /* ── محرّك صوت الجهاز (speechSynthesis) ── */
+  async function speakNext() {
+    if (!ttsOn || ttsPaused) return;
+    const unit = await currentUnit();
+    if (!unit) return ttsStop(true);
+    if (!unit.text) { if (ttsAdvance()) return speakNext(); return ttsStop(true); }
+    const u = new SpeechSynthesisUtterance(unit.text);
     const v = pickVoice();
     if (v) u.voice = v;
     u.lang = v ? v.lang : 'ar-SA';
     u.rate = (settings.ttsRate || 100) / 100;
     u.onend = () => {
-      if (el) el.classList.remove('tts-now');
-      if (!ttsOn) return;
-      if (isPdf) {
-        if (pdfPage < pageCount) { jumpTo(pdfPage + 1); speakNext(); }
-        else ttsStop(true);
-      } else { ttsIdx++; speakNext(); }
+      if (unit.el) unit.el.classList.remove('tts-now');
+      if (!ttsOn || ttsPaused) return;
+      if (ttsAdvance()) speakNext(); else ttsStop(true);
     };
-    u.onerror = () => { if (el) el.classList.remove('tts-now'); if (ttsOn) ttsStop(); };
+    u.onerror = () => { if (unit.el) unit.el.classList.remove('tts-now'); if (ttsOn) ttsStop(); };
     speechSynthesis.speak(u);
   }
 
+  /* ── محرّك الصوت الطبيعي (Gemini TTS عبر خادمك) ── */
+  // قسّم نصاً طويلاً إلى مقاطع ≤ maxLen عند حدود الجُمَل
+  function splitChunks(text, maxLen = 1400) {
+    text = (text || '').trim(); if (text.length <= maxLen) return text ? [text] : [];
+    const parts = text.split(/(?<=[.!؟?۔\n])\s+/); const out = []; let cur = '';
+    for (const p of parts) {
+      if ((cur + ' ' + p).length > maxLen && cur) { out.push(cur.trim()); cur = p; }
+      else cur = cur ? cur + ' ' + p : p;
+      while (cur.length > maxLen) { out.push(cur.slice(0, maxLen)); cur = cur.slice(maxLen); }
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  // ركّب مقطعاً إلى WAV dataURL (مع تخزين مؤقت ومنع الازدواج)
+  async function synthChunk(text) {
+    if (ttsCache.has(text)) return ttsCache.get(text);
+    if (ttsInflight.has(text)) return ttsInflight.get(text);
+    const pr = (async () => {
+      const data = await Cloud.invokeFn('ai', { action: 'tts', text, voice: settings.ttsVoice || 'Kore' });
+      if (!data || !data.audio) throw new Error('لم يصل صوت');
+      const url = 'data:' + (data.mime || 'audio/wav') + ';base64,' + data.audio;
+      ttsCache.set(text, url); if (ttsCache.size > 40) ttsCache.delete(ttsCache.keys().next().value);
+      return url;
+    })();
+    ttsInflight.set(text, pr);
+    try { return await pr; } finally { ttsInflight.delete(text); }
+  }
+  // شغّل dataURL وانتظر انتهاءه (يحترم الإيقاف/الإيقاف المؤقّت)
+  function playUrl(url) {
+    return new Promise((resolve) => {
+      ttsGapResolve = resolve;
+      if (!ttsAudio) ttsAudio = new Audio();
+      ttsAudio.src = url;
+      ttsAudio.playbackRate = Math.max(0.5, Math.min(2, (settings.ttsRate || 100) / 100));
+      ttsAudio.onended = () => { ttsGapResolve = null; resolve(); };
+      ttsAudio.onerror = () => { ttsGapResolve = null; resolve(); };
+      ttsAudio.play().catch(() => { ttsGapResolve = null; resolve(); });
+    });
+  }
+  async function speakNatural() {
+    while (ttsOn) {
+      const unit = await currentUnit();
+      if (!unit) { ttsStop(true); return; }
+      if (!unit.text) { if (!ttsAdvance()) { ttsStop(true); return; } continue; }
+      const chunks = splitChunks(unit.text);
+      for (let ci = 0; ci < chunks.length; ci++) {
+        if (!ttsOn) { if (unit.el) unit.el.classList.remove('tts-now'); return; }
+        let url;
+        try { url = await synthChunk(chunks[ci]); }
+        catch (e) {
+          // فشل الصوت الطبيعي → تحوّل لصوت الجهاز لبقية الجلسة
+          if (unit.el) unit.el.classList.remove('tts-now');
+          if (!ttsOn) return;
+          ttsEngine = 'device';
+          Library.toast('تعذّر الصوت الطبيعي — تحوّلت لصوت الجهاز' + (/(quota|429|حصة)/i.test(e.message || '') ? ' (تجاوز الحصّة)' : ''));
+          return speakNext();
+        }
+        if (!ttsOn) return;
+        if (chunks[ci + 1]) synthChunk(chunks[ci + 1]).catch(() => {}); // جلب مسبق للمقطع التالي
+        await playUrl(url);
+        if (!ttsOn) { if (unit.el) unit.el.classList.remove('tts-now'); return; }
+      }
+      if (unit.el) unit.el.classList.remove('tts-now');
+      if (!ttsAdvance()) { ttsStop(true); return; }
+    }
+  }
+
+  /* ── إيقاف مؤقّت/استئناف/تخطّي (يعملان مع المحرّكين وأزرار شاشة القفل) ── */
+  function ttsPause() {
+    if (!ttsOn || ttsPaused) return;
+    ttsPaused = true;
+    if (ttsEngine === 'natural') { try { ttsAudio && ttsAudio.pause(); } catch {} }
+    else { try { speechSynthesis.pause(); } catch {} }
+    if ('mediaSession' in navigator) try { navigator.mediaSession.playbackState = 'paused'; } catch {}
+  }
+  function ttsResume() {
+    if (!ttsOn || !ttsPaused) return;
+    ttsPaused = false;
+    if (ttsEngine === 'natural') { try { ttsAudio && ttsAudio.play(); } catch {} }
+    else { try { speechSynthesis.resume(); } catch {} }
+    if ('mediaSession' in navigator) try { navigator.mediaSession.playbackState = 'playing'; } catch {}
+  }
+  function ttsSkip(dir) {
+    if (!ttsOn) return;
+    if (contentEl) contentEl.querySelectorAll('.tts-now').forEach((e) => e.classList.remove('tts-now'));
+    if (isPdf) { const t = pdfPage + dir; if (t >= 1 && t <= pageCount) jumpTo(t); }
+    else { ttsIdx = Math.max(0, Math.min(ttsIdx + dir, ttsEls.length - 1)); }
+    ttsPaused = false;
+    if (ttsEngine === 'natural') { try { ttsAudio && ttsAudio.pause(); } catch {} if (ttsGapResolve) { const r = ttsGapResolve; ttsGapResolve = null; r(); } }
+    else { try { speechSynthesis.cancel(); } catch {} speakNext(); }
+  }
+
+  function startSleepTimer() {
+    clearTimeout(ttsSleepTid); ttsSleepTid = null;
+    const min = +settings.ttsSleep || 0;
+    if (min > 0) ttsSleepTid = setTimeout(() => { if (ttsOn) { ttsStop(); Library.toast('انتهى مؤقّت النوم — أُوقف الاستماع 😴'); } }, min * 60000);
+  }
+
+  function setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: book.title || 'كتاب', artist: book.author || 'مِداد', album: 'مِداد' });
+      navigator.mediaSession.setActionHandler('play', ttsResume);
+      navigator.mediaSession.setActionHandler('pause', ttsPause);
+      navigator.mediaSession.setActionHandler('previoustrack', () => ttsSkip(-1));
+      navigator.mediaSession.setActionHandler('nexttrack', () => ttsSkip(1));
+      try { navigator.mediaSession.setActionHandler('stop', () => ttsStop()); } catch {}
+      navigator.mediaSession.playbackState = 'playing';
+    } catch {}
+  }
+
   function ttsStop(finished = false) {
-    ttsOn = false;
+    ttsOn = false; ttsPaused = false;
     try { speechSynthesis.cancel(); } catch {}
+    if (ttsAudio) { try { ttsAudio.pause(); ttsAudio.src = ''; } catch {} }
+    if (ttsGapResolve) { const r = ttsGapResolve; ttsGapResolve = null; r(); }
+    clearTimeout(ttsSleepTid); ttsSleepTid = null;
     if (contentEl) contentEl.querySelectorAll('.tts-now').forEach((e) => e.classList.remove('tts-now'));
     $('#r-btn-tts').classList.remove('on');
+    if ('mediaSession' in navigator) try { navigator.mediaSession.playbackState = 'none'; ['play', 'pause', 'previoustrack', 'nexttrack', 'stop'].forEach((a) => navigator.mediaSession.setActionHandler(a, null)); } catch {}
     if (finished) Library.toast('انتهت القراءة الصوتية ✓');
   }
 
@@ -1552,8 +1683,18 @@ const Reader = (() => {
     $('#set-fontsize').oninput = (e) => { settings.fontSize = +e.target.value; applySettings(); scheduleRepaginate(); };
     $('#set-lineheight').oninput = (e) => { settings.lineHeight = +e.target.value; applySettings(); scheduleRepaginate(); };
     $('#set-width').oninput = (e) => { settings.width = +e.target.value; applySettings(); scheduleRepaginate(); };
-    $('#set-ttsrate').oninput = (e) => { settings.ttsRate = +e.target.value; Store.saveSettings(settings); };
+    $('#set-ttsrate').oninput = (e) => { settings.ttsRate = +e.target.value; if (ttsOn && ttsEngine === 'natural' && ttsAudio) ttsAudio.playbackRate = Math.max(0.5, Math.min(2, settings.ttsRate / 100)); Store.saveSettings(settings); };
     $('#set-autospeed').oninput = (e) => { settings.autoSpeed = +e.target.value; Store.saveSettings(settings); };
+    { const er = $('#tts-engine-row'); if (er) er.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => {
+        settings.ttsEngine = b.dataset.engine; Store.saveSettings(settings);
+        er.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+        const vl = $('#tts-voice-label'); if (vl) vl.hidden = settings.ttsEngine !== 'natural';
+        if (settings.ttsEngine === 'natural' && !(window.Cloud && Cloud.aiReady && Cloud.aiReady())) Library.toast('الصوت الطبيعي يحتاج تفعيل المزامنة السحابية وتسجيل الدخول (زر ☁️)');
+      };
+    }); }
+    { const sv = $('#set-ttsvoice'); if (sv) sv.onchange = (e) => { settings.ttsVoice = e.target.value; ttsCache.clear(); Store.saveSettings(settings); }; }
+    { const ss = $('#set-ttssleep'); if (ss) ss.onchange = (e) => { settings.ttsSleep = +e.target.value; Store.saveSettings(settings); if (ttsOn) startSleepTimer(); }; }
 
     $('#spread-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => {
@@ -1683,6 +1824,10 @@ const Reader = (() => {
     { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
     $('#set-ttsrate').value = settings.ttsRate || 100;
     $('#set-autospeed').value = settings.autoSpeed || 50;
+    { const er = $('#tts-engine-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.engine === (settings.ttsEngine || 'natural'))); }
+    { const sv = $('#set-ttsvoice'); if (sv) sv.value = settings.ttsVoice || 'Kore'; }
+    { const ss = $('#set-ttssleep'); if (ss) ss.value = String(settings.ttsSleep || 0); }
+    { const vl = $('#tts-voice-label'); if (vl) vl.hidden = (settings.ttsEngine || 'natural') !== 'natural'; }
     $('#set-brightness').value = settings.brightness;
     $('#set-warmth').value = settings.warmth;
     $('#set-fontsize').value = settings.fontSize;

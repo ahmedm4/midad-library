@@ -78,7 +78,7 @@ const Store = (() => {
     brightness: 100, warmth: 0, bg: 'dusk',
     font: "'Noto Naskh Arabic', serif", fontSize: 20, lineHeight: 190, width: 680,
     flip: 'flip', spread: false, realFlip: true, ttsRate: 100, paperFx: 'none', autoSpeed: 50, enhanceScan: true, focusMode: false,
-    pdfFit: 'page', ocrProvider: 'gemini',
+    pdfFit: 'page', ocrProvider: 'gemini', ttsEngine: 'natural', ttsVoice: 'Kore', ttsSleep: 0,
   };
   function getSettings() {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }

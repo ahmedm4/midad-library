@@ -410,7 +410,31 @@
 
     <section>
       <h4>القراءة الصوتية 🔊</h4>
+      <div class="bgmode-row" id="tts-engine-row">
+        <button data-engine="natural" class="active">صوت طبيعي</button>
+        <button data-engine="device">صوت الجهاز</button>
+      </div>
+      <p class="fld-hint" style="margin-top:6px;line-height:1.7">«صوت طبيعي» ينطق بصوت بشري واقعي عبر خادمك (يتطلب تفعيل المزامنة السحابية)؛ «صوت الجهاز» يعمل بلا إنترنت لكنه آليّ.</p>
+      <label id="tts-voice-label">نبرة الصوت الطبيعي
+        <select id="set-ttsvoice">
+          <option value="Kore">هادئة (Kore)</option>
+          <option value="Puck">حيوية (Puck)</option>
+          <option value="Charon">رصينة (Charon)</option>
+          <option value="Aoede">دافئة (Aoede)</option>
+          <option value="Fenrir">جهورية (Fenrir)</option>
+        </select>
+      </label>
       <label>سرعة القراءة <input type="range" id="set-ttsrate" min="60" max="140" value="100"></label>
+      <label>مؤقّت النوم
+        <select id="set-ttssleep">
+          <option value="0">بلا</option>
+          <option value="10">١٠ دقائق</option>
+          <option value="20">٢٠ دقيقة</option>
+          <option value="30">٣٠ دقيقة</option>
+          <option value="45">٤٥ دقيقة</option>
+          <option value="60">ساعة</option>
+        </select>
+      </label>
       <h4>القراءة التلقائية ⏵</h4>
       <label>سرعة التمرير/التقليب <input type="range" id="set-autospeed" min="20" max="100" value="50"></label>
     </section>
