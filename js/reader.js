@@ -66,7 +66,11 @@ const Reader = (() => {
 
     const reader = $('#reader');
     reader.classList.toggle('mode-pdf', isPdf);
+    teardownPageFlip();               // أزل كتاب التقليب (StPageFlip) من الكتاب السابق حتى لا تظهر صفحته فوق الكتاب الجديد
+    teardownPdfScroll();              // أوقف مراقب التمرير السابق
+    $('#r-pdf-scroll').innerHTML = ''; // أفرغ شرائح التمرير من الكتاب السابق
     $('#r-canvas-wrap').hidden = !isPdf;
+    $('#r-canvas-wrap2').hidden = true;
     $('#r-btn-search').style.display = isPdf ? 'none' : '';
     $('#typo-section').style.display = isPdf ? 'none' : '';
     { const ps = $('#pdf-section'); if (ps) ps.style.display = isPdf ? '' : 'none'; }
