@@ -178,7 +178,8 @@
   font-size: calc(var(--r-size) * var(--font-scale, 1));
   line-height: var(--r-lh);
   color: var(--ink-c); text-align: justify;
-  transition: transform .45s cubic-bezier(.25,.8,.3,1); }
+  transition: transform .45s cubic-bezier(.25,.8,.3,1);
+  will-change: transform; backface-visibility: hidden; }
 #reader.no-anim .r-content { transition: none; }
 .r-content p { margin-bottom: .95em; }
 .r-content h2 { font-family: 'Amiri', serif; font-size: 1.5em; margin: 1.1em 0 .7em;
@@ -547,6 +548,16 @@
   border: 1px solid var(--card-line, rgba(255,255,255,.09)); background: rgba(0,0,0,.28); color: #f5efe2; outline: none; }
 .ai-input-row input:focus { border-color: rgba(217,169,79,.5); }
 .ai-foot { text-align: center; font-size: 11px; color: #6b6478; margin-top: 10px; }
+
+/* السمة الورقية الفاتحة: النوافذ تصبح فاتحة، فنُغمّق نصوص المساعد كي تظهر */
+:root[data-lib-theme="paper"] .ai-quick button { color: #7a5320; border-color: rgba(120,80,20,.38); background: rgba(169,120,46,.12); }
+:root[data-lib-theme="paper"] .ai-quick button:hover { background: rgba(169,120,46,.2); }
+:root[data-lib-theme="paper"] .ai-hint { color: #7c7059; }
+:root[data-lib-theme="paper"] .ai-foot { color: #9a8f78; }
+:root[data-lib-theme="paper"] .ai-msg.user { background: rgba(169,120,46,.16); color: #5a3d10; }
+:root[data-lib-theme="paper"] .ai-msg.ai { color: #2c2416; }
+:root[data-lib-theme="paper"] .ai-msg.ai b, :root[data-lib-theme="paper"] .ai-msg.ai h4 { color: #7a5320; }
+:root[data-lib-theme="paper"] .ai-msg.ai { background: rgba(60,45,20,.05); border-color: rgba(60,45,20,.16); }
 
 /* منع تكبير المتصفح لتفعيل القرص المخصص (pinch) على مناطق القراءة */
 #reader.mode-pdf:not(.pdf-scroll) .r-canvas-wrap { touch-action: none; }
