@@ -310,14 +310,14 @@ const Reader = (() => {
     } else {
       const target = curPage + dir;
       if (target < 0 || target > pageCount - 1) return;
-      // في العرض المزدوج، تقليب الورقة يقلب الصفحتين معاً (شكل غريب) — فنستخدم انزلاقاً نظيفاً للصفحة المزدوجة
+      // في العرض المزدوج نستخدم انزلاقاً نظيفاً بدل انحناء الورقة (الذي يقلب الصفحتين معاً)
       const textSpread = $('#reader').classList.contains('spread');
       if (settings.flip === 'flip' && !textSpread) flipText(target, dir);
       else slidePage(target);
     }
   }
 
-  // انزلاق مُتحرّك لصفحة نصية (يُستخدم لوضع الانزلاق وللعرض المزدوج في وضع التقليب)
+  // انزلاق مُتحرّك لصفحة نصية (وضع الانزلاق وللعرض المزدوج)
   function slidePage(n) {
     n = Math.max(0, Math.min(n, pageCount - 1));
     $('#reader').classList.remove('no-anim');
@@ -456,6 +456,7 @@ const Reader = (() => {
   const PF_KEEP = 9;         // أبعد من هذا المدى تُفرَّغ صورها لتحرير الذاكرة
   let pfLoaded = new Set();  // فهارس الصفحات المرسومة حالياً
   let pfWinToken = 0;        // لإلغاء تحميل نافذة قديمة عند تغيّر الموضع
+  let pfWinTid = null;       // مؤقّت تأجيل رسم النافذة بعد التقليب
   // نستخدم StPageFlip للعرض المزدوج (أفقي) — القلب المفرد (رأسي/جوال) يستخدم محرّكنا
   const pdfFlipBookActive = () => isPdf && settings.flip === 'flip' && settings.realFlip !== false && pdfZoom <= 1.001 && pageCount <= PF_MAX_PAGES && spreadFits() && !!(window.St && St.PageFlip);
 
@@ -468,7 +469,7 @@ const Reader = (() => {
   }
 
   function teardownPageFlip() {
-    pfWinToken++; pfLoaded = new Set(); // ألغِ أي تحميل نافذة جارٍ وحرّر التتبّع
+    pfWinToken++; pfLoaded = new Set(); clearTimeout(pfWinTid); // ألغِ أي تحميل نافذة جارٍ وحرّر التتبّع
     if (pageFlip) { try { pageFlip.destroy(); } catch {} pageFlip = null; }
     const c = $('#r-pageflip'); if (c) { c.hidden = true; c.innerHTML = ''; c.classList.remove('rtl'); }
     $('#reader').classList.remove('pageflip-on');
@@ -598,7 +599,8 @@ const Reader = (() => {
       pageFlip.on('flip', (e) => {
         pdfPage = (e.data || 0) + 1;
         state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1;
-        ensurePfWindow(pdfPage - 1);
+        // أجّل رسم صور النافذة (ثقيل على المعالج) حتى تكتمل حركة الاستقرار — يمنع الارتجاج/الإزاحة في النهاية
+        clearTimeout(pfWinTid); pfWinTid = setTimeout(() => ensurePfWindow(pdfPage - 1), 350);
         afterNavigate();
       });
       wirePfDrag(inner);

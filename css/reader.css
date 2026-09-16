@@ -96,10 +96,11 @@
 #reader.pageflip-on .r-book { display: none; }
 .pf-box { position: relative; }
 .pf-box.rtl { transform: scaleX(-1); }
-.pf-box.rtl .pf-img { transform: scaleX(-1); }
+/* translateZ يثبّت الصورة على طبقة عرض خاصة فيقلّ وميض إعادة الرسم أثناء الطي على الأجهزة اللوحية */
+.pf-box.rtl .pf-img { transform: scaleX(-1) translateZ(0); }
 .pf-inner { width: 100%; height: 100%; }
-.pf-page { width: 100%; height: 100%; background: #fff; overflow: hidden; }
-.pf-img { width: 100%; height: 100%; display: block; object-fit: fill; }
+.pf-page { width: 100%; height: 100%; background: #fff; overflow: hidden; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.pf-img { width: 100%; height: 100%; display: block; object-fit: fill; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
 #reader.pdf-dark .pf-page { background: #1a1c22; }
 #reader.pdf-dark .pf-img { filter: invert(.9) hue-rotate(180deg) contrast(.92); }
 .pf-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); }
@@ -178,8 +179,7 @@
   font-size: calc(var(--r-size) * var(--font-scale, 1));
   line-height: var(--r-lh);
   color: var(--ink-c); text-align: justify;
-  transition: transform .45s cubic-bezier(.25,.8,.3,1);
-  will-change: transform; backface-visibility: hidden; }
+  transition: transform .45s cubic-bezier(.25,.8,.3,1); }
 #reader.no-anim .r-content { transition: none; }
 .r-content p { margin-bottom: .95em; }
 .r-content h2 { font-family: 'Amiri', serif; font-size: 1.5em; margin: 1.1em 0 .7em;
