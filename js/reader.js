@@ -452,11 +452,13 @@ const Reader = (() => {
   let pageFlip = null, pfAspect = 1.414, pfBuilding = false;
   // تحميل بنافذة متحركة: نبني كل الصفحات كإطارات فارغة (خفيفة)، ونرسم صور نافذة حول الموضع فقط
   const PF_MAX_PAGES = 1500; // سقف أمان لعدد عناصر DOM (النافذة تحلّ مشكلة الذاكرة/البطء)
+  const PF_CANVAS_MAX = 220; // حتى هذا العدد نستخدم محرّك الكانفاس (ظلّ واقعي سلس)؛ فوقه نافذة DOM (بلا ظلّ)
   const PF_WINDOW = 4;       // كم صفحة تُرسَم حول الموضع في كل اتجاه
   const PF_KEEP = 9;         // أبعد من هذا المدى تُفرَّغ صورها لتحرير الذاكرة
   let pfLoaded = new Set();  // فهارس الصفحات المرسومة حالياً
   let pfWinToken = 0;        // لإلغاء تحميل نافذة قديمة عند تغيّر الموضع
   let pfWinTid = null;       // مؤقّت تأجيل رسم النافذة بعد التقليب
+  let pfCanvasMode = false;  // true عند استخدام محرّك الكانفاس (كتب ≤ PF_CANVAS_MAX)
   // نستخدم StPageFlip للعرض المزدوج (أفقي) — القلب المفرد (رأسي/جوال) يستخدم محرّكنا
   const pdfFlipBookActive = () => isPdf && settings.flip === 'flip' && settings.realFlip !== false && pdfZoom <= 1.001 && pageCount <= PF_MAX_PAGES && spreadFits() && !!(window.St && St.PageFlip);
 
@@ -475,8 +477,8 @@ const Reader = (() => {
     $('#reader').classList.remove('pageflip-on');
   }
 
-  // يرسم صفحة PDF إلى صورة dataURL (تُحمَّل كل الصفحات قبل التهيئة لأن StPageFlip يستنسخها)
-  async function renderPfImage(idx) {
+  // يرسم صفحة PDF إلى صورة dataURL. mirror=true يعكسها أفقياً (لوضع الكانفاس مع مرآة الحاوية RTL)
+  async function renderPfImage(idx, mirror = false) {
     const page = await pdfDoc.getPage(idx + 1);
     const v1 = page.getViewport({ scale: 1 });
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -485,7 +487,10 @@ const Reader = (() => {
     cv.width = vp.width; cv.height = vp.height;
     await page.render({ canvasContext: cv.getContext('2d', { willReadFrequently: !!settings.enhanceScan }), viewport: vp, intent: 'print' }).promise;
     if (settings.enhanceScan) cleanScan(cv.getContext('2d'), cv.width, cv.height);
-    return cv.toDataURL('image/jpeg', 0.82);
+    if (!mirror) return cv.toDataURL('image/jpeg', 0.82);
+    const m = document.createElement('canvas'); m.width = cv.width; m.height = cv.height;
+    const mx = m.getContext('2d'); mx.translate(cv.width, 0); mx.scale(-1, 1); mx.drawImage(cv, 0, 0);
+    return m.toDataURL('image/jpeg', 0.82);
   }
 
   // سحب الورقة بالماوس/اللمس مع تعويض العكس الأفقي (RTL): x داخلي = يمين المستطيل − clientX
@@ -555,10 +560,64 @@ const Reader = (() => {
     }
   }
 
-  async function buildPageFlip(gotoPage) {
+  // موجّه بناء الكتاب: كانفاس (ظلّ واقعي) للكتب حتى PF_CANVAS_MAX، وإلا نافذة DOM (سريعة، بلا ظلّ) للكتب الضخمة
+  function buildPageFlip(gotoPage) {
+    if (pageFlip) { const t = Math.max(0, Math.min((gotoPage || pdfPage) - 1, pageCount - 1)); pageFlip.turnToPage(t); if (!pfCanvasMode) ensurePfWindow(t); return; }
+    if (pageCount <= PF_CANVAS_MAX) buildPageFlipCanvas(gotoPage);
+    else buildPageFlipDom(gotoPage);
+  }
+
+  // ═══ محرّك الكانفاس (كل الصفحات كصور معكوسة تُرسم على كانفا واحدة — ظلّ سلس كـfliphtml5) ═══
+  async function buildPageFlipCanvas(gotoPage) {
+    if (pfBuilding) return;
+    pfBuilding = true; pfCanvasMode = true;
     const cont = $('#r-pageflip');
     const targetIdx = Math.max(0, Math.min((gotoPage || pdfPage) - 1, pageCount - 1));
-    if (pageFlip) { pageFlip.turnToPage(targetIdx); ensurePfWindow(targetIdx); return; }
+    $('#reader').classList.add('pageflip-on');
+    $('#r-canvas-wrap').hidden = true; $('#r-canvas-wrap2').hidden = true;
+    $('#reader').classList.remove('pdf-spread');
+    cont.hidden = false;
+    cont.innerHTML = '<div class="pf-loading"><div class="disc-spin big"></div><p>جارٍ تحضير الكتاب…</p><div class="pf-prog"><i id="pf-prog-i"></i></div></div>';
+    const myTok = ++renderToken;
+    try {
+      const p1 = await pdfDoc.getPage(1); const v = p1.getViewport({ scale: 1 }); pfAspect = v.width / v.height;
+      if (myTok !== renderToken) { pfBuilding = false; return; }
+      // ارسم كل الصفحات كصور معكوسة أفقياً (تُصحَّح باتجاهها عبر مرآة الحاوية RTL)
+      const urls = [];
+      for (let i = 0; i < pageCount; i++) {
+        if (myTok !== renderToken) { pfBuilding = false; return; }
+        try { urls.push(await renderPfImage(i, true)); } catch { urls.push(''); }
+        const pi = $('#pf-prog-i'); if (pi) pi.style.width = Math.round(((i + 1) / pageCount) * 100) + '%';
+      }
+      if (myTok !== renderToken) { pfBuilding = false; return; }
+      cont.innerHTML = '';
+      const box = document.createElement('div'); box.className = 'pf-box rtl';
+      const inner = document.createElement('div'); inner.className = 'pf-inner';
+      box.appendChild(inner); cont.appendChild(box);
+      sizePfBox(box);
+      const bookH = box.clientHeight, pageW = Math.round(bookH * pfAspect);
+      pageFlip = new St.PageFlip(inner, {
+        width: pageW, height: Math.round(bookH), size: 'stretch',
+        minWidth: 160, maxWidth: 3000, minHeight: 160, maxHeight: 2000,
+        drawShadow: true, flippingTime: 650, usePortrait: true, maxShadowOpacity: 0.4,
+        showCover: false, useMouseEvents: false, showPageCorners: false, mobileScrollSupport: false, startPage: targetIdx,
+      });
+      pageFlip.loadFromImages(urls);
+      pageFlip.on('flip', (e) => {
+        pdfPage = (e.data || 0) + 1;
+        state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1;
+        afterNavigate();
+      });
+      wirePfDrag(inner);
+      pdfPage = targetIdx + 1;
+    } catch (e) { console.error('pageflip canvas', e); teardownPageFlip(); renderPdf(gotoPage || pdfPage); }
+    pfBuilding = false;
+  }
+
+  async function buildPageFlipDom(gotoPage) {
+    pfCanvasMode = false;
+    const cont = $('#r-pageflip');
+    const targetIdx = Math.max(0, Math.min((gotoPage || pdfPage) - 1, pageCount - 1));
     if (pfBuilding) return;
     pfBuilding = true;
     $('#reader').classList.add('pageflip-on');
