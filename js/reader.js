@@ -2765,6 +2765,10 @@ const Reader = (() => {
       if (touchX == null) return;
       const dx = e.changedTouches[0].clientX - touchX;
       touchX = null;
+      // طبقة التقليب الواقعي (StPageFlip) تُدير سحبها بنفسها عبر wirePfDrag.
+      // أحداث المؤشّر يوقفها stopPropagation، أمّا أحداث اللمس فتصل هنا مستقلّةً،
+      // فتُنفّذ تنقّلاً ثانياً ⇐ انقلاب ورقتين لكل سحبة على الأجهزة اللمسية. تجاهلها.
+      if (pdfFlipBookActive() && pageFlip) return;
       // لا تقليب أثناء تحديد نص للتظليل أو أثناء الكتابة أو عند التكبير
       const sel = getSelection();
       if ((sel && !sel.isCollapsed) || drawMode || (isPdf && pdfZoom > 1.01)) return;
