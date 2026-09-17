@@ -491,9 +491,12 @@ const Reader = (() => {
   // سحب الورقة بالماوس/اللمس مع تعويض العكس الأفقي (RTL): x داخلي = يمين المستطيل − clientX
   function wirePfDrag(el) {
     let down = false, moved = false, sx = 0, sy = 0;
+    let pending = null, rafId = 0; // آخر موضع + إطار مُجدوَل (خنق التحديث لإطار واحد لكل رسمة)
     const toPos = (e) => { const r = el.getBoundingClientRect(); return { x: r.right - e.clientX, y: e.clientY - r.top }; };
     el.style.touchAction = 'none';
     const clearSel = () => { try { const s = window.getSelection && window.getSelection(); if (s && s.rangeCount) s.removeAllRanges(); } catch {} };
+    // خنق userMove إلى معدّل الإطارات: أحداث اللمس تصل بتردّد أعلى من الرسم فتُسبّب اهتزازاً/وميضاً
+    const flushMove = () => { rafId = 0; if (pageFlip && down && pending) { try { pageFlip.userMove(pending, false); } catch {} } };
     // امنع سحب الصورة الأصليّ (شبح الصورة) الذي يعطّل الطي
     el.addEventListener('dragstart', (e) => e.preventDefault());
     el.addEventListener('pointerdown', (e) => {
@@ -507,12 +510,13 @@ const Reader = (() => {
     el.addEventListener('pointermove', (e) => {
       if (!pageFlip || !down) return; // لا انحناء عند مجرد مرور الماوس — فقط أثناء ضغط الزر
       if (Math.abs(e.clientX - sx) > 4 || Math.abs(e.clientY - sy) > 4) moved = true;
-      pageFlip.userMove(toPos(e), false);
+      pending = toPos(e);
+      if (!rafId) rafId = requestAnimationFrame(flushMove); // تحديث واحد لكل إطار
     });
-    const end = (e) => { if (!pageFlip || !down) return; down = false; clearSel(); try { pageFlip.userStop(toPos(e)); } catch {} if (moved) e.stopPropagation(); };
+    const end = (e) => { if (!pageFlip || !down) return; down = false; if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } pending = null; clearSel(); try { pageFlip.userStop(toPos(e)); } catch {} if (moved) e.stopPropagation(); };
     el.addEventListener('pointerup', end);
     // عند إلغاء المؤشّر (فقدان الالتقاط): أوقف الطيّ ليستقرّ ولا يعلق منتصف الحركة
-    el.addEventListener('pointercancel', (e) => { if (!pageFlip || !down) { down = false; return; } down = false; try { pageFlip.userStop(toPos(e)); } catch {} });
+    el.addEventListener('pointercancel', (e) => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } pending = null; if (!pageFlip || !down) { down = false; return; } down = false; try { pageFlip.userStop(toPos(e)); } catch {} });
     // امنع «نقرة» منطقة التقليب من القفز بعد سحب فعلي
     el.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
   }
@@ -592,7 +596,7 @@ const Reader = (() => {
       pageFlip = new St.PageFlip(inner, {
         width: pageW, height: Math.round(bookH), size: 'stretch',
         minWidth: 160, maxWidth: 3000, minHeight: 160, maxHeight: 2000,
-        drawShadow: true, flippingTime: 650, usePortrait: true, maxShadowOpacity: 0.5,
+        drawShadow: false, flippingTime: 650, usePortrait: true, maxShadowOpacity: 0.5,
         showCover: false, useMouseEvents: false, showPageCorners: false, mobileScrollSupport: false, startPage: targetIdx,
       });
       pageFlip.loadFromHTML(inner.querySelectorAll('.pf-page'));
