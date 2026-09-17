@@ -599,7 +599,7 @@ const Reader = (() => {
       pageFlip = new St.PageFlip(inner, {
         width: pageW, height: Math.round(bookH), size: 'stretch',
         minWidth: 160, maxWidth: 3000, minHeight: 160, maxHeight: 2000,
-        drawShadow: true, flippingTime: 650, usePortrait: true, maxShadowOpacity: 0.4,
+        drawShadow: true, flippingTime: 650, usePortrait: true, maxShadowOpacity: 0.7,
         showCover: false, useMouseEvents: false, showPageCorners: false, mobileScrollSupport: false, startPage: targetIdx,
       });
       pageFlip.loadFromImages(urls);
