@@ -1946,7 +1946,7 @@ const Reader = (() => {
   function toggleBookmark() {
     const key = currentMarkKey();
     const i = (state.bookmarks || []).findIndex((m) => m.page === key);
-    if (i >= 0) { state.bookmarks.splice(i, 1); Library.toast('أُزيلت العلامة المرجعية'); }
+    if (i >= 0) { markDeleted('bookmarks', state.bookmarks[i].id); state.bookmarks.splice(i, 1); Library.toast('أُزيلت العلامة المرجعية'); }
     else {
       state.bookmarks.push({
         id: 'm' + Date.now(), page: key, pct: state.pct,
@@ -2035,6 +2035,16 @@ const Reader = (() => {
   }
   function hideHlPopup() { $('#hl-popup').hidden = true; pendingSel = null; pendingPdfSel = null; }
 
+  // ── دعم دمج المزامنة بلا فقدان: شواهد الحذف + طابع تعديل العناصر ──
+  // كل حذف يُسجَّل في state.deleted[list][id]=وقت، وكل تعديل يضع it.mt=وقت،
+  // فيدمج جهازان تعديلاتهما دون أن يدهس أحدهما الآخر (انظر mergeStates في cloud.js).
+  function markDeleted(list, id) {
+    if (!state || id == null) return;
+    state.deleted = state.deleted || {};
+    (state.deleted[list] = state.deleted[list] || {})[id] = Date.now();
+  }
+  function touchItem(it) { if (it) it.mt = Date.now(); }
+
   function addHighlight(color, withNote) {
     if (!pendingSel) return;
     const h = {
@@ -2058,6 +2068,7 @@ const Reader = (() => {
     setTimeout(() => $('#note-text').focus(), 60);
     $('#note-save').onclick = () => {
       h.note = $('#note-text').value.trim();
+      touchItem(h);
       $('#note-modal').hidden = true;
       if (h.rects) refreshPdfHighlights(); else rebuildText(); // تظليل PDF مقابل نصي
       renderDrawerPanes(); schedulePersist();
@@ -2212,6 +2223,7 @@ const Reader = (() => {
     pane.querySelectorAll('[data-del-h]').forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();
+        markDeleted('highlights', b.dataset.delH);
         state.highlights = state.highlights.filter((h) => h.id !== b.dataset.delH);
         rebuildText(); renderDrawerPanes(); schedulePersist();
       };
@@ -2219,6 +2231,7 @@ const Reader = (() => {
     pane.querySelectorAll('[data-del-n]').forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();
+        markDeleted('pageNotes', b.dataset.delN);
         state.pageNotes = state.pageNotes.filter((n) => n.id !== b.dataset.delN);
         renderDrawerPanes(); schedulePersist();
       };
@@ -2226,6 +2239,7 @@ const Reader = (() => {
     pane.querySelectorAll('[data-del-ph]').forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();
+        markDeleted('pdfHighlights', b.dataset.delPh);
         state.pdfHighlights = state.pdfHighlights.filter((h) => h.id !== b.dataset.delPh);
         refreshPdfHighlights(); renderDrawerPanes(); schedulePersist();
       };
@@ -2268,6 +2282,7 @@ const Reader = (() => {
     pane.querySelectorAll('.mark-item').forEach((btn) => {
       btn.onclick = (e) => {
         if (e.target.dataset.del) {
+          markDeleted('bookmarks', e.target.dataset.del);
           state.bookmarks = state.bookmarks.filter((m) => m.id !== e.target.dataset.del);
           renderMarksPane(); updateRibbon(); schedulePersist();
           return;
@@ -2597,11 +2612,11 @@ const Reader = (() => {
       b.onclick = () => {
         if (pendingMarkId) {
           const h = state.highlights.find((x) => x.id === pendingMarkId);
-          if (h) { h.color = b.dataset.color; rebuildText(); renderDrawerPanes(); schedulePersist(); }
+          if (h) { h.color = b.dataset.color; touchItem(h); rebuildText(); renderDrawerPanes(); schedulePersist(); }
           hideHlPopup();
         } else if (pendingPdfMark) {
           const h = state.pdfHighlights.find((x) => x.id === pendingPdfMark);
-          if (h) { h.color = b.dataset.color; refreshPdfHighlights(); renderDrawerPanes(); schedulePersist(); }
+          if (h) { h.color = b.dataset.color; touchItem(h); refreshPdfHighlights(); renderDrawerPanes(); schedulePersist(); }
           pendingPdfMark = null; hideHlPopup();
         } else if (pendingPdfSel) addPdfHighlight(b.dataset.color, false);
         else addHighlight(b.dataset.color, false);
@@ -2621,9 +2636,11 @@ const Reader = (() => {
     };
     $('#hl-del-btn').onclick = () => {
       if (pendingMarkId) {
+        markDeleted('highlights', pendingMarkId);
         state.highlights = state.highlights.filter((h) => h.id !== pendingMarkId);
         hideHlPopup(); rebuildText(); renderDrawerPanes(); schedulePersist();
       } else if (pendingPdfMark) {
+        markDeleted('pdfHighlights', pendingPdfMark);
         state.pdfHighlights = state.pdfHighlights.filter((h) => h.id !== pendingPdfMark);
         pendingPdfMark = null; hideHlPopup(); refreshPdfHighlights(); renderDrawerPanes(); schedulePersist();
       }

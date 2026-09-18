@@ -120,27 +120,36 @@ const Cloud = (() => {
       const localBooks = await Store.getBooks();
       const localById = new Map(localBooks.map((b) => [b.id, b]));
 
-      // سحابة → محلي (كتب جديدة أو أحدث، واحترام الحذف الناعم)
+      // ① سحابة → محلي: الحذف، الكتب الجديدة، ودمج الحالة للموجود في الطرفين
       for (const r of rows || []) {
         if (r.deleted) { if (localById.has(r.id)) await Store.deleteBook(r.id); continue; }
         const lb = localById.get(r.id);
+        if (!lb) { await applyCloudRow(r); continue; } // كتاب جديد من السحابة (يدمج الحالة داخلياً)
         const cloudT = new Date(r.updated_at).getTime();
-        if (!lb) { await applyCloudRow(r); continue; }
         const localT = lb.updatedAt || 0;
-        if (cloudT > localT + 1500) await applyCloudRow(r); // السحابة أحدث
+        if (cloudT > localT + 1500) {
+          // ميتا السحابة أحدث ⇒ اعتمدها + ادمج الحالة؛ إن أضاف الدمج جديداً ارفعه
+          const res = await applyCloudRow(r);
+          if (res && res.divergedFromCloud) await pushStateNow(r.id);
+          continue;
+        }
+        // الطرفان موجودان والميتا المحلية ليست أقدم: ادمج الحالة دون تبديل الميتا
+        const localState = await Store.getState(r.id);
+        const cloudState = { ...(r.state || {}), bookId: r.id };
+        const merged = mergeStates(localState, cloudState);
+        const mSig = stateSig(merged);
+        if (mSig !== stateSig(localState)) await Store.saveState(merged);
+        if (localT > cloudT + 1500) await uploadBook(r.id, { silent: true }); // الميتا المحلية أحدث ⇒ ارفع الكل (مع الحالة المدموجة)
+        else if (mSig !== stateSig(cloudState)) await pushStateNow(r.id);      // الدمج أضاف ما ليس في السحابة
       }
-      // محلي → سحابة (كتب لم تُرفع بعد أو أحدث محلياً)
+      // ② محلي → سحابة: كتب لم تُرفع بعد، وإعادة رفع ملف PDF ناقص
       for (const b of localBooks) {
         const r = cloudById.get(b.id);
-        if (r && r.deleted) { await Store.deleteBook(b.id); continue; } // حُذف من جهاز آخر
-        if (!r) { await uploadBook(b.id); continue; }
-        // إعادة رفع ملف PDF ناقص في السحابة (فشل رفع سابق) إن كان موجوداً محلياً
-        if (b.type === 'pdf' && !r.has_file) {
+        if (!r) { await uploadBook(b.id, { silent: true }); continue; }
+        if (!r.deleted && b.type === 'pdf' && !r.has_file) {
           const pl = await Store.getPayload(b.id);
-          if (pl instanceof Blob) { await uploadBook(b.id, { silent: true }); continue; }
+          if (pl instanceof Blob) await uploadBook(b.id, { silent: true });
         }
-        const cloudT = new Date(r.updated_at).getTime();
-        if ((b.updatedAt || 0) > cloudT + 1500) await uploadBook(b.id, { silent: true });
       }
       setStatus('synced', 'متزامن — ' + (user.email || ''));
       if (window.Library) Library.refresh();
@@ -156,6 +165,64 @@ const Cloud = (() => {
     if (/relation .*books.* does not exist|schema/i.test(m)) return 'الجداول غير مُعدّة — نفّذ خطوات الإعداد';
     if (/bucket/i.test(m)) return 'مخزن الملفات غير مُعدّ — نفّذ خطوات الإعداد';
     return m || 'خطأ في المزامنة';
+  }
+
+  /* ── دمج حالة القراءة على مستوى العنصر (منع فقدان البيانات عند التعارض) ──
+     كل جهاز قد يضيف/يعدّل/يحذف تظليلات وملاحظات وعلامات بشكل مستقلّ. بدل «آخر
+     كتابة تفوز» على الحالة كلّها (تدهس عمل جهاز آخر)، ندمج كل مجموعة بمفتاح id:
+     • الإضافات من الطرفين تُحفظ جميعاً.
+     • عند وجود العنصر في الطرفين نأخذ الأحدث (mt أو at).
+     • الحذف يُحترم عبر شواهد state.deleted[list][id]=وقت (إن كان الحذف أحدث من التعديل).
+     • الموضع/الصفحة/التمرير من الجهاز الأخير قراءةً (lastRead الأكبر).
+     • الوقت المقروء = الأكبر، و«أُنهي» = إن أنهاه أي جهاز. */
+  const LISTS = ['highlights', 'bookmarks', 'pageNotes', 'pdfHighlights'];
+  const itemT = (it) => (it && (it.mt || it.at)) || 0;
+
+  function mergeDelMap(a = {}, b = {}) {
+    const out = {};
+    for (const src of [a, b]) for (const k in src) out[k] = Math.max(out[k] || 0, src[k] || 0);
+    const cutoff = Date.now() - 90 * 864e5; // قصّ الشواهد الأقدم من ٩٠ يوماً
+    for (const k in out) if (out[k] < cutoff) delete out[k];
+    return out;
+  }
+  function mergeList(aList, bList, delMap) {
+    const byId = new Map();
+    const put = (it) => { if (!it || it.id == null) return; const p = byId.get(it.id); if (!p || itemT(it) >= itemT(p)) byId.set(it.id, it); };
+    (aList || []).forEach(put); (bList || []).forEach(put);
+    const out = [];
+    for (const it of byId.values()) { const d = (delMap && delMap[it.id]) || 0; if (d && d >= itemT(it)) continue; out.push(it); }
+    out.sort((x, y) => (x.at || 0) - (y.at || 0));
+    return out;
+  }
+  function mergeStates(a, b) {
+    a = a || {}; b = b || {};
+    const aDel = a.deleted || {}, bDel = b.deleted || {};
+    const deleted = {};
+    for (const l of LISTS) deleted[l] = mergeDelMap(aDel[l], bDel[l]);
+    const posFromA = (a.lastRead || 0) >= (b.lastRead || 0);
+    const pos = posFromA ? a : b;
+    const m = {
+      bookId: a.bookId || b.bookId,
+      pct: pos.pct || 0, page: pos.page || 0, scrollTop: pos.scrollTop || 0,
+      lastRead: Math.max(a.lastRead || 0, b.lastRead || 0),
+      seconds: Math.max(a.seconds || 0, b.seconds || 0),
+      finished: !!(a.finished || b.finished),
+      deleted,
+    };
+    for (const l of LISTS) m[l] = mergeList(a[l], b[l], deleted[l]);
+    // الرسومات: اتحاد المفاتيح؛ الصفحة المشتركة تؤخذ من الجهاز الأخير قراءةً
+    const ad = a.drawings || {}, bd = b.drawings || {}, dr = {};
+    for (const k of new Set([...Object.keys(ad), ...Object.keys(bd)])) dr[k] = (ad[k] && bd[k]) ? (posFromA ? ad[k] : bd[k]) : (ad[k] || bd[k]);
+    m.drawings = dr;
+    return m;
+  }
+  // بصمة مختصرة للحالة لكشف ما إذا كان الدمج أضاف جديداً (فنحفظ/نرفع فقط عند الحاجة)
+  function stateSig(s) {
+    s = s || {};
+    const ids = (l) => (s[l] || []).map((i) => i.id + ':' + itemT(i)).sort().join(',');
+    const del = (l) => { const d = (s.deleted || {})[l] || {}; return Object.keys(d).map((id) => id + ':' + d[id]).sort().join(','); };
+    return [s.page, Math.round((s.pct || 0) * 1e4), s.scrollTop, s.seconds, !!s.finished, s.lastRead,
+      ...LISTS.map(ids), ...LISTS.map(del), Object.keys(s.drawings || {}).sort().join(',')].join('|');
   }
 
   /* ── تطبيق صف سحابي على المحلي ── */
@@ -174,8 +241,31 @@ const Cloud = (() => {
     const existing = await Store.getBook(r.id);
     if (existing) await Store.updateBook(r.id, meta);
     else await Store.addBook(meta, payload);
-    if (r.state) { const st = { ...r.state, bookId: r.id }; await Store.saveState(st); }
+    // ادمج الحالة الواردة مع المحلية بدل دهسها (يحفظ تظليلات/ملاحظات هذا الجهاز)
+    let mergedSig = null, incomingSig = null;
+    if (r.state) {
+      const local = existing ? await Store.getState(r.id) : null;
+      const incoming = { ...r.state, bookId: r.id };
+      const merged = mergeStates(local, incoming);
+      incomingSig = stateSig(incoming);
+      mergedSig = stateSig(merged);
+      await Store.saveState(merged);
+    }
     recentlyPushed.set(r.id, new Date(r.updated_at).getTime());
+    // إن أضاف الدمج ما ليس في السحابة، ارفع الدمج كي تتقارب الأجهزة
+    return { divergedFromCloud: mergedSig != null && mergedSig !== incomingSig };
+  }
+
+  // رفع عمود الحالة فقط (أخفّ من رفع الصف كاملاً) — للتقارب بعد الدمج
+  async function pushStateNow(id) {
+    if (!ready || !user) return;
+    try {
+      await touch(id);
+      const st = await Store.getState(id);
+      const { error } = await sb.from(TABLE).update({ state: stripState(st), updated_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+      recentlyPushed.set(id, Date.now());
+    } catch (e) { console.error('pushStateNow', e); }
   }
 
   /* ── رفع كتاب كامل (بيانات + ملف) ── */
@@ -321,7 +411,9 @@ const Cloud = (() => {
         const pushedAt = recentlyPushed.get(row.id);
         const rowT = new Date(row.updated_at).getTime();
         if (pushedAt && Math.abs(pushedAt - rowT) < 5000) return;
-        await applyCloudRow(row); // يعالج deleted داخلياً
+        const res = await applyCloudRow(row); // يعالج deleted والدمج داخلياً
+        // إن كان لدى هذا الجهاز عناصر ليست في الوارد، ارفع الدمج ليتقارب الطرفان
+        if (res && res.divergedFromCloud && !row.deleted) pushStateNow(row.id);
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => { if (window.Library) Library.refresh(); }, 400);
       })
