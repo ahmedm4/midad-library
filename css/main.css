@@ -830,6 +830,12 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .deep-hit b { color: #ffd76e; font-weight: 700; background: rgba(217,169,79,.14);
   padding: 0 3px; border-radius: 4px; }
 .deep-hit .dh-loc { color: #877fa0; font-size: 11.5px; margin-inline-start: 8px; }
+/* نتائج البحث في التظليلات والملاحظات */
+.note-hit { display: flex; flex-direction: column; gap: 6px; }
+.note-hit .nh-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.note-hit .nh-quote { color: var(--cream); font-size: 14px; line-height: 1.7; }
+.note-hit .nh-note { color: #cbbfe4; font-size: 13.5px; line-height: 1.7; }
+
 .deep-indexing { text-align: center; color: var(--muted); font-size: 13.5px; padding: 20px; }
 .deep-indexing .di-bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.1);
   max-width: 260px; margin: 10px auto 0; overflow: hidden; }

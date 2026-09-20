@@ -524,7 +524,7 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   /* ─── البحث الشامل داخل كل الكتب ─── */
-  let deepTimer = null, deepToken = 0;
+  let deepTimer = null, deepToken = 0, notesToken = 0;
 
   const normSpace = (s) => s.replace(/\s+/g, ' ').trim();
   // تنظيف مقتطف للعرض: يوحّد المسافات دون قصّ الحواف الملاصقة، ويزيل علامات #
@@ -883,6 +883,71 @@ create policy "midad_own_files" on storage.objects for all
     });
   }
 
+  /* ─── البحث في التظليلات والملاحظات عبر كل الكتب ───
+     يغطّي ما لا يغطّيه البحث داخل النصّ: كلامك أنت — نصّ التظليل وتعليقك عليه
+     وملاحظات صفحات الـPDF. كل نتيجة تقفز إلى موضعها بالضبط. */
+  const NOTE_KINDS = {
+    hl:   { icon: '🖍', label: 'تظليل' },
+    phl:  { icon: '🖍', label: 'تظليل PDF' },
+    note: { icon: '📝', label: 'ملاحظة صفحة' },
+  };
+
+  // يجمع عناصر قابلة للبحث من حالة كتاب واحد
+  function annotationsOf(b, st) {
+    const out = [];
+    for (const h of (st.highlights || [])) out.push({ kind: 'hl', id: h.id, text: h.text || '', note: h.note || '', at: h.at || 0, jump: { find: normSpace(h.text || '').slice(0, 60) } });
+    for (const h of (st.pdfHighlights || [])) out.push({ kind: 'phl', id: h.id, text: h.text || '', note: h.note || '', at: h.at || 0, page: h.page, jump: { page: h.page } });
+    for (const n of (st.pageNotes || [])) out.push({ kind: 'note', id: n.id, text: '', note: n.note || '', at: n.at || 0, page: (n.page || 0) + 1, jump: { page: (n.page || 0) + 1 } });
+    return out.map((a) => ({ ...a, book: b }));
+  }
+
+  async function notesSearch(q) {
+    const token = ++notesToken;
+    const panel = $('#notes-results'), list = $('#notes-list');
+    const needle = q.toLowerCase();
+    const found = [];
+    for (const b of books) {
+      let st = null;
+      try { st = await Store.getState(b.id); } catch {}
+      if (token !== notesToken) return;
+      if (!st) continue;
+      for (const a of annotationsOf(b, st)) {
+        if ((a.text + ' ' + a.note).toLowerCase().includes(needle)) found.push(a);
+      }
+    }
+    if (token !== notesToken) return;
+    if (!found.length) { panel.hidden = true; return; }
+    found.sort((x, y) => (y.at || 0) - (x.at || 0)); // الأحدث أولاً
+    const shown = found.slice(0, 60);
+    panel.hidden = false;
+    $('#notes-count').textContent = `${found.length} نتيجة` + (found.length > shown.length ? ` (تُعرض ${shown.length})` : '');
+
+    // يُبرز موضع الكلمة داخل مقتطف قصير
+    const mark = (s2) => {
+      const t = snippetClean(s2 || '');
+      if (!t) return '';
+      const i = t.toLowerCase().indexOf(needle);
+      if (i < 0) return esc(t.slice(0, 120));
+      const a = Math.max(0, i - 40), e = Math.min(t.length, i + q.length + 60);
+      return (a > 0 ? '…' : '') + esc(t.slice(a, i)) + '<b>' + esc(t.slice(i, i + q.length)) + '</b>' + esc(t.slice(i + q.length, e)) + (e < t.length ? '…' : '');
+    };
+
+    list.innerHTML = shown.map((a, i) => {
+      const k = NOTE_KINDS[a.kind];
+      const loc = a.page ? `<span class="dh-loc">ص ${a.page}</span>` : '';
+      const quote = a.text ? `<span class="nh-quote">«${mark(a.text)}»</span>` : '';
+      const note = a.note ? `<span class="nh-note">📝 ${mark(a.note)}</span>` : '';
+      return `<button class="deep-hit note-hit" data-i="${i}">
+        <span class="nh-head">${k.icon} ${esc(a.book.title)}<span class="db-badge">${k.label}</span>${loc}</span>
+        ${quote}${note}
+      </button>`;
+    }).join('');
+
+    list.querySelectorAll('.note-hit').forEach((btn) => {
+      btn.onclick = () => { const a = shown[+btn.dataset.i]; openBook(a.book.id, a.jump); };
+    });
+  }
+
   function coverHTML(b, extraClass = '') {
     if (b.cover) return `<img class="${extraClass}" src="${b.cover}" alt="">`;
     const pal = COVER_PALETTES[hashCode(b.id) % COVER_PALETTES.length];
@@ -1212,8 +1277,8 @@ create policy "midad_own_files" on storage.objects for all
       query = e.target.value.trim();
       renderGrid();
       clearTimeout(deepTimer);
-      if (query.length >= 2) deepTimer = setTimeout(() => deepSearch(query), 350);
-      else { $('#deep-results').hidden = true; }
+      if (query.length >= 2) deepTimer = setTimeout(() => { deepSearch(query); notesSearch(query); }, 350);
+      else { $('#deep-results').hidden = true; $('#notes-results').hidden = true; notesToken++; }
     };
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
     { const tg = $('#view-toggle'); if (tg) { tg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.view === viewMode); b.onclick = () => setView(b.dataset.view); }); } }
