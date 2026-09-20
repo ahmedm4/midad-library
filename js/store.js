@@ -58,17 +58,21 @@ const Store = (() => {
   const deleteDeck = (bookId) => p(os('decks', 'readwrite').delete(bookId));
 
   /* ── حالة القراءة (الموضع، العلامات، الملاحظات، الوقت) ── */
+  const blankState = (bookId) => ({
+    bookId, pct: 0, page: 0, scrollTop: 0,
+    bookmarks: [],       // {id, page, pct, label, at}
+    highlights: [],      // {id, start, end, color, note, text, at}  (نصي)
+    pageNotes: [],       // {id, page, note, at}                     (PDF)
+    pdfHighlights: [],   // {id, page, rects, color, note, text, at} (PDF)
+    drawings: {},        // {pageNum: [{tool, color, size, pts:[[nx,ny]..]}]} (PDF)
+    seconds: 0, lastRead: 0, finished: false,
+  });
   async function getState(bookId) {
     const s = await p(os('states').get(bookId));
-    return s || {
-      bookId, pct: 0, page: 0, scrollTop: 0,
-      bookmarks: [],       // {id, page, pct, label, at}
-      highlights: [],      // {id, start, end, color, note, text, at}  (نصي)
-      pageNotes: [],       // {id, page, note, at}                     (PDF)
-      drawings: {},        // {pageNum: [{tool, color, size, pts:[[nx,ny]..]}]} (PDF)
-      seconds: 0, lastRead: 0, finished: false,
-    };
+    return s || blankState(bookId);
   }
+  // كل الحالات بجولة واحدة على IndexedDB بدل قراءة لكل كتاب (أسرع بكثير مع مكتبة كبيرة)
+  const getAllStates = () => p(os('states').getAll());
   const saveState = (state) => p(os('states', 'readwrite').put(state));
 
   /* ── إعدادات القارئ (عامة) ── */
@@ -152,7 +156,7 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
     deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal };
 })();
 window.Store = Store;

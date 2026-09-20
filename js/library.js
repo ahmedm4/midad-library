@@ -213,8 +213,15 @@ create policy "midad_own_files" on storage.objects for all
 
   async function refresh() {
     books = await Store.getBooks();
+    lastDeep = null; // تغيّرت المكتبة ⇒ لا تُضيّق البحث بنتائج قديمة
     states = {};
-    for (const b of books) states[b.id] = await Store.getState(b.id);
+    if (Store.getAllStates) {
+      // جولة واحدة على مخزن الحالات ثم حالة فارغة لما لم يُقرأ بعد (بلا أي قراءة إضافية)
+      for (const st of await Store.getAllStates()) states[st.bookId] = st;
+      for (const b of books) if (!states[b.id]) states[b.id] = Store.blankState(b.id);
+    } else {
+      for (const b of books) states[b.id] = await Store.getState(b.id);
+    }
     // ثبّت أسماء الرفوف المكتشفة من الكتب محلياً (تدعم استمرارها والمزامنة عبر الأجهزة)
     if (Store.saveShelves) Store.saveShelves(allShelves());
     // احسب عدد بطاقات المراجعة المستحقّة (لشارة القائمة)
@@ -538,6 +545,7 @@ create policy "midad_own_files" on storage.objects for all
 
   /* ─── البحث الشامل داخل كل الكتب ─── */
   let deepTimer = null, deepToken = 0, notesToken = 0;
+  let lastDeep = null; // {q, ids} — لتضييق البحث عند إطالة نفس الكلمة
 
   const normSpace = (s) => s.replace(/\s+/g, ' ').trim();
   // تنظيف مقتطف للعرض: يوحّد المسافات دون قصّ الحواف الملاصقة، ويزيل علامات #
@@ -849,16 +857,34 @@ create policy "midad_own_files" on storage.objects for all
     }
     if (token !== deepToken) return;
 
-    // اجمع النتائج من كل الكتب
-    const results = [];
-    for (const b of books) {
-      const s = await searchableOf(b, false);
-      if (token !== deepToken) return;
-      if (!s || !s.text) continue;
-      const hits = findHits(s.text, q, 4);
-      if (hits.length) results.push({ book: b, src: s, hits });
+    // نطاق البحث: عند إطالة نفس الكلمة («الجاح» ← «الجاحظ») لا يمكن أن يطابق
+    // كتابٌ لم يطابق الأقصر، فنبحث في نتائج المرّة السابقة فقط.
+    let scope = books;
+    if (lastDeep && q.toLowerCase().startsWith(lastDeep.q) && lastDeep.q.length >= 2) {
+      const keep = new Set(lastDeep.ids);
+      scope = books.filter((b) => keep.has(b.id));
     }
+
+    // اقرأ النصوص بالتوازي (بسقف تزامن) بدل قراءة متسلسلة لكل كتاب
+    const slots = new Array(scope.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < scope.length) {
+        const i = next++;
+        const b = scope[i];
+        if (token !== deepToken) return;
+        let src = null;
+        try { src = await searchableOf(b, false); } catch {}
+        if (token !== deepToken) return;
+        if (!src || !src.text) continue;
+        const hits = findHits(src.text, q, 4);
+        if (hits.length) slots[i] = { book: b, src, hits };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, scope.length) }, worker));
     if (token !== deepToken) return;
+    const results = slots.filter(Boolean); // الترتيب محفوظ حسب ترتيب المكتبة
+    lastDeep = { q: q.toLowerCase(), ids: results.map((r) => r.book.id) };
 
     const total = results.reduce((n, r) => n + r.hits.length, 0);
     $('#deep-count').textContent = total ? `${total} نتيجة في ${results.length} كتاب` : '';
@@ -919,15 +945,15 @@ create policy "midad_own_files" on storage.objects for all
     const panel = $('#notes-results'), list = $('#notes-list');
     const needle = q.toLowerCase();
     const found = [];
+    // الحالات محمّلة أصلاً في الذاكرة من refresh() — لا داعي لقراءة القرص لكل كتاب
     for (const b of books) {
-      let st = null;
-      try { st = await Store.getState(b.id); } catch {}
-      if (token !== notesToken) return;
+      const st = states[b.id];
       if (!st) continue;
       for (const a of annotationsOf(b, st)) {
         if ((a.text + ' ' + a.note).toLowerCase().includes(needle)) found.push(a);
       }
     }
+    if (token !== notesToken) return;
     if (token !== notesToken) return;
     if (!found.length) { panel.hidden = true; return; }
     found.sort((x, y) => (y.at || 0) - (x.at || 0)); // الأحدث أولاً
@@ -1293,7 +1319,7 @@ create policy "midad_own_files" on storage.objects for all
       renderGrid();
       clearTimeout(deepTimer);
       if (query.length >= 2) deepTimer = setTimeout(() => { deepSearch(query); notesSearch(query); }, 350);
-      else { $('#deep-results').hidden = true; $('#notes-results').hidden = true; notesToken++; }
+      else { $('#deep-results').hidden = true; $('#notes-results').hidden = true; notesToken++; lastDeep = null; }
     };
     $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
     { const tg = $('#view-toggle'); if (tg) { tg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.view === viewMode); b.onclick = () => setView(b.dataset.view); }); } }
