@@ -177,6 +177,19 @@ create policy "midad_own_books" on midad_books for all
 do $$ begin
   alter publication supabase_realtime add table midad_books;
 exception when others then null; end $$;
+-- سجلّ القراءة اليومي: صفّ لكل جهاز (الجمع بين الأجهزة يتم عند العرض)
+create table if not exists midad_stats (
+  owner uuid references auth.users not null default auth.uid(),
+  device text not null,
+  log jsonb default '{}'::jsonb,
+  goal int, goal_at bigint default 0,
+  updated_at timestamptz default now(),
+  primary key (owner, device)
+);
+alter table midad_stats enable row level security;
+drop policy if exists "midad_own_stats" on midad_stats;
+create policy "midad_own_stats" on midad_stats for all
+  using (auth.uid() = owner) with check (auth.uid() = owner);
 insert into storage.buckets (id, name) values ('midad-files','midad-files')
   on conflict do nothing;
 drop policy if exists "midad_own_files" on storage.objects;
@@ -2428,7 +2441,7 @@ create policy "midad_own_files" on storage.objects for all
     rows.sort((a, b) => b.sec - a.sec);
 
     // ── لوحة الإنجاز: السلسلة + الهدف اليومي + خريطة النشاط ──
-    const log = Store.getLog();
+    const log = Store.getCombinedLog ? Store.getCombinedLog() : Store.getLog(); // قراءتك على كل أجهزتك
     const goal = Store.getGoal();
     const streak = Store.getStreak();
     const todaySec = log[Store.todayKey()] || 0;

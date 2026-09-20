@@ -2397,6 +2397,7 @@ const Reader = (() => {
       if (Date.now() - lastActivity < 90000) {
         state.seconds = (state.seconds || 0) + 5;
         Store.logAddSeconds(5); // سجلّ القراءة اليومي (سلسلة الأيام والهدف)
+        if (window.Cloud && Cloud.pushStats) Cloud.pushStats(); // يُرفع مجمَّعاً كل دقيقة
         if (state.seconds % 30 === 0) { schedulePersist(); updateReadStat(); }
       }
     }, 5000);

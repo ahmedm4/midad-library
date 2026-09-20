@@ -91,6 +91,31 @@ const Store = (() => {
   const LOG_KEY = 'midad-log', GOAL_KEY = 'midad-goal';
   const todayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   function getLog() { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '{}'); } catch { return {}; } }
+
+  /* ── معرّف ثابت لهذا الجهاز: سجلّ القراءة يُخزَّن لكل جهاز على حدة،
+     لأن جمع مجموعٍ مدموج بين الأجهزة يُضاعف الحساب في كل مزامنة. ── */
+  const DEV_KEY = 'midad-device';
+  function deviceId() {
+    let d = null;
+    try { d = localStorage.getItem(DEV_KEY); } catch {}
+    if (!d) {
+      d = crypto.randomUUID ? crypto.randomUUID() : 'd' + Date.now() + Math.random().toString(36).slice(2);
+      try { localStorage.setItem(DEV_KEY, d); } catch {}
+    }
+    return d;
+  }
+
+  /* سجلّ بقية الأجهزة مجموعاً (يُحدَّث من السحابة، للعرض فقط — لا يُكتب فيه محلياً) */
+  const RLOG_KEY = 'midad-log-remote';
+  function getRemoteLog() { try { return JSON.parse(localStorage.getItem(RLOG_KEY) || '{}'); } catch { return {}; } }
+  function setRemoteLog(o) { try { localStorage.setItem(RLOG_KEY, JSON.stringify(o || {})); } catch {} }
+
+  /* ما تعرضه الإحصاءات: قراءة هذا الجهاز + قراءة بقية أجهزتك في اليوم نفسه */
+  function getCombinedLog() {
+    const own = getLog(), rem = getRemoteLog(), out = { ...own };
+    for (const k in rem) out[k] = (out[k] || 0) + (rem[k] || 0);
+    return out;
+  }
   function logAddSeconds(sec) {
     const log = getLog();
     const k = todayKey();
@@ -106,9 +131,18 @@ const Store = (() => {
   function saveShelves(arr) { localStorage.setItem(SHELVES_KEY, JSON.stringify([...new Set((arr || []).map((s) => String(s).trim()).filter(Boolean))])); }
 
   function getGoal() { return parseInt(localStorage.getItem(GOAL_KEY) || '20', 10); }
-  function setGoal(min) { localStorage.setItem(GOAL_KEY, String(Math.max(1, min | 0))); }
+  function setGoal(min) {
+    localStorage.setItem(GOAL_KEY, String(Math.max(1, min | 0)));
+    try { localStorage.setItem(GOAL_KEY + '-at', String(Date.now())); } catch {}
+  }
+  const getGoalAt = () => parseInt(localStorage.getItem(GOAL_KEY + '-at') || '0', 10);
+  // اعتماد هدف قادم من جهاز آخر مع ختمه الأصلي (دون اعتباره تعديلاً جديداً)
+  function adoptGoal(min, at) {
+    localStorage.setItem(GOAL_KEY, String(Math.max(1, min | 0)));
+    try { localStorage.setItem(GOAL_KEY + '-at', String(at || Date.now())); } catch {}
+  }
   function getStreak() {
-    const log = getLog();
+    const log = getCombinedLog();
     const thr = 60; // ثانية واحدة على الأقل تُعدّ… نعدّ من قرأ ولو دقيقة
     let streak = 0;
     const d = new Date();
@@ -118,6 +152,7 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves };
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
+    deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal };
 })();
 window.Store = Store;

@@ -5,6 +5,7 @@ const Cloud = (() => {
   const CFG_KEY = 'midad-cloud';
   const BUCKET = 'midad-files';
   const TABLE = 'midad_books';
+  const STATS_TABLE = 'midad_stats';
   const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
   let sb = null;          // عميل Supabase
@@ -14,7 +15,9 @@ const Cloud = (() => {
   let channel = null;     // اشتراك اللحظة
   const pushTimers = {};  // مؤقتات دفع الحالة لكل كتاب
   const deckTimers = {};  // مؤقتات دفع البطاقات لكل كتاب
-  let deckSupported = true; // يصير false إن كان الجدول بلا عمود deck
+  let deckSupported = true;  // يصير false إن كان الجدول بلا عمود deck
+  let statsSupported = true; // يصير false إن لم يوجد جدول midad_stats
+  let statsTimer = null;     // تجميع دفعات سجلّ القراءة
   const recentlyPushed = new Map(); // كتم صدى اللحظة
   let statusCb = null;
 
@@ -177,6 +180,7 @@ const Cloud = (() => {
           if (pl instanceof Blob) await uploadBook(b.id, { silent: true });
         }
       }
+      await syncStats(); // سجلّ القراءة اليومي (السلسلة والهدف عبر الأجهزة)
       lastSyncAt = Date.now();
       setStatus('synced', syncedMsg());
       if (window.Library) Library.refresh();
@@ -184,6 +188,56 @@ const Cloud = (() => {
       console.error('syncAll', e);
       setStatus('error', friendlyErr(e));
     } finally { syncing = false; }
+  }
+
+  /* ── مزامنة سجلّ القراءة اليومي (السلسلة + الهدف) ──
+     كل جهاز يملك صفّه الخاص (owner, device) ويرفع ما قرأه هو فقط.
+     المعروض = مجموع صفوف كل الأجهزة ليومٍ واحد. لو خزّنّا مجموعاً مدموجاً
+     واحداً ورفعناه، لأعاد كل جهاز جمع ما جمعه الآخر فتضاعفت الأرقام. */
+  async function syncStats() {
+    if (!ready || !user || !statsSupported || !Store.deviceId) return;
+    const me = Store.deviceId();
+    try {
+      const { data: rows, error } = await sb.from(STATS_TABLE).select('device, log, goal, goal_at, updated_at');
+      if (error) {
+        // الجدول غير مُنشأ بعد ⇒ تبقى الإحصاءات محلية بلا إزعاج
+        if (/does not exist|schema cache|relation/i.test(error.message || '')) { statsSupported = false; return; }
+        throw error;
+      }
+      // اجمع سجلّات بقية الأجهزة (لا سجلّ هذا الجهاز كي لا يُحتسب مرتين)
+      const remote = {};
+      let bestGoal = null, bestGoalAt = 0;
+      for (const r of rows || []) {
+        if ((r.goal_at || 0) > bestGoalAt && r.goal) { bestGoalAt = r.goal_at; bestGoal = r.goal; }
+        if (r.device === me) continue;
+        const lg = r.log || {};
+        for (const k in lg) remote[k] = (remote[k] || 0) + (lg[k] || 0);
+      }
+      Store.setRemoteLog(remote);
+      // الهدف اليومي: أحدث ضبط بين الأجهزة يفوز
+      if (bestGoal && bestGoalAt > (Store.getGoalAt ? Store.getGoalAt() : 0)) Store.adoptGoal(bestGoal, bestGoalAt);
+
+      // ارفع سجلّ هذا الجهاز
+      const up = {
+        owner: user.id, device: me,
+        log: Store.getLog(), goal: Store.getGoal(),
+        goal_at: Store.getGoalAt ? Store.getGoalAt() : 0,
+        updated_at: new Date().toISOString(),
+      };
+      const { error: upErr } = await sb.from(STATS_TABLE).upsert(up, { onConflict: 'owner,device' });
+      if (upErr) {
+        if (/does not exist|schema cache|relation/i.test(upErr.message || '')) { statsSupported = false; return; }
+        throw upErr;
+      }
+      if (window.Library && Library.refresh) Library.refresh();
+    } catch (e) { console.error('syncStats', e); }
+  }
+
+  // يُستدعى بينما تتراكم دقائق القراءة — مؤجَّل كي لا نرفع كل خمس ثوانٍ
+  function pushStats() {
+    if (!ready || !user || !statsSupported) return;
+    clearTimeout(statsTimer);
+    statsTimer = setTimeout(syncStats, 60000);
   }
 
   function friendlyErr(e) {
@@ -507,7 +561,7 @@ const Cloud = (() => {
   return {
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
-    pushBook, pushState, pushDeck, deleteBook, ensurePayload,
+    pushBook, pushState, pushDeck, pushStats, syncStats, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,
