@@ -1446,9 +1446,10 @@ const Reader = (() => {
         const existing = (await Store.getDeck(book.id)) || { cards: [] };
         const have = new Set((existing.cards || []).map((c) => c.q));
         const now = Date.now();
-        const fresh = cards.filter((c) => !have.has(c.q)).map((c) => ({ id: 'fc' + now + Math.random().toString(36).slice(2, 6), q: c.q || '', a: c.a || '', box: 1, due: now }));
+        const fresh = cards.filter((c) => !have.has(c.q)).map((c) => ({ id: 'fc' + now + Math.random().toString(36).slice(2, 6), q: c.q || '', a: c.a || '', box: 1, due: now, mt: now }));
         const merged = [...(existing.cards || []), ...fresh];
         await Store.saveDeck(book.id, merged);
+        if (window.Cloud) Cloud.pushDeck(book.id);
         saveBtn.textContent = `✓ حُفظت — ${merged.length} بطاقة في «${book.title}»`;
         saveBtn.disabled = true;
         Library.toast('حُفظت البطاقات للمراجعة 🃏', 'gold');

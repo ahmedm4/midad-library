@@ -103,6 +103,8 @@ const Library = (() => {
       $('#cloud-dot').className = 'cloud-dot ' + state;
       const line = $('#cloud-status-line');
       if (line) line.textContent = msg;
+      // اجعل الحالة مقروءة دون فتح النافذة (تلميح زر السحابة)
+      const cb = $('#btn-cloud'); if (cb) cb.title = msg;
       // إظهار الشاشة المناسبة
       const configured = Cloud.isConfigured();
       const signedIn = Cloud.isSignedIn();
@@ -2242,7 +2244,7 @@ create policy "midad_own_files" on storage.objects for all
 
     let idx = 0, reviewed = 0;
     const dirty = new Set();
-    const saveDirty = async () => { for (const id of dirty) await Store.saveDeck(id, deckMap[id]); dirty.clear(); };
+    const saveDirty = async () => { for (const id of dirty) { await Store.saveDeck(id, deckMap[id]); if (window.Cloud) Cloud.pushDeck(id); } dirty.clear(); };
 
     const showCard = () => {
       if (idx >= queue.length) {
@@ -2269,6 +2271,7 @@ create policy "midad_own_files" on storage.objects for all
       const c = queue[idx].card;
       if (good) { c.box = Math.min((c.box || 1) + 1, 5); c.due = Date.now() + SRS_INTERVALS[c.box]; }
       else { c.box = 1; c.due = Date.now() + 6e4; } // أعِدها بعد دقيقة ضمن الجلسة
+      c.mt = Date.now(); // ختم المراجعة — يحسم التعارض عند المزامنة بين الأجهزة
       dirty.add(queue[idx].bookId);
       reviewed++; idx++;
       showCard();

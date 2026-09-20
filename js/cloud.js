@@ -13,6 +13,8 @@ const Cloud = (() => {
   let ready = false;      // SDK مُحمّل والعميل جاهز
   let channel = null;     // اشتراك اللحظة
   const pushTimers = {};  // مؤقتات دفع الحالة لكل كتاب
+  const deckTimers = {};  // مؤقتات دفع البطاقات لكل كتاب
+  let deckSupported = true; // يصير false إن كان الجدول بلا عمود deck
   const recentlyPushed = new Map(); // كتم صدى اللحظة
   let statusCb = null;
 
@@ -29,14 +31,29 @@ const Cloud = (() => {
   const hasBuiltin = () => !!builtinCfg();
   const isSignedIn = () => !!user;
 
+  let lastSyncAt = 0; // وقت آخر مزامنة ناجحة (لعرضه للمستخدم)
   function setStatus(state, msg) { if (statusCb) statusCb(state, msg); }
   function onStatus(cb) { statusCb = cb; emitStatus(); }
+  // نصّ «متزامن» مع زمن آخر مزامنة (يطمئن المستخدم أن كل شيء مرفوع)
+  function syncedMsg() { return 'متزامن — ' + (user && user.email ? user.email : '') + (lastSyncAt ? ' · ' + agoText(lastSyncAt) : ''); }
+  function agoText(t) {
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return 'حُدّثت الآن';
+    const m = Math.round(s / 60); if (m < 60) return `آخر مزامنة قبل ${m} دقيقة`;
+    const h = Math.round(m / 60); if (h < 24) return `آخر مزامنة قبل ${h} ساعة`;
+    return 'آخر مزامنة قبل ' + Math.round(h / 24) + ' يوم';
+  }
   function emitStatus() {
     if (!isConfigured()) return setStatus('off', 'المزامنة غير مفعّلة');
     if (!ready) return setStatus('connecting', 'جارٍ الاتصال…');
     if (!user) return setStatus('signedout', 'سجّل الدخول للمزامنة');
-    setStatus('synced', 'متزامن — ' + (user.email || ''));
+    // بلا شبكة: القراءة تعمل محلياً والتغييرات تُرفع تلقائياً عند عودة الاتصال
+    if (!navigator.onLine) return setStatus('offline', 'بلا اتصال — سيُرفع ما جدّ عند عودة الشبكة');
+    setStatus('synced', syncedMsg());
   }
+  // حدّث المؤشّر فور تغيّر حالة الشبكة
+  window.addEventListener('online', emitStatus);
+  window.addEventListener('offline', emitStatus);
 
   /* ── تهيئة ── */
   async function init() {
@@ -109,11 +126,18 @@ const Cloud = (() => {
     syncing = true;
     setStatus('syncing', 'جارٍ المزامنة…');
     try {
-      // نستثني عمود content الثقيل (نص الكتب/الـOCR) — يُجلب كسولاً عند فتح الكتاب فيسرع المزامنة كثيراً
-      let { data: rows, error } = await sb.from(TABLE).select('id, owner, meta, state, has_file, deleted, updated_at');
-      // بعض الجداول لا تحتوي عمود deleted (الحذف الناعم) — أعِد الجلب بدونه
-      if (error && /deleted|column .* does not exist/i.test(error.message || '')) {
-        ({ data: rows, error } = await sb.from(TABLE).select('id, owner, meta, state, has_file, updated_at'));
+      // نستثني عمود content الثقيل (نص الكتب/الـOCR) — يُجلب كسولاً عند فتح الكتاب فيسرع المزامنة كثيراً.
+      // نتدرّج في الأعمدة: بعض الجداول القديمة بلا deck (البطاقات) أو بلا deleted (الحذف الناعم).
+      const COLSETS = [
+        'id, owner, meta, state, deck, has_file, deleted, updated_at',
+        'id, owner, meta, state, has_file, deleted, updated_at',
+        'id, owner, meta, state, has_file, updated_at',
+      ];
+      let rows = null, error = null;
+      for (let i = 0; i < COLSETS.length; i++) {
+        ({ data: rows, error } = await sb.from(TABLE).select(COLSETS[i]));
+        if (!error) { if (i > 0) deckSupported = false; break; }
+        if (!/column .* does not exist|deck|deleted/i.test(error.message || '')) break;
       }
       if (error) throw error;
       const cloudById = new Map((rows || []).map((r) => [r.id, r]));
@@ -128,9 +152,10 @@ const Cloud = (() => {
         const cloudT = new Date(r.updated_at).getTime();
         const localT = lb.updatedAt || 0;
         if (cloudT > localT + 1500) {
-          // ميتا السحابة أحدث ⇒ اعتمدها + ادمج الحالة؛ إن أضاف الدمج جديداً ارفعه
+          // ميتا السحابة أحدث ⇒ اعتمدها + ادمج الحالة والبطاقات؛ إن أضاف الدمج جديداً ارفعه
           const res = await applyCloudRow(r);
-          if (res && res.divergedFromCloud) await pushStateNow(r.id);
+          const deckAhead = await mergeDeckInto(r.id, r.deck);
+          if ((res && res.divergedFromCloud) || deckAhead) await pushStateNow(r.id);
           continue;
         }
         // الطرفان موجودان والميتا المحلية ليست أقدم: ادمج الحالة دون تبديل الميتا
@@ -139,8 +164,9 @@ const Cloud = (() => {
         const merged = mergeStates(localState, cloudState);
         const mSig = stateSig(merged);
         if (mSig !== stateSig(localState)) await Store.saveState(merged);
-        if (localT > cloudT + 1500) await uploadBook(r.id, { silent: true }); // الميتا المحلية أحدث ⇒ ارفع الكل (مع الحالة المدموجة)
-        else if (mSig !== stateSig(cloudState)) await pushStateNow(r.id);      // الدمج أضاف ما ليس في السحابة
+        const deckAhead = await mergeDeckInto(r.id, r.deck); // بطاقات المراجعة تُدمج كذلك
+        if (localT > cloudT + 1500) await uploadBook(r.id, { silent: true }); // الميتا المحلية أحدث ⇒ ارفع الكل (مع الحالة والبطاقات المدموجة)
+        else if (mSig !== stateSig(cloudState) || deckAhead) await pushStateNow(r.id); // الدمج أضاف ما ليس في السحابة
       }
       // ② محلي → سحابة: كتب لم تُرفع بعد، وإعادة رفع ملف PDF ناقص
       for (const b of localBooks) {
@@ -151,7 +177,8 @@ const Cloud = (() => {
           if (pl instanceof Blob) await uploadBook(b.id, { silent: true });
         }
       }
-      setStatus('synced', 'متزامن — ' + (user.email || ''));
+      lastSyncAt = Date.now();
+      setStatus('synced', syncedMsg());
       if (window.Library) Library.refresh();
     } catch (e) {
       console.error('syncAll', e);
@@ -225,6 +252,30 @@ const Cloud = (() => {
       ...LISTS.map(ids), ...LISTS.map(del), Object.keys(s.drawings || {}).sort().join(',')].join('|');
   }
 
+  /* ── دمج مجموعة البطاقات (نفس منطق الحالة: اتحاد بالمعرّف + الأحدث يفوز) ──
+     البطاقات لا تُحذف فرادى في الواجهة (تُحذف مع الكتاب)، فلا حاجة لشواهد حذف.
+     المراجعة تغيّر box/due وتضع mt، فيفوز آخر جهاز راجع البطاقة. */
+  function mergeDecks(a, b) {
+    const aC = (a && a.cards) || [], bC = (b && b.cards) || [];
+    if (!aC.length && !bC.length) return null;
+    const byId = new Map();
+    const put = (c) => { if (!c) return; const k = c.id || c.q; if (k == null) return; const p = byId.get(k); if (!p || (c.mt || 0) >= (p.mt || 0)) byId.set(k, c); };
+    aC.forEach(put); bC.forEach(put);
+    return { cards: [...byId.values()], updatedAt: Math.max((a && a.updatedAt) || 0, (b && b.updatedAt) || 0) };
+  }
+  const deckSig = (d) => ((d && d.cards) || []).map((c) => (c.id || c.q) + ':' + (c.mt || 0) + ':' + (c.box || 0) + ':' + (c.due || 0)).sort().join(',');
+
+  // يدمج بطاقات صفٍّ سحابي مع المحلية ويحفظها؛ يعيد true إن بقي المحلي متقدّماً على السحابة
+  async function mergeDeckInto(id, cloudDeck) {
+    if (!Store.getDeck || !Store.saveDeck) return false;
+    let local = null; try { local = await Store.getDeck(id); } catch {}
+    const merged = mergeDecks(local, cloudDeck);
+    if (!merged) return false;
+    const mSig = deckSig(merged);
+    if (mSig !== deckSig(local)) { try { await Store.saveDeck(id, merged.cards); } catch {} }
+    return mSig !== deckSig(cloudDeck);
+  }
+
   /* ── تطبيق صف سحابي على المحلي ── */
   async function applyCloudRow(r) {
     if (r.deleted) { if (await Store.getBook(r.id)) await Store.deleteBook(r.id); return; }
@@ -251,21 +302,43 @@ const Cloud = (() => {
       mergedSig = stateSig(merged);
       await Store.saveState(merged);
     }
+    const deckAhead = await mergeDeckInto(r.id, r.deck);
     recentlyPushed.set(r.id, new Date(r.updated_at).getTime());
     // إن أضاف الدمج ما ليس في السحابة، ارفع الدمج كي تتقارب الأجهزة
-    return { divergedFromCloud: mergedSig != null && mergedSig !== incomingSig };
+    return { divergedFromCloud: (mergedSig != null && mergedSig !== incomingSig) || deckAhead };
   }
 
-  // رفع عمود الحالة فقط (أخفّ من رفع الصف كاملاً) — للتقارب بعد الدمج
+  // رفع عمودي الحالة والبطاقات فقط (أخفّ من رفع الصف كاملاً) — للتقارب بعد الدمج
   async function pushStateNow(id) {
     if (!ready || !user) return;
     try {
       await touch(id);
       const st = await Store.getState(id);
-      const { error } = await sb.from(TABLE).update({ state: stripState(st), updated_at: new Date().toISOString() }).eq('id', id);
+      const patch = { state: stripState(st), updated_at: new Date().toISOString() };
+      if (deckSupported) patch.deck = await localDeck(id);
+      let { error } = await sb.from(TABLE).update(patch).eq('id', id);
+      // الجدول بلا عمود deck ⇒ أعِد المحاولة بالحالة وحدها ولا تحاول رفعه لاحقاً
+      if (error && /deck|column .* does not exist/i.test(error.message || '')) {
+        deckSupported = false; delete patch.deck;
+        ({ error } = await sb.from(TABLE).update(patch).eq('id', id));
+      }
       if (error) throw error;
       recentlyPushed.set(id, Date.now());
     } catch (e) { console.error('pushStateNow', e); }
+  }
+
+  // بطاقات الكتاب كما هي محلياً (أو null إن لم توجد)
+  async function localDeck(id) {
+    if (!Store.getDeck) return null;
+    try { const d = await Store.getDeck(id); return (d && d.cards && d.cards.length) ? { cards: d.cards, updatedAt: d.updatedAt || Date.now() } : null; }
+    catch { return null; }
+  }
+
+  // دفع البطاقات بعد تعديلها (توليد/مراجعة) — مؤجَّل قليلاً لتجميع المراجعات المتتابعة
+  function pushDeck(id) {
+    if (!ready || !user) return;
+    clearTimeout(deckTimers[id]);
+    deckTimers[id] = setTimeout(() => pushStateNow(id), 2000);
   }
 
   /* ── رفع كتاب كامل (بيانات + ملف) ── */
@@ -281,6 +354,7 @@ const Cloud = (() => {
       content: null, has_file: false,
       updated_at: new Date(b.updatedAt || Date.now()).toISOString(),
     };
+    if (deckSupported) row.deck = await localDeck(id); // بطاقات المراجعة تُرفع مع الكتاب
     if (b.type === 'pdf' && payload instanceof Blob) {
       // نتحقق من نجاح الرفع فعلاً؛ لا نزعم has_file إلا إذا نجح (يمنع «كتاب لا يفتح» على الأجهزة الأخرى)
       const { error: upErr } = await sb.storage.from(BUCKET).upload(`${user.id}/${id}`, payload, { upsert: true, contentType: 'application/pdf' });
@@ -299,7 +373,11 @@ const Cloud = (() => {
     if (b.type === 'pdf') {
       try { const ft = await Store.getFulltext(id); if (ft && ft.ocr && ft.text != null) row.content = JSON.stringify(ft); } catch {}
     }
-    const { error } = await sb.from(TABLE).upsert(row);
+    let { error } = await sb.from(TABLE).upsert(row);
+    if (error && /deck|column .* does not exist/i.test(error.message || '')) {
+      deckSupported = false; delete row.deck;
+      ({ error } = await sb.from(TABLE).upsert(row));
+    }
     if (error) throw error;
     recentlyPushed.set(id, Date.now());
   }
@@ -311,7 +389,7 @@ const Cloud = (() => {
   async function pushBook(id) {
     if (!ready || !user) return;
     await touch(id);
-    try { await uploadBook(id); setStatus('synced', 'متزامن — ' + (user.email || '')); }
+    try { await uploadBook(id); setStatus('synced', syncedMsg()); }
     catch (e) { console.error('pushBook', e); setStatus('error', friendlyErr(e)); }
   }
 
@@ -384,7 +462,7 @@ const Cloud = (() => {
       if (error) throw error;
       if (!data || data.size === 0) throw new Error('empty file');
       await Store.updatePayload(id, data); // Blob
-      setStatus('synced', 'متزامن — ' + (user.email || ''));
+      setStatus('synced', syncedMsg());
     } catch (e) {
       console.error('download payload', e);
       const notFound = /not.?found|does not exist|empty file|400|404/i.test((e && e.message) || '') || (e && (e.statusCode === '404' || e.status === 404));
@@ -423,8 +501,9 @@ const Cloud = (() => {
   return {
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
-    pushBook, pushState, deleteBook, ensurePayload,
+    pushBook, pushState, pushDeck, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
+    getLastSync: () => lastSyncAt,
     hasBuiltin,
     aiReady: () => ready && !!user,
     aiInvoke,

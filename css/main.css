@@ -727,6 +727,7 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .cloud-dot.connecting, .cloud-dot.syncing { background: #4aa3e0; animation: pulse 1.1s infinite; }
 .cloud-dot.synced { background: #43c26b; }
 .cloud-dot.error { background: #e05a4a; }
+.cloud-dot.offline { background: #8a8594; box-shadow: 0 0 0 2px rgba(138,133,148,.25); }
 @keyframes pulse { 50% { opacity: .35; } }
 
 .cloud-status-line { text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 16px;
