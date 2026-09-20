@@ -228,7 +228,10 @@ const Cloud = (() => {
     for (const l of LISTS) deleted[l] = mergeDelMap(aDel[l], bDel[l]);
     const posFromA = (a.lastRead || 0) >= (b.lastRead || 0);
     const pos = posFromA ? a : b;
+    // ابدأ من اتحاد الحقول (الطرف a يرجّح) كي لا تسقط حقول لا يعرفها الدمج،
+    // ثم اضبط الحقول المعروفة بقواعدها الصريحة.
     const m = {
+      ...b, ...a,
       bookId: a.bookId || b.bookId,
       pct: pos.pct || 0, page: pos.page || 0, scrollTop: pos.scrollTop || 0,
       lastRead: Math.max(a.lastRead || 0, b.lastRead || 0),
@@ -236,6 +239,9 @@ const Cloud = (() => {
       finished: !!(a.finished || b.finished),
       deleted,
     };
+    // تاريخ الإنهاء: أوّل جهاز سجّله هو الصحيح
+    const fa = [a.finishedAt, b.finishedAt].filter((t) => t > 0);
+    if (fa.length) m.finishedAt = Math.min(...fa); else delete m.finishedAt;
     for (const l of LISTS) m[l] = mergeList(a[l], b[l], deleted[l]);
     // الرسومات: اتحاد المفاتيح؛ الصفحة المشتركة تؤخذ من الجهاز الأخير قراءةً
     const ad = a.drawings || {}, bd = b.drawings || {}, dr = {};
@@ -248,7 +254,7 @@ const Cloud = (() => {
     s = s || {};
     const ids = (l) => (s[l] || []).map((i) => i.id + ':' + itemT(i)).sort().join(',');
     const del = (l) => { const d = (s.deleted || {})[l] || {}; return Object.keys(d).map((id) => id + ':' + d[id]).sort().join(','); };
-    return [s.page, Math.round((s.pct || 0) * 1e4), s.scrollTop, s.seconds, !!s.finished, s.lastRead,
+    return [s.page, Math.round((s.pct || 0) * 1e4), s.scrollTop, s.seconds, !!s.finished, s.finishedAt || 0, s.lastRead,
       ...LISTS.map(ids), ...LISTS.map(del), Object.keys(s.drawings || {}).sort().join(',')].join('|');
   }
 

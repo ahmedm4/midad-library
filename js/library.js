@@ -983,6 +983,7 @@ create policy "midad_own_files" on storage.objects for all
       ${b.type === 'text' ? '<button data-act="pdf">🖨 تصدير PDF</button>' : ''}
       <button data-act="cover">🖼 تغيير الغلاف</button>
       <button data-act="edit">✏️ تعديل البيانات</button>
+      ${(states[id] && states[id].finished) ? '<button data-act="card">🎉 بطاقة الإنجاز</button>' : ''}
       <button data-act="export">⬇️ تصدير الملاحظات</button>
       <button data-act="reset">↺ تصفير التقدم</button>
       <button data-act="delete" class="danger">🗑 حذف الكتاب</button>`;
@@ -1000,6 +1001,7 @@ create policy "midad_own_files" on storage.objects for all
       else if (act === 'pdf') exportPdf(id);
       else if (act === 'cover') changeCover(id);
       else if (act === 'edit') openAddModal(b);
+      else if (act === 'card') openFinishCard(id);
       else if (act === 'export') exportNotes(id);
       else if (act === 'reset') {
         const st = await Store.getState(id);
@@ -2444,6 +2446,34 @@ create policy "midad_own_files" on storage.objects for all
       if (min >= 1) lvl = 1; if (min >= goal * 0.5) lvl = 2; if (min >= goal) lvl = 3; if (min >= goal * 2) lvl = 4;
       heat.push({ lvl, min: Math.round(min), label: Store.todayKey(d) });
     }
+    // ── ملخّص أسبوعي/شهري: مجاميع من سجلّ الدقائق اليومي ──
+    const sumRange = (fromDaysAgo, toDaysAgo) => { // [from..to] بالأيام قبل اليوم (0 = اليوم)
+      let sec = 0;
+      for (let i = toDaysAgo; i <= fromDaysAgo; i++) {
+        const d = new Date(dref); d.setDate(d.getDate() - i);
+        sec += log[Store.todayKey(d)] || 0;
+      }
+      return sec;
+    };
+    const weekSec = sumRange(6, 0), prevWeekSec = sumRange(13, 7), monthSec = sumRange(29, 0);
+    const activeDays30 = (() => { let n = 0; for (let i = 0; i < 30; i++) { const d = new Date(dref); d.setDate(d.getDate() - i); if ((log[Store.todayKey(d)] || 0) >= 60) n++; } return n; })();
+    const avgPerActive = activeDays30 ? Math.round(monthSec / activeDays30 / 60) : 0;
+    // فرق الأسبوع عن سابقه (يُعرض كاتجاه واضح)
+    let trend = '';
+    if (prevWeekSec >= 60 || weekSec >= 60) {
+      const diff = weekSec - prevWeekSec;
+      const pct = prevWeekSec >= 60 ? Math.round((diff / prevWeekSec) * 100) : (weekSec >= 60 ? 100 : 0);
+      const up = diff >= 0;
+      trend = `<span class="wk-trend ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${Math.abs(pct)}٪ عن الأسبوع الماضي</span>`;
+    }
+    // رسم أعمدة لآخر ١٤ يوماً (قراءة سريعة لإيقاعك)
+    const bars = [];
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(dref); d.setDate(d.getDate() - i);
+      bars.push({ min: Math.round((log[Store.todayKey(d)] || 0) / 60), dow: d.toLocaleDateString('ar', { weekday: 'narrow' }), key: Store.todayKey(d), today: i === 0 });
+    }
+    const barMax = Math.max(goal, ...bars.map((b2) => b2.min), 1);
+
     const ring = (pct) => {
       const R = 34, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
       return `<svg class="goal-ring" viewBox="0 0 80 80"><circle cx="40" cy="40" r="${R}" class="gr-bg"/><circle cx="40" cy="40" r="${R}" class="gr-fg" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg>`;
@@ -2460,6 +2490,19 @@ create policy "midad_own_files" on storage.objects for all
           <label class="goal-set">هدفي اليومي
             <span class="goal-stepper"><button id="goal-minus">−</button><i id="goal-val">${goal}</i><button id="goal-plus">+</button><em>دقيقة</em></span>
           </label>
+        </div>
+      </div>
+
+      <div class="wk-summary">
+        <div class="wk-card"><b>${Math.round(weekSec / 60)}<em>د</em></b><span>هذا الأسبوع</span>${trend}</div>
+        <div class="wk-card"><b>${Math.round(monthSec / 60)}<em>د</em></b><span>آخر ٣٠ يوماً</span></div>
+        <div class="wk-card"><b>${avgPerActive}<em>د</em></b><span>معدّل يوم القراءة</span></div>
+      </div>
+
+      <div class="bars-wrap">
+        <h4>آخر ١٤ يوماً <small>الخطّ المتقطّع = هدفك (${goal} د)</small></h4>
+        <div class="bars-grid" style="--goalr:${(goal / barMax).toFixed(3)}">
+          ${bars.map((b2) => `<i class="bar-col${b2.today ? ' today' : ''}${b2.min >= goal ? ' hit' : ''}" title="${b2.key}: ${b2.min} د"><u style="height:${Math.round((b2.min / barMax) * 100)}%"></u><s>${b2.dow}</s></i>`).join('')}
         </div>
       </div>
 
@@ -2594,6 +2637,144 @@ create policy "midad_own_files" on storage.objects for all
     $('#toast-wrap').appendChild(t);
     setTimeout(() => t.classList.add('out'), 2600);
     setTimeout(() => t.remove(), 3100);
+  }
+
+  /* ─── بطاقة الإنجاز: صورة أنيقة تُحفظ أو تُشارك عند إنهاء كتاب ─── */
+  const CARD_W = 1080, CARD_H = 1350;
+
+  // يلفّ نصاً عربياً على أسطر بعرض محدّد (رسم الكانفا لا يلفّ تلقائياً)
+  function wrapLines(ctx, text, maxW, maxLines) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    const lines = []; let cur = '';
+    for (const w of words) {
+      const t = cur ? cur + ' ' + w : w;
+      if (ctx.measureText(t).width <= maxW) cur = t;
+      else { if (cur) lines.push(cur); cur = w; if (lines.length === maxLines) break; }
+    }
+    if (cur && lines.length < maxLines) lines.push(cur);
+    if (lines.length === maxLines && lines.join(' ').length < String(text).trim().length) {
+      lines[maxLines - 1] = lines[maxLines - 1].replace(/[\s،.]+$/, '') + '…';
+    }
+    return lines;
+  }
+
+  const loadImg = (src) => new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
+
+  async function buildFinishCard(b, st) {
+    // حمّل الخطوط أولاً وإلا رُسمت البطاقة بخطّ بديل
+    try { await document.fonts.load("700 64px 'Amiri'"); await document.fonts.load("400 30px 'Noto Naskh Arabic'"); await document.fonts.ready; } catch {}
+    const cv = document.createElement('canvas');
+    cv.width = CARD_W; cv.height = CARD_H;
+    const x = cv.getContext('2d');
+    x.direction = 'rtl'; x.textAlign = 'center';
+
+    // خلفية ليلية + وهج ذهبي علوي
+    const g = x.createLinearGradient(0, 0, 0, CARD_H);
+    g.addColorStop(0, '#2a2140'); g.addColorStop(0.55, '#1d1730'); g.addColorStop(1, '#151122');
+    x.fillStyle = g; x.fillRect(0, 0, CARD_W, CARD_H);
+    const glow = x.createRadialGradient(CARD_W / 2, 150, 20, CARD_W / 2, 150, 620);
+    glow.addColorStop(0, 'rgba(217,169,79,.22)'); glow.addColorStop(1, 'rgba(217,169,79,0)');
+    x.fillStyle = glow; x.fillRect(0, 0, CARD_W, 780);
+
+    x.strokeStyle = 'rgba(217,169,79,.34)'; x.lineWidth = 3;
+    x.strokeRect(40, 40, CARD_W - 80, CARD_H - 80);
+
+    x.fillStyle = '#d9a94f'; x.font = "400 34px 'Noto Naskh Arabic', serif";
+    x.fillText('✦  أنهيتُ قراءة  ✦', CARD_W / 2, 140);
+
+    // الغلاف (أو غلاف مولَّد إن لم يوجد)
+    const coverW = 340, coverH = 480, coverX = (CARD_W - coverW) / 2, coverY = 190;
+    x.save();
+    x.shadowColor = 'rgba(0,0,0,.55)'; x.shadowBlur = 40; x.shadowOffsetY = 14;
+    const img = b.cover ? await loadImg(b.cover) : null;
+    if (img) x.drawImage(img, coverX, coverY, coverW, coverH);
+    else {
+      const cg = x.createLinearGradient(coverX, coverY, coverX, coverY + coverH);
+      cg.addColorStop(0, '#4a4270'); cg.addColorStop(1, '#2d2748');
+      x.fillStyle = cg; x.fillRect(coverX, coverY, coverW, coverH);
+      x.shadowColor = 'transparent';
+      x.fillStyle = '#e8dcc0'; x.font = "700 40px 'Amiri', serif";
+      wrapLines(x, b.title, coverW - 50, 4).forEach((ln, i) => x.fillText(ln, CARD_W / 2, coverY + 150 + i * 54));
+    }
+    x.restore();
+    x.strokeStyle = 'rgba(255,255,255,.14)'; x.lineWidth = 2;
+    x.strokeRect(coverX, coverY, coverW, coverH);
+
+    // العنوان والمؤلف
+    let y = coverY + coverH + 92;
+    x.fillStyle = '#f5efe2'; x.font = "700 60px 'Amiri', serif";
+    const tl = wrapLines(x, b.title, CARD_W - 200, 2);
+    tl.forEach((ln, i) => x.fillText(ln, CARD_W / 2, y + i * 74));
+    y += tl.length * 74 + 8;
+    if (b.author) { x.fillStyle = '#a99cc4'; x.font = "400 32px 'Noto Naskh Arabic', serif"; x.fillText(b.author, CARD_W / 2, y); y += 48; }
+
+    // اقتباس مختار: أطول تظليل
+    const hls = [...(st.highlights || []), ...(st.pdfHighlights || [])].filter((h) => (h.text || '').trim().length > 25);
+    hls.sort((a, c) => (c.text || '').length - (a.text || '').length);
+    if (hls[0]) {
+      y += 22;
+      x.fillStyle = '#cdbfe8'; x.font = "italic 400 31px 'Noto Naskh Arabic', serif";
+      const q = wrapLines(x, '« ' + normSpace(hls[0].text) + ' »', CARD_W - 240, 3);
+      q.forEach((ln, i) => x.fillText(ln, CARD_W / 2, y + i * 46));
+      y += q.length * 46;
+    }
+
+    // شريط الإحصاءات
+    const statsY = CARD_H - 210;
+    x.strokeStyle = 'rgba(255,255,255,.12)'; x.lineWidth = 1.5;
+    x.beginPath(); x.moveTo(150, statsY - 62); x.lineTo(CARD_W - 150, statsY - 62); x.stroke();
+    const notesN = (st.highlights || []).length + (st.pdfHighlights || []).length + (st.pageNotes || []).length;
+    const cells = [
+      [fmtDuration(st.seconds || 0), 'وقت القراءة'],
+      [String(b.pages || ''), b.pages ? 'صفحة' : ''],
+      [String(notesN), 'تظليل وملاحظة'],
+    ].filter((c) => c[0] && c[1]);
+    const step = (CARD_W - 300) / cells.length;
+    cells.forEach((c, i) => {
+      const cx = 150 + step * (i + 0.5);
+      x.fillStyle = '#d9a94f'; x.font = "700 40px 'Amiri', serif"; x.fillText(c[0], cx, statsY);
+      x.fillStyle = '#8d84a6'; x.font = "400 24px 'Noto Naskh Arabic', serif"; x.fillText(c[1], cx, statsY + 38);
+    });
+
+    // التذييل: تاريخ الإنهاء + هوية التطبيق
+    const when = new Date(st.finishedAt || Date.now()).toLocaleDateString('ar', { year: 'numeric', month: 'long', day: 'numeric' });
+    x.fillStyle = '#6f6788'; x.font = "400 24px 'Noto Naskh Arabic', serif";
+    x.fillText(when, CARD_W / 2, CARD_H - 112);
+    x.fillStyle = '#d9a94f'; x.font = "700 34px 'Amiri', serif";
+    x.fillText('مِداد', CARD_W / 2, CARD_H - 64);
+
+    return await new Promise((res) => cv.toBlob(res, 'image/png'));
+  }
+
+  async function openFinishCard(id) {
+    const b = books.find((x2) => x2.id === id) || (await Store.getBook(id));
+    if (!b) return;
+    const st = await Store.getState(id);
+    toast('جارٍ تجهيز البطاقة…');
+    let blob = null;
+    try { blob = await buildFinishCard(b, st); } catch (e) { console.error('finish card', e); }
+    if (!blob) return toast('تعذّر تجهيز البطاقة');
+    const url = URL.createObjectURL(blob);
+    const fname = 'midad-' + String(b.title || 'book').replace(/[\\/:*?"<>|]/g, '').slice(0, 40) + '.png';
+    const m = $('#card-modal');
+    $('#card-preview').innerHTML = '<img src="' + url + '" alt="بطاقة الإنجاز">';
+    const canShare = !!(navigator.canShare && navigator.share);
+    $('#card-share').hidden = !canShare;
+    const close = () => { m.hidden = true; URL.revokeObjectURL(url); };
+    $('#card-save').onclick = () => {
+      const a = document.createElement('a'); a.href = url; a.download = fname; a.click();
+      toast('حُفظت البطاقة ✓', 'gold');
+    };
+    $('#card-share').onclick = async () => {
+      try {
+        const file = new File([blob], fname, { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: b.title });
+        else await navigator.share({ title: b.title, text: 'أنهيتُ قراءة «' + b.title + '» 📖' });
+      } catch {}
+    };
+    m.querySelectorAll('[data-close]').forEach((btn) => (btn.onclick = close));
+    m.onclick = (e) => { if (e.target === m) close(); };
+    m.hidden = false;
   }
 
   function fmtDuration(sec) {

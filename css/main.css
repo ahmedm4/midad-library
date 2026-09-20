@@ -867,6 +867,50 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .goal-stepper i { font-style: normal; font-weight: 700; color: var(--gold-soft); min-width: 22px; text-align: center; font-size: 16px; }
 .goal-stepper em { font-style: normal; font-size: 11px; color: var(--muted); }
 
+/* نافذة بطاقة الإنجاز */
+.card-modal { max-width: 460px; }
+.card-preview { display: flex; justify-content: center; padding: 4px 0 14px; }
+.card-preview img { width: 100%; max-width: 330px; border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.1); }
+.card-actions { display: flex; gap: 10px; justify-content: center; }
+.card-actions button { padding: 11px 20px; border-radius: 12px; font-size: 14px;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: var(--cream); }
+.card-actions button:hover { background: rgba(255,255,255,.12); }
+.card-actions .btn-gold { border-color: transparent; }
+
+/* ملخّص أسبوعي/شهري */
+.wk-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 22px; }
+.wk-card { text-align: center; padding: 14px 8px; border-radius: 14px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.07); }
+.wk-card b { display: block; font-family: 'Amiri', serif; font-size: 24px; color: var(--gold); line-height: 1.1; }
+.wk-card b em { font-size: 13px; font-style: normal; margin-inline-start: 2px; color: #b9ad86; }
+.wk-card span { display: block; font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.wk-trend { display: block; font-size: 10.5px; margin-top: 5px; }
+.wk-trend.up { color: #6fcf97; }
+.wk-trend.down { color: #c98b8b; }
+
+/* رسم أعمدة آخر ١٤ يوماً */
+.bars-wrap { margin-bottom: 22px; }
+.bars-wrap h4 { font-size: 13px; color: var(--muted); margin-bottom: 12px;
+  display: flex; justify-content: space-between; align-items: baseline; }
+.bars-wrap h4 small { font-size: 11px; }
+.bars-grid { position: relative; display: flex; align-items: flex-end; gap: 5px; height: 96px;
+  padding-bottom: 16px; }
+/* خطّ الهدف */
+/* خطّ الهدف: يُحسب بالبكسل على ارتفاع منطقة الأعمدة (٨٠px) — النسبة المئوية
+   في translateY تُنسب لارتفاع العنصر نفسه (صفر هنا) فلا تُزيحه. */
+.bars-grid::before { content: ''; position: absolute; inset-inline: 0;
+  bottom: calc(16px + 80px * var(--goalr, .5));
+  height: 0; border-top: 1px dashed rgba(217,169,79,.5); }
+.bar-col { position: relative; flex: 1; height: 100%; display: flex; flex-direction: column;
+  justify-content: flex-end; align-items: center; }
+.bar-col u { display: block; width: 100%; min-height: 2px; border-radius: 4px 4px 2px 2px;
+  background: linear-gradient(180deg, #6a5f8f, #4a4270); transition: height .3s; }
+.bar-col.hit u { background: linear-gradient(180deg, var(--gold), #a8802f); }
+.bar-col.today u { box-shadow: 0 0 0 1.5px rgba(255,255,255,.35); }
+.bar-col s { position: absolute; bottom: -16px; font-size: 9.5px; color: var(--muted);
+  text-decoration: none; }
+
 .heat-wrap { margin-bottom: 22px; }
 .heat-wrap h4 { font-size: 13px; color: var(--muted); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: baseline; }
 .heat-wrap h4 small { color: var(--gold-soft); font-size: 12px; font-weight: 400; }

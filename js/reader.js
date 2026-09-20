@@ -270,8 +270,8 @@ const Reader = (() => {
     state.page = isPdf ? pdfPage - 1 : curPage;
     state.lastRead = Date.now();
     if (state.pct >= 0.995 && !state.finished) {
-      state.finished = true;
-      if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب', 'gold'); }
+      state.finished = true; state.finishedAt = state.finishedAt || Date.now();
+      if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب — بطاقة الإنجاز في قائمة الكتاب', 'gold'); }
     }
     updateHUD();
     schedulePersist();
@@ -986,7 +986,7 @@ const Reader = (() => {
     state.pct = max > 0 ? cont.scrollTop / max : 1;
     state.page = pdfPage - 1;
     state.lastRead = Date.now();
-    if (state.pct >= 0.995 && !state.finished) { state.finished = true; if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب', 'gold'); } }
+    if (state.pct >= 0.995 && !state.finished) { state.finished = true; state.finishedAt = state.finishedAt || Date.now(); if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب — بطاقة الإنجاز في قائمة الكتاب', 'gold'); } }
     updateHUD();
     schedulePersist();
   }
