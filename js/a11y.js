@@ -39,7 +39,7 @@ const A11y = (() => {
   function setupDialog(bd) {
     if (bd.dataset.a11y) return;
     bd.dataset.a11y = '1';
-    const box = bd.querySelector('.modal, .disc-modal, .ud-box') || bd;
+    const box = bd.querySelector('.modal, .disc-modal, .ud-box, .sm-box') || bd;
     if (!box.hasAttribute('role')) box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
     if (box.tabIndex < 0) box.tabIndex = -1;
@@ -65,13 +65,13 @@ const A11y = (() => {
     const pick = (sel) => [...(root.matches && root.matches(sel) ? [root] : []), ...root.querySelectorAll(sel)];
     pick('button, [role="button"], a[href]').forEach(labelControl);
     pick('input, select, textarea').forEach(labelField);
-    pick('.modal-backdrop, .ui-dialog').forEach(setupDialog);
+    pick('.modal-backdrop, .ui-dialog, .shelf-modal').forEach(setupDialog);
   }
 
   // ظاهر فعلاً؟ (offsetParent لا يصلح: يساوي null دائماً للعناصر الثابتة position:fixed كخلفيات النوافذ)
   const visible = (el) => !el.hidden && el.getClientRects().length > 0;
   // النافذة الظاهرة العليا (آخرها في المستند)
-  const openDialogs = () => [...document.querySelectorAll('.modal-backdrop, .ui-dialog')].filter(visible);
+  const openDialogs = () => [...document.querySelectorAll('.modal-backdrop, .ui-dialog, .shelf-modal')].filter(visible);
 
   function onKey(e) {
     if (e.key === 'Tab') {
@@ -92,7 +92,7 @@ const A11y = (() => {
     if (reader && !reader.hidden) return;                 // القارئ يدير Escape بنفسه
     const top = openDialogs().filter((m) => !m.classList.contains('disc-backdrop')).pop(); // الاستكشاف يديره بنفسه
     if (!top) return;
-    const x = top.querySelector('[data-close], .ud-cancel');
+    const x = top.querySelector('[data-close], .ud-cancel, .sm-close');
     if (x) x.click(); else top.hidden = true;
     e.preventDefault();
   }

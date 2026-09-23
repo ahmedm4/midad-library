@@ -61,6 +61,7 @@ const Library = (() => {
     return m ? (+m[1]) * 100 + (m[2] ? +m[2] : 0) : -1;
   };
   function partOf(b) {
+    if (b.series && b.series.none) return null; // أُخرج يدوياً من السلسلة
     if (b.series && b.series.key) {
       const o = orderOfLabel(b.series.label);
       return { key: normKey(b.series.key), title: b.series.title || '', label: b.series.label || '', order: o >= 0 ? o : (+b.series.order || 0) * 100 };
@@ -652,7 +653,9 @@ create policy "midad_own_files" on storage.objects for all
     menu.innerHTML = `
       ${cur ? `<button data-act="go">▶ ${ss.started ? 'واصل' : 'ابدأ'}: ${esc(partLabelOf(cur))}</button>` : ''}
       <button data-act="view">📚 اعرض الأجزاء (${ss.total})</button>
-      <button data-act="first">↺ من الجزء الأول</button>`;
+      <button data-act="first">↺ من الجزء الأول</button>
+      <button data-act="edit">✏️ تعديل السلسلة…</button>
+      <button data-act="dissolve" class="danger">↩ فكّ السلسلة</button>`;
     document.body.appendChild(menu);
     menu.style.top = Math.min(y, innerHeight - menu.offsetHeight - 12) + 'px';
     menu.style.left = Math.min(Math.max(10, x - menu.offsetWidth + 30), innerWidth - menu.offsetWidth - 10) + 'px';
@@ -662,6 +665,8 @@ create policy "midad_own_files" on storage.objects for all
       if (act === 'go') continueSeries(key);
       else if (act === 'view') openSeriesView(key);
       else if (act === 'first') openBook(sr.parts[0].id);
+      else if (act === 'edit') openSeriesEditor({ seriesKey: key });
+      else if (act === 'dissolve') dissolveSeries(key);
     };
     setTimeout(() => document.addEventListener('pointerdown', (ev) => { if (!menu.contains(ev.target)) closeCardMenu(); }, { once: true }));
   }
@@ -743,6 +748,7 @@ create policy "midad_own_files" on storage.objects for all
       : activeCat.startsWith(SHELF_PREFIX) ? '📚 ' + activeCat.slice(SHELF_PREFIX.length) : activeCat;
     { const gc = $('#grid-count'); if (gc) gc.textContent = !curList.length ? '' : sr ? partsWord(curList.length) : curList.length + ' كتاب'; }
     renderSeriesBar(sr);
+    renderSeriesSuggestion();
     { const pf = $('#pair-filter'); if (pf) pf.hidden = !hasPairs(); }
     grid.innerHTML = '';
     // وضع القائمة: مجموعات قابلة للطي (بلا تحميل تدريجي — صفوف خفيفة)
@@ -759,6 +765,226 @@ create policy "midad_own_files" on storage.objects for all
     renderChunk();
   }
 
+  /* ─── جمع كتب في سلسلة يدوياً ───
+     للكتب المضافة قبل دعم السلاسل أو بعناوين حرّة: رقم الجزء يُستخرج من العنوان إن أمكن
+     («ج7»، «الجزء 7»، «٧»، «الجزء السابع»، «(7)»)، والباقي يكتبه المستخدم. */
+  const pushMetaOf = (id) => { if (window.Cloud) (Cloud.pushMeta || Cloud.pushBook)(id); };
+  const toLatinDigits = (x) => String(x || '')
+    .replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+  // الأعداد الترتيبية: المركّبة قبل المفردة («الثاني عشر» قبل «الثاني»)
+  const ORD_UNITS = ['(?:الأول|الاول|الأولى|الاولى)', '(?:الثاني|الثانية)', '(?:الثالث|الثالثة)', '(?:الرابع|الرابعة)',
+    '(?:الخامس|الخامسة)', '(?:السادس|السادسة)', '(?:السابع|السابعة)', '(?:الثامن|الثامنة)', '(?:التاسع|التاسعة)', '(?:العاشر|العاشرة)'];
+  const ORD_LIST = (() => {
+    const L = [];
+    L.push([30, '(?:الثلاثون|الثلاثين)']);
+    for (let u = 9; u >= 1; u--) L.push([20 + u, `(?:${u === 1 ? '(?:الحادي|الحادية)' : ORD_UNITS[u - 1]})\\s*و\\s*(?:العشرون|العشرين)`]);
+    L.push([20, '(?:العشرون|العشرين)']);
+    for (let u = 9; u >= 2; u--) L.push([10 + u, `${ORD_UNITS[u - 1]}\\s+عشرة?`]);
+    L.push([11, '(?:الحادي|الحادية)\\s+عشرة?']);
+    for (let u = 10; u >= 1; u--) L.push([u, ORD_UNITS[u - 1]]);
+    return L.map(([n, src]) => [n, new RegExp('^' + src + '(?![\\p{L}])', 'u')]);
+  })();
+  const ORD_ANY = ORD_LIST.map(([, re]) => re.source.slice(1).replace('(?![\\p{L}])', '')).join('|');
+  const PART_WORD = '(?:الجزء|جزء|ج|المجلد|مجلد)';
+
+  function detectPartNo(title) {
+    const t = toLatinDigits(title).replace(/ـ/g, '');
+    let m = t.match(new RegExp(`(?:^|[^\\p{L}])${PART_WORD}\\s*[.:\\-–]?\\s*0*(\\d{1,3})(?!\\d)`, 'u'));
+    if (m) return +m[1];
+    m = t.match(new RegExp(`(?:^|[^\\p{L}])(?:الجزء|جزء|المجلد|مجلد)\\s+(.{2,30})`, 'u'));
+    if (m) for (const [n, re] of ORD_LIST) if (re.test(m[1])) return n;
+    m = t.match(/[(\[]\s*0*(\d{1,3})\s*[)\]]\s*$/) || t.match(/[-–—_:\s]0*(\d{1,3})\s*$/);
+    return m ? +m[1] : 0;
+  }
+  // الأصل المشترك للعنوان: بلا «الجزء 7»/«الجزء السابع»/«(7)» وما بعدها
+  function guessBase(title) {
+    const t = toLatinDigits(title).replace(/ـ/g, '');
+    let b = t
+      .replace(new RegExp(`(?:^|[^\\p{L}])${PART_WORD}\\s*[.:\\-–]?\\s*\\d{1,3}(?!\\d).*$`, 'u'), '')
+      .replace(new RegExp(`(?:^|[^\\p{L}])(?:الجزء|جزء|المجلد|مجلد)\\s+(?:${ORD_ANY})(?![\\p{L}]).*$`, 'u'), '')
+      .replace(/[(\[]\s*\d{1,3}\s*[)\]]\s*$/, '')
+      .replace(/[-–—_:\s]\d{1,3}\s*$/, '')
+      .replace(/[\s\-–—_:،,.]+$/, '').trim();
+    return b || t.trim();
+  }
+  // مقارنة متسامحة: بلا تشكيل، وتوحيد الهمزات والتاء المربوطة والألف المقصورة
+  const loose = (x) => String(x || '').replace(/[ً-ْٰـ]/g, '').replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, ' ').trim().toLowerCase();
+  const sameBase = (a, b) => {
+    const x = loose(a), y = loose(b);
+    if (!x || !y) return false;
+    if (x === y) return true;
+    const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+    return s.length >= 4 && l.startsWith(s);
+  };
+
+  function openSeriesEditor({ seedId, seriesKey, preset } = {}) {
+    document.querySelectorAll('.shelf-modal').forEach((m) => m.remove());
+    const editing = seriesKey ? seriesMap.get(seriesKey) : (seedId && seriesOfBook[seedId] ? seriesMap.get(seriesOfBook[seedId]) : null);
+    const seed = seedId ? books.find((b) => b.id === seedId) : null;
+    let name = editing ? editing.title : (seed ? guessBase(seed.title) : (preset && preset.name) || '');
+    const rows = new Map(); // id → { on, n }
+    if (editing) {
+      // رقم الجزء من تسميته؛ فإن تكرّر (أقسام «الجزء 3 · القسم 1/2») نرقّم بالموضع.
+      // التسمية الأصلية تُحفظ ما لم يغيّر المستخدم الرقم (فلا تضيع «· القسم 1»).
+      let nums = editing.parts.map((b) => Math.floor(Math.max(0, partOf(b).order) / 100));
+      if (nums.some((n) => !n) || new Set(nums).size !== nums.length) nums = editing.parts.map((_b, i) => i + 1);
+      editing.parts.forEach((b, i) => rows.set(b.id, { on: true, n: nums[i], origN: nums[i], origLabel: partOf(b).label }));
+    } else {
+      const base = name;
+      const ids = preset && preset.ids ? preset.ids : books.filter((b) => b.id === seedId || (!seriesOfBook[b.id] && sameBase(guessBase(b.title), base))).map((b) => b.id);
+      for (const id of ids) { const b = books.find((x) => x.id === id); if (b) rows.set(id, { on: true, n: detectPartNo(b.title) || 0 }); }
+    }
+    const originalMembers = new Set(editing ? editing.parts.map((b) => b.id) : []);
+    let filter = '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'shelf-modal series-modal';
+    overlay.innerHTML = `
+      <div class="sm-box" role="dialog" aria-modal="true" aria-labelledby="se-title">
+        <div class="sm-head"><h3 id="se-title">📚 ${editing ? 'تعديل السلسلة' : 'اجمع في سلسلة'}</h3><button class="sm-close" title="إغلاق" aria-label="إغلاق">✕</button></div>
+        <div class="se-top">
+          <label class="se-name">اسم السلسلة<input type="text" class="sm-input se-name-in" maxlength="120" value="${esc(name)}" autocomplete="off"></label>
+          <input type="search" class="sm-input se-filter" placeholder="🔎 ابحث عن كتاب لإضافته…" aria-label="ابحث عن كتاب لإضافته إلى السلسلة" autocomplete="off">
+          <p class="se-hint">اختر الأجزاء واكتب رقم كل جزء. الرقم يُستخرج من العنوان تلقائياً إن وُجد، والفارغ يُرقَّم بالترتيب.</p>
+        </div>
+        <div class="sm-list se-list"></div>
+        <div class="sm-add se-actions">
+          ${editing ? '<button class="se-dissolve">↩ فكّ السلسلة</button>' : ''}
+          <span class="se-count"></span>
+          <button class="sm-add-btn btn-gold se-save">حفظ السلسلة</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const listEl = overlay.querySelector('.se-list');
+    const countEl = overlay.querySelector('.se-count');
+    const close = () => overlay.remove();
+    overlay.querySelector('.sm-close').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    const renderRows = () => {
+      const q = loose(filter);
+      const chosen = books.filter((b) => rows.get(b.id)?.on)
+        .sort((a, b) => ((rows.get(a.id).n || 9999) - (rows.get(b.id).n || 9999)) || a.title.localeCompare(b.title, 'ar'));
+      // المرشّحون: عند البحث ما يطابقه، وإلا الكتب ذات العنوان المشابه للاسم (للإضافة السريعة)
+      const others = books.filter((b) => !rows.get(b.id)?.on && (q ? loose(b.title + ' ' + (b.author || '')).includes(q) : sameBase(guessBase(b.title), name)))
+        .slice(0, 60);
+      const rowHTML = (b, on) => {
+        const r = rows.get(b.id) || { n: detectPartNo(b.title) || 0 };
+        const other = seriesOfBook[b.id] && (!editing || seriesOfBook[b.id] !== editing.key) ? seriesMap.get(seriesOfBook[b.id]).title : '';
+        return `<div class="se-row${on ? ' on' : ''}" data-id="${b.id}">
+          <input type="checkbox" ${on ? 'checked' : ''} aria-label="ضمّ «${esc(b.title)}» إلى السلسلة">
+          <input type="number" class="se-no" min="1" max="999" inputmode="numeric" value="${r.n || ''}" placeholder="رقم" aria-label="رقم الجزء لـ «${esc(b.title)}»">
+          <span class="se-t">${esc(b.title)}${other ? `<em>في سلسلة «${esc(other)}»</em>` : ''}</span>
+        </div>`;
+      };
+      listEl.innerHTML = (chosen.length ? chosen.map((b) => rowHTML(b, true)).join('') : '<div class="sm-empty">لم تُختر أجزاء بعد — ابحث عن الكتب أعلاه.</div>')
+        + (others.length ? `<div class="se-sep">${q ? 'نتائج البحث' : 'كتب بعناوين مشابهة'}</div>` + others.map((b) => rowHTML(b, false)).join('') : '');
+      countEl.textContent = chosen.length ? `${chosen.length} ${chosen.length === 2 ? 'جزآن' : chosen.length <= 10 ? 'أجزاء' : 'جزءاً'}` : '';
+      listEl.querySelectorAll('.se-row').forEach((row) => {
+        const id = row.dataset.id;
+        const b = books.find((x) => x.id === id);
+        row.querySelector('input[type="checkbox"]').onchange = (e) => {
+          const cur = rows.get(id) || { n: detectPartNo(b.title) || 0 };
+          rows.set(id, { ...cur, on: e.target.checked });
+          renderRows();
+        };
+        row.querySelector('.se-no').oninput = (e) => {
+          const cur = rows.get(id) || { on: false, n: 0 };
+          rows.set(id, { ...cur, n: Math.max(0, parseInt(toLatinDigits(e.target.value), 10) || 0) });
+        };
+      });
+    };
+    overlay.querySelector('.se-name-in').oninput = (e) => { name = e.target.value; if (!filter) renderRows(); };
+    overlay.querySelector('.se-filter').oninput = (e) => { filter = e.target.value.trim(); renderRows(); };
+    renderRows();
+    setTimeout(() => overlay.querySelector(editing ? '.se-filter' : '.se-name-in').focus(), 60);
+
+    overlay.querySelector('.se-save').onclick = async () => {
+      const title = name.trim();
+      const chosen = books.filter((b) => rows.get(b.id)?.on);
+      if (!title) return toast('اكتب اسم السلسلة');
+      if (chosen.length < 2) return toast('السلسلة تحتاج جزأين على الأقل');
+      // الأرقام الفارغة تأخذ أول رقم متاح بترتيب العرض
+      const used = new Set(chosen.map((b) => rows.get(b.id).n).filter((n) => n > 0));
+      const dup = chosen.map((b) => rows.get(b.id).n).filter((n, i, a) => n > 0 && a.indexOf(n) !== i);
+      if (dup.length) return toast(`رقم الجزء ${dup[0]} مكرّر — لكل جزء رقم مختلف`);
+      let next = 1;
+      for (const b of chosen) {
+        const r = rows.get(b.id);
+        if (!r.n) { while (used.has(next)) next++; r.n = next; used.add(next); }
+      }
+      const key = normKey(title);
+      const btn = overlay.querySelector('.se-save');
+      btn.disabled = true; btn.textContent = 'جارٍ الحفظ…';
+      for (const b of chosen) {
+        const r = rows.get(b.id), n = r.n;
+        const label = (r.origLabel && r.n === r.origN) ? r.origLabel : `الجزء ${n}`;
+        await Store.updateBook(b.id, { series: { key, title, label, order: n, total: chosen.length, src: 'manual' } });
+        pushMetaOf(b.id);
+      }
+      // من أُزيل من السلسلة يُخرج صراحةً (كي لا تعيده صيغة عنوانه تلقائياً)
+      for (const id of originalMembers) {
+        if (!rows.get(id)?.on) { await Store.updateBook(id, { series: { none: true } }); pushMetaOf(id); }
+      }
+      close();
+      await refresh();
+      toast(`جُمعت ${chosen.length} ${chosen.length === 2 ? 'جزآن' : 'أجزاء'} في «${title}» 📚`, 'gold');
+      if (seriesMap.has(key)) openSeriesView(key);
+    };
+    const dis = overlay.querySelector('.se-dissolve');
+    if (dis) dis.onclick = async () => { close(); await dissolveSeries(editing.key); };
+  }
+
+  async function dissolveSeries(key) {
+    const sr = seriesMap.get(key); if (!sr) return;
+    if (!(await uiConfirm(`ستعود أجزاء «${sr.title}» (${sr.parts.length}) كتباً منفصلة. لن يُحذف أي كتاب ولا أي تقدّم.`, { title: 'فكّ السلسلة؟', okText: 'فكّ السلسلة', icon: '↩' }))) return;
+    for (const b of sr.parts) { await Store.updateBook(b.id, { series: { none: true } }); pushMetaOf(b.id); }
+    if (activeCat === SERIES_PREFIX + key) activeCat = 'الكل';
+    await refresh();
+    toast('فُكّت السلسلة — عادت أجزاؤها كتباً منفصلة');
+  }
+  async function removeFromSeries(id) {
+    const b = books.find((x) => x.id === id); if (!b) return;
+    await Store.updateBook(id, { series: { none: true } }); pushMetaOf(id);
+    await refresh();
+    toast(`أُخرج «${b.title}» من السلسلة`);
+  }
+
+  // اقتراح: كتب منفصلة تبدو أجزاءً من عمل واحد (أصل مشترك + رقمان مختلفان على الأقل)
+  function seriesSuggestion() {
+    let dismissed = {}; try { dismissed = JSON.parse(localStorage.getItem('midad-series-dismissed') || '{}'); } catch {}
+    const groups = new Map();
+    for (const b of books) {
+      if (seriesOfBook[b.id] || (b.series && b.series.none)) continue;
+      const n = detectPartNo(b.title); if (!n) continue;
+      const base = guessBase(b.title); const k = loose(base);
+      if (!k || k.length < 3 || dismissed[k]) continue;
+      if (!groups.has(k)) groups.set(k, { key: k, name: base, items: [] });
+      groups.get(k).items.push({ id: b.id, n });
+    }
+    const good = [...groups.values()].filter((g) => new Set(g.items.map((x) => x.n)).size >= 2);
+    good.sort((a, b) => b.items.length - a.items.length);
+    return good[0] || null;
+  }
+  function renderSeriesSuggestion() {
+    const el = $('#series-suggest'); if (!el) return;
+    const g = (activeCat === 'الكل' && !query) ? seriesSuggestion() : null;
+    if (!g) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = `
+      <span class="ss-ico" aria-hidden="true">💡</span>
+      <span class="ss-text">${g.items.length} كتب تبدو أجزاءً من «<b>${esc(g.name)}</b>»</span>
+      <button class="btn-gold ss-go">اجمعها في سلسلة</button>
+      <button class="ss-x" title="ليست سلسلة" aria-label="تجاهل هذا الاقتراح">✕</button>`;
+    el.querySelector('.ss-go').onclick = () => openSeriesEditor({ preset: { name: g.name, ids: g.items.map((x) => x.id) } });
+    el.querySelector('.ss-x').onclick = () => {
+      let d = {}; try { d = JSON.parse(localStorage.getItem('midad-series-dismissed') || '{}'); } catch {}
+      d[g.key] = 1; try { localStorage.setItem('midad-series-dismissed', JSON.stringify(d)); } catch {}
+      renderSeriesSuggestion();
+    };
+  }
+
   // شريط أعلى عرض السلسلة: رجوع + تقدّم السلسلة + واصل من الجزء الحالي
   function renderSeriesBar(sr) {
     const bar = $('#series-bar');
@@ -772,8 +998,10 @@ create policy "midad_own_files" on storage.objects for all
         <div class="sb-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="تقدّم السلسلة"><i style="width:${pct}%"></i></div>
         <span>${ss.finished ? '✓ أنهيت كل الأجزاء' : `أنجزت ${pct}٪ · ${ss.done} من ${ss.total} مكتمل`}${ss.seconds ? ' · ' + fmtDuration(ss.seconds) : ''}</span>
       </div>
+      <button class="sb-edit" aria-label="تعديل السلسلة">✏️ تعديل</button>
       ${cur ? `<button class="btn-gold sb-go">▶ ${ss.started ? 'واصل' : 'ابدأ'}: ${esc(partLabelOf(cur))}</button>` : ''}`;
     bar.querySelector('.sb-back').onclick = () => setCat('الكل');
+    bar.querySelector('.sb-edit').onclick = () => openSeriesEditor({ seriesKey: sr.key });
     const go = bar.querySelector('.sb-go'); if (go) go.onclick = () => continueSeries(sr.key);
   }
 
@@ -1309,7 +1537,9 @@ create policy "midad_own_files" on storage.objects for all
     menu.innerHTML = `
       <button data-act="read">📖 قراءة</button>
       <button data-act="fav">${b.fav ? '☆ إزالة من المفضلة' : '⭐ أضف إلى المفضلة'}</button>
-      <button data-act="shelves">📚 الرفوف…</button>
+      <button data-act="shelves">🗂 الرفوف…</button>
+      <button data-act="series">📚 ${seriesOfBook[id] ? 'تعديل السلسلة…' : 'اجمع في سلسلة…'}</button>
+      ${seriesOfBook[id] ? '<button data-act="unseries">↩ أخرِجه من السلسلة</button>' : ''}
       ${b.type === 'pdf' ? '<button data-act="ocr">🔎 استخراج النص (OCR)</button>' : ''}
       ${b.type === 'pdf' ? '<button data-act="totext">📄 أنشئ نسخة نصية</button>' : ''}
       ${b.type === 'text' ? '<button data-act="pdf">🖨 تصدير PDF</button>' : ''}
@@ -1326,7 +1556,9 @@ create policy "midad_own_files" on storage.objects for all
       const act = e.target.dataset.act;
       closeCardMenu();
       if (act === 'read') openBook(id);
-      else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; if (window.Cloud) Cloud.pushBook(id); render(); }
+      else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; pushMetaOf(id); render(); }
+      else if (act === 'series') openSeriesEditor({ seedId: id });
+      else if (act === 'unseries') removeFromSeries(id);
       else if (act === 'shelves') openShelvesModal(b);
       else if (act === 'ocr') ocrBook(id);
       else if (act === 'totext') createTextFromOcr(id);
@@ -1381,7 +1613,7 @@ create policy "midad_own_files" on storage.objects for all
           if (cb.checked) { if (!b.shelves.includes(name)) b.shelves.push(name); }
           else b.shelves = b.shelves.filter((x) => x !== name);
           await Store.updateBook(b.id, { shelves: b.shelves });
-          if (window.Cloud) Cloud.pushBook(b.id);
+          pushMetaOf(b.id);
           render();
         };
       });

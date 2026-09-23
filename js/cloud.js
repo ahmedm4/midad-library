@@ -472,6 +472,24 @@ const Cloud = (() => {
   const stripMeta = (b) => { const { updatedAt, cloudHasFile, id, ...m } = b; return m; };
   const stripState = (s) => { const { bookId, ...st } = s; return st; };
 
+  /* ── دفع البيانات الوصفية وحدها ──
+     التعديلات الخفيفة (السلسلة، المفضلة، الرفوف) لا تستدعي إعادة رفع ملف PDF كاملاً كما يفعل
+     pushBook؛ نحدّث عمود meta فقط، ونرفع الكتاب كاملاً إن لم يكن في السحابة بعد. */
+  async function pushMeta(id) {
+    if (!ready || !user) return;
+    try {
+      await touch(id);
+      const b = await Store.getBook(id);
+      if (!b) return;
+      const { data, error } = await sb.from(TABLE)
+        .update({ meta: stripMeta(b), updated_at: new Date(b.updatedAt || Date.now()).toISOString() })
+        .eq('id', id).select('id');
+      if (error) throw error;
+      if (!data || !data.length) { await uploadBook(id, { silent: true }); return; }
+      recentlyPushed.set(id, Date.now());
+    } catch (e) { console.error('pushMeta', e); }
+  }
+
   /* ── دفع تزايدي ── */
   async function pushBook(id) {
     if (!ready || !user) return;
@@ -588,7 +606,7 @@ const Cloud = (() => {
   return {
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
-    pushBook, pushState, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
+    pushBook, pushMeta, pushState, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,
