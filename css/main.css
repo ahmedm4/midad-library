@@ -658,6 +658,43 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .bc-menu button.danger { color: #ff8787; }
 @keyframes pop { from { transform: scale(.92); opacity: 0; } }
 
+/* ── بطاقة السلسلة: أغلفة مكدّسة خلف الغلاف (ظلال مُزاحة بدل عناصر إضافية) ── */
+.book-card.series-card .bk {
+  box-shadow: 7px -7px 0 -1px #3b3355, 14px -14px 0 -2px #2b2541, -14px 18px 36px rgba(0,0,0,.55);
+}
+.book-card.series-card:hover .bk {
+  box-shadow: 8px -8px 0 -1px #3b3355, 16px -16px 0 -2px #2b2541, -26px 30px 50px rgba(0,0,0,.6);
+}
+.book-card .series-badge { position: absolute; top: 10px; right: 20px; z-index: 3;
+  background: linear-gradient(135deg, var(--gold), #b8862f); color: #2a1d05; font-size: 11px; font-weight: 700;
+  padding: 3px 10px; border-radius: 999px; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
+.book-card .series-go { position: absolute; bottom: 12px; right: 20px; z-index: 4;
+  width: 40px; height: 40px; border-radius: 50%; font-size: 15px; line-height: 1;
+  background: linear-gradient(135deg, var(--gold), #b8862f); color: #2a1d05;
+  box-shadow: 0 6px 16px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
+  transition: transform .2s; }
+.book-card .series-go:hover { transform: scale(1.1); }
+.book-grid.view-list .book-card.series-card .bk { box-shadow: none; }
+.book-grid.view-list .series-badge, .book-grid.view-list .series-go { display: none; }
+:root[data-lib-theme="paper"] .book-card.series-card .bk {
+  box-shadow: 7px -7px 0 -1px #d9ccb0, 14px -14px 0 -2px #c9b995, -14px 18px 30px rgba(90,70,30,.3);
+}
+
+/* ── شريط عرض السلسلة ── */
+.series-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: -4px 0 20px; padding: 12px 14px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--card-line); }
+.series-bar .sb-back { padding: 8px 14px; border-radius: 10px; font-size: 13.5px; color: var(--cream);
+  border: 1px solid var(--card-line); background: rgba(255,255,255,.04); }
+.series-bar .sb-back:hover { border-color: rgba(217,169,79,.5); }
+.series-bar .sb-prog { flex: 1 1 220px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.series-bar .sb-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,.1); overflow: hidden; }
+.series-bar .sb-track i { display: block; height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-soft)); }
+.series-bar .sb-prog span { font-size: 12.5px; color: var(--muted); }
+.series-bar .sb-go { padding: 9px 18px; border-radius: 11px; font-size: 14px; white-space: nowrap; }
+:root[data-lib-theme="paper"] .series-bar .sb-track { background: rgba(60,45,20,.12); }
+
 /* ─── الحالة الفارغة ─── */
 .empty-state { text-align: center; padding: 90px 20px; }
 .empty-shelf { display: flex; gap: 10px; justify-content: center; align-items: flex-end;

@@ -659,3 +659,14 @@
 
 /* زر القراءة التلقائية النشط */
 #r-btn-auto.on { color: var(--gold, #d9a94f); background: rgba(217,169,79,.16); }
+
+
+/* ── زرّ «الجزء التالي» في آخر صفحات جزءٍ من سلسلة ── */
+.r-nextpart { position: absolute; left: 50%; bottom: 78px; transform: translateX(-50%); z-index: 60;
+  padding: 11px 22px; border-radius: 999px; font-size: 14.5px; white-space: nowrap;
+  background: linear-gradient(135deg, #e6bc5c, #b8862f); color: #2a1d05;
+  box-shadow: 0 10px 28px rgba(0,0,0,.45); animation: rnp-in .35s cubic-bezier(.2,1.3,.4,1); }
+.r-nextpart b { font-weight: 800; }
+.r-nextpart:hover { filter: brightness(1.06); }
+.r-nextpart:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+@keyframes rnp-in { from { opacity: 0; transform: translate(-50%, 12px); } }

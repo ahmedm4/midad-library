@@ -525,7 +525,11 @@ const Discover = (() => {
         </div>
       </div>`;
     sheet.querySelector('.disc-back').onclick = closeSheet;
-    const info = (p) => ({ title: partTitle(p), author, cover, category: d.category, shelves: multi ? [base] : undefined });
+    const seriesKey = String(base).replace(/ـ/g, '').replace(/\s+/g, ' ').trim();
+    const info = (p) => ({
+      title: partTitle(p), author, cover, category: d.category, shelves: multi ? [base] : undefined,
+      series: multi ? { key: seriesKey, title: base, label: p.short, order: p.n, total: parts.length, src: 'alfeker:' + ds.id } : undefined,
+    });
 
     // كتاب من جزء واحد
     const one = sheet.querySelector('.af-one');
@@ -624,7 +628,7 @@ const Discover = (() => {
     return Library.addRemoteBook({
       blob, name: meta.title, kind: 'pdf',
       title: meta.title, author: meta.author, category: meta.category || 'أخرى', cover: meta.cover || '',
-      shelves: meta.shelves,
+      shelves: meta.shelves, series: meta.series,
     });
   }
 

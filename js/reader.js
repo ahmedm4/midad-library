@@ -271,11 +271,34 @@ const Reader = (() => {
     state.lastRead = Date.now();
     if (state.pct >= 0.995 && !state.finished) {
       state.finished = true; state.finishedAt = state.finishedAt || Date.now();
-      if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب — بطاقة الإنجاز في قائمة الكتاب', 'gold'); }
+      celebrate();
     }
     updateHUD();
     schedulePersist();
     bump();
+  }
+
+  // تهنئة الإنهاء: جزء من سلسلة يُشير إلى الجزء التالي بدل «أنهيت الكتاب»
+  function celebrate() {
+    if (celebrated) return;
+    celebrated = true;
+    const pi = Library.partInfo ? Library.partInfo(book.id) : null;
+    const np = Library.nextPartOf ? Library.nextPartOf(book.id) : null;
+    if (pi && np) Library.toast(`🎉 أنهيت ${pi.label} — ${np.label} في انتظارك (الزرّ أسفل الصفحة)`, 'gold');
+    else if (pi) Library.toast(`🎉 وصلت إلى آخر أجزاء «${pi.title}»`, 'gold');
+    else Library.toast('🎉 مبارك! أنهيت الكتاب — بطاقة الإنجاز في قائمة الكتاب', 'gold');
+  }
+
+  // زرّ «الجزء التالي» يظهر في آخر صفحات جزءٍ من سلسلة
+  function updateNextPart() {
+    const el = $('#r-nextpart');
+    if (!el || !book) return;
+    const np = (window.Library && Library.nextPartOf) ? Library.nextPartOf(book.id) : null;
+    if (!np || !(state.pct >= 0.99)) { el.hidden = true; return; }
+    el.hidden = false;
+    el.innerHTML = `الجزء التالي: <b>${esc(np.label)}</b> <span aria-hidden="true">←</span>`;
+    el.setAttribute('aria-label', `افتح ${np.label} من ${np.title}`);
+    el.onclick = async () => { el.hidden = true; await close(); Library.openBook(np.id); };
   }
 
   /* ═══════ التنقّل ═══════ */
@@ -986,7 +1009,7 @@ const Reader = (() => {
     state.pct = max > 0 ? cont.scrollTop / max : 1;
     state.page = pdfPage - 1;
     state.lastRead = Date.now();
-    if (state.pct >= 0.995 && !state.finished) { state.finished = true; state.finishedAt = state.finishedAt || Date.now(); if (!celebrated) { celebrated = true; Library.toast('🎉 مبارك! أنهيت الكتاب — بطاقة الإنجاز في قائمة الكتاب', 'gold'); } }
+    if (state.pct >= 0.995 && !state.finished) { state.finished = true; state.finishedAt = state.finishedAt || Date.now(); celebrate(); }
     updateHUD();
     schedulePersist();
   }
@@ -1930,6 +1953,7 @@ const Reader = (() => {
     $('#r-prev').disabled = pct <= 0 && settings.flip !== 'scroll';
     $('#r-next').disabled = pct >= 1 && settings.flip !== 'scroll';
     highlightCurrentToc();
+    updateNextPart();
   }
 
   function timeLeftText(pct) {

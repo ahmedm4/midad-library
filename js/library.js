@@ -46,6 +46,97 @@ const Library = (() => {
   let origText = null;      // النص الأصلي عند تحرير كتاب نصي (لكشف التغيير)
   const STATUS_FAV = '⭐ المفضلة', STATUS_READING = '📖 قيد القراءة', STATUS_DONE = '✅ مكتملة', STATUS_UNREAD = '🆕 لم تبدأ';
   const SHELF_PREFIX = 'shelf:'; // قيمة data-cat للرفوف المخصصة
+  const SERIES_PREFIX = 'series:'; // قيمة activeCat لعرض أجزاء سلسلة واحدة
+
+  /* ─── السلاسل: أجزاء الكتاب الواحد (مثل «الغدير» بأجزائه الـ11) تُعامَل ككتاب واحد ───
+     مصدر الانتماء: meta.series (يُكتب عند الاستيراد من «شبكة الفكر»)، أو — للأجزاء المستوردة
+     قبل ذلك — صيغة العنوان «الأصل — الجزء 3». لا تُعدّ سلسلةً إلا مجموعةٌ من جزأين فأكثر. */
+  let seriesMap = new Map(); // key → { key, title, parts: [كتب مرتّبة] }
+  let seriesOfBook = {};     // bookId → key
+  const normKey = (x) => String(x || '').replace(/ـ/g, '').replace(/\s+/g, ' ').trim();
+  const PART_TITLE_RE = /^(.+?)\s+—\s+((?:الجزء|الجزآن|الأجزاء)\s+\d{1,3}(?:\s*[–-]\s*\d{1,3})?(?:\s*·\s*القسم\s+\d{1,2})?)\s*$/;
+  // ترتيب الجزء من تسميته: «الجزء 3 · القسم 2» ⇒ 302 ، «الجزآن 9–10» ⇒ 900
+  const orderOfLabel = (label) => {
+    const m = String(label || '').match(/(?:الجزء|الجزآن|الأجزاء)\s+(\d{1,3})(?:\s*[–-]\s*\d{1,3})?(?:\s*·\s*القسم\s+(\d{1,2}))?/);
+    return m ? (+m[1]) * 100 + (m[2] ? +m[2] : 0) : -1;
+  };
+  function partOf(b) {
+    if (b.series && b.series.key) {
+      const o = orderOfLabel(b.series.label);
+      return { key: normKey(b.series.key), title: b.series.title || '', label: b.series.label || '', order: o >= 0 ? o : (+b.series.order || 0) * 100 };
+    }
+    const m = String(b.title || '').match(PART_TITLE_RE);
+    if (!m) return null;
+    return { key: normKey(m[1]), title: m[1].trim(), label: m[2], order: orderOfLabel(m[2]) };
+  }
+  function buildSeries() {
+    const groups = new Map();
+    for (const b of books) {
+      const pt = partOf(b); if (!pt) continue;
+      if (!groups.has(pt.key)) groups.set(pt.key, { key: pt.key, title: pt.title, parts: [] });
+      groups.get(pt.key).parts.push(b);
+    }
+    seriesMap = new Map(); seriesOfBook = {};
+    for (const [k, g] of groups) {
+      if (g.parts.length < 2) continue; // جزء وحيد ⇒ يبقى كتاباً عادياً
+      g.parts.sort((a, b) => (partOf(a).order - partOf(b).order) || a.title.localeCompare(b.title, 'ar'));
+      seriesMap.set(k, g);
+      for (const b of g.parts) seriesOfBook[b.id] = k;
+    }
+  }
+  // تقدّم السلسلة: متوسط تقدّم أجزائها (المكتمل = 1)
+  function seriesStats(sr) {
+    let sum = 0, done = 0, lastRead = 0, seconds = 0;
+    for (const b of sr.parts) {
+      const st = states[b.id] || {};
+      sum += st.finished ? 1 : (st.pct || 0);
+      if (st.finished) done++;
+      lastRead = Math.max(lastRead, st.lastRead || 0);
+      seconds += st.seconds || 0;
+    }
+    const total = sr.parts.length;
+    return { pct: sum / total, done, total, lastRead, seconds, finished: done === total, started: lastRead > 0 || sum > 0 };
+  }
+  // الجزء الذي يُواصَل منه: آخر جزء قُرئ إن لم يكتمل، وإلا أول جزء غير مكتمل بعده
+  function currentPart(sr) {
+    const read = sr.parts.filter((b) => (states[b.id] || {}).lastRead).sort((a, b) => states[b.id].lastRead - states[a.id].lastRead);
+    const unfinished = (b) => !(states[b.id] || {}).finished;
+    if (!read.length) return sr.parts.find(unfinished) || sr.parts[0];
+    const last = read[0];
+    if (unfinished(last)) return last;
+    const i = sr.parts.indexOf(last);
+    return sr.parts.slice(i + 1).find(unfinished) || sr.parts.find(unfinished) || null;
+  }
+  const partLabelOf = (b) => { const pt = partOf(b); return (pt && pt.label) || b.title; };
+  const partsWord = (n) => (n === 2 ? 'جزآن' : n <= 10 ? `${n} أجزاء` : `${n} جزءاً`);
+  // للقارئ: معلومات الجزء والجزء التالي
+  function partInfo(bookId) {
+    const k = seriesOfBook[bookId]; if (!k) return null;
+    const sr = seriesMap.get(k); const i = sr.parts.findIndex((b) => b.id === bookId);
+    return { key: k, title: sr.title, label: partLabelOf(sr.parts[i]), index: i + 1, total: sr.parts.length };
+  }
+  function nextPartOf(bookId) {
+    const k = seriesOfBook[bookId]; if (!k) return null;
+    const sr = seriesMap.get(k); const i = sr.parts.findIndex((b) => b.id === bookId);
+    const nx = sr.parts[i + 1]; if (!nx) return null;
+    return { id: nx.id, label: partLabelOf(nx), title: sr.title, index: i + 2, total: sr.parts.length };
+  }
+  // عنصر الشبكة الممثّل للسلسلة كلها
+  function seriesItem(sr) {
+    const first = sr.parts[0];
+    return { id: SERIES_PREFIX + sr.key, __series: sr.key, title: sr.title, author: first.author, category: first.category,
+      type: first.type, cover: first.cover, fav: sr.parts.some((b) => b.fav), addedAt: Math.max(...sr.parts.map((b) => b.addedAt || 0)) };
+  }
+  function collapseSeries(list) {
+    const out = [], seen = new Set();
+    for (const b of list) {
+      const k = seriesOfBook[b.id];
+      if (!k) { out.push(b); continue; }
+      if (seen.has(k)) continue;
+      seen.add(k); out.push(seriesItem(seriesMap.get(k)));
+    }
+    return out;
+  }
 
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -222,6 +313,9 @@ create policy "midad_own_files" on storage.objects for all
     } else {
       for (const b of books) states[b.id] = await Store.getState(b.id);
     }
+    buildSeries();
+    // سلسلة معروضة حُذفت أجزاؤها ⇒ عُد للمكتبة كلها
+    if (activeCat.startsWith(SERIES_PREFIX) && !seriesMap.has(activeCat.slice(SERIES_PREFIX.length))) activeCat = 'الكل';
     // ثبّت أسماء الرفوف المكتشفة من الكتب محلياً (تدعم استمرارها والمزامنة عبر الأجهزة)
     if (Store.saveShelves) Store.saveShelves(allShelves());
     // احسب عدد بطاقات المراجعة المستحقّة (لشارة القائمة)
@@ -260,7 +354,13 @@ create policy "midad_own_files" on storage.objects for all
 
   // اقتراح كتاب لم يُبدأ بعد، مع تفضيل تصنيف آخر ما قرأه المستخدم
   function pickSuggestion(excludeId) {
-    const unread = books.filter((b) => b.id !== excludeId && !states[b.id].finished && !(states[b.id].pct > 0));
+    const exKey = excludeId && seriesOfBook[excludeId];
+    const eligible = (b) => {
+      const k = seriesOfBook[b.id]; if (!k) return true;
+      const sr = seriesMap.get(k);
+      return k !== exKey && sr.parts[0].id === b.id && !seriesStats(sr).started; // أول جزء من سلسلة لم تُبدأ
+    };
+    const unread = books.filter((b) => b.id !== excludeId && eligible(b) && !states[b.id].finished && !(states[b.id].pct > 0));
     if (!unread.length) return null;
     const readBooks = books.filter((b) => states[b.id].lastRead).sort((a, b) => states[b.id].lastRead - states[a.id].lastRead);
     const favCat = readBooks[0] && readBooks[0].category;
@@ -270,14 +370,43 @@ create policy "midad_own_files" on storage.objects for all
 
   function renderHero() {
     const hero = $('#hero-continue');
-    const last = books
-      .filter((b) => states[b.id].lastRead && !states[b.id].finished && states[b.id].pct > 0)
-      .sort((a, b) => states[b.id].lastRead - states[a.id].lastRead)[0];
+    // المرشّحون: كتب مفردة قيد القراءة + سلاسل بجزئها الحالي (ولو لم يُبدأ بعد: «الجزء التالي»)
+    const cands = [];
+    for (const b of books) {
+      if (seriesOfBook[b.id]) continue;
+      const st = states[b.id];
+      if (st.lastRead && !st.finished && st.pct > 0) cands.push({ book: b, t: st.lastRead });
+    }
+    for (const sr of seriesMap.values()) {
+      const ss = seriesStats(sr);
+      if (!ss.lastRead || ss.finished) continue;
+      const cur = currentPart(sr);
+      if (cur) cands.push({ book: cur, t: ss.lastRead, sr, ss });
+    }
+    cands.sort((a, b) => b.t - a.t);
+    const top = cands[0];
+    const last = top ? top.book : null;
     const sug = pickSuggestion(last ? last.id : null);
     if (!last && !sug) { hero.hidden = true; return; }
     hero.hidden = false;
     let html = '';
-    if (last) {
+    if (last && top.sr) {
+      // سلسلة: الجزء الحالي + تقدّم السلسلة كلها
+      const ss = top.ss, pct = Math.round(ss.pct * 100), pi = partInfo(last.id);
+      const started = (states[last.id].pct || 0) > 0;
+      html += `
+      <div class="continue-card" data-id="${last.id}">
+        ${coverHTML(last, 'cc-cover')}
+        <div class="cc-info">
+          <div class="cc-label">✦ ${started ? 'واصل القراءة' : 'الجزء التالي'} · ${esc(pi.label)}</div>
+          <h3>${esc(top.sr.title)}</h3>
+          <div class="cc-author">${esc(last.author || '')}</div>
+          <div class="cc-bar"><i style="width:${pct}%"></i></div>
+          <div class="cc-pct">أنجزت ${pct}٪ من السلسلة · ${ss.done} من ${ss.total} مكتمل${ss.seconds ? ' · ' + fmtDuration(ss.seconds) + ' قراءة' : ''}</div>
+        </div>
+        <button class="btn-gold cc-btn">${started ? 'استئناف القراءة' : 'ابدأ ' + esc(pi.label)} ←</button>
+      </div>`;
+    } else if (last) {
       const st = states[last.id], pct = Math.round(st.pct * 100);
       html += `
       <div class="continue-card" data-id="${last.id}">
@@ -328,10 +457,11 @@ create policy "midad_own_files" on storage.objects for all
   function renderChips() {
     // ── تبويبات رئيسية بارزة: حالة القراءة ──
     const tabs = ['الكل'];
-    if (books.some(isReading)) tabs.push(STATUS_READING);
-    if (books.some((b) => b.fav)) tabs.push(STATUS_FAV);
-    if (books.some((b) => states[b.id].finished)) tabs.push(STATUS_DONE);
-    if (books.some(isUnread)) tabs.push(STATUS_UNREAD);
+    const items = collapseSeries(books);
+    if (items.some(itReading)) tabs.push(STATUS_READING);
+    if (items.some((it) => it.fav)) tabs.push(STATUS_FAV);
+    if (items.some(itDone)) tabs.push(STATUS_DONE);
+    if (items.some(itUnread)) tabs.push(STATUS_UNREAD);
     $('#status-tabs').innerHTML = tabs.map((c) => {
       const n = countFor(c);
       return `<button class="stab ${c === activeCat ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}${n ? ` <i>${n}</i>` : ''}</button>`;
@@ -355,21 +485,36 @@ create policy "midad_own_files" on storage.objects for all
     $('#cat-chips').hidden = !html;
 
     [...$('#status-tabs').querySelectorAll('button'), ...$('#cat-chips').querySelectorAll('button')]
-      .forEach((btn) => { btn.onclick = () => { activeCat = btn.dataset.cat; render(); }; });
+      .forEach((btn) => { btn.onclick = () => setCat(btn.dataset.cat); });
+  }
+
+  // تغيير العرض (تصنيف/رفّ/سلسلة) مع إعادة البحث داخل النطاق الجديد إن كان هناك بحث
+  function setCat(cat) {
+    activeCat = cat;
+    render();
+    if (query.length >= 2) { clearTimeout(deepTimer); deepSearch(query); notesSearch(query); }
   }
 
   // «قيد القراءة» = كتاب فُتِح لمتابعته (له موضع محفوظ أو تاريخ فتح) ولم يكتمل
   const isReading = (b) => { const s = states[b.id]; return !s.finished && (s.pct > 0 || !!s.lastRead); };
   const isUnread = (b) => { const s = states[b.id]; return !s.finished && !(s.pct > 0) && !s.lastRead; };
 
-  // عدد الكتب ضمن تصنيف/حالة معيّنة (لشارات التصنيفات)
+  // حالة العنصر (كتاب أو سلسلة) — السلسلة: قيد القراءة إن بدأت ولم تكتمل كلها
+  const stOf = (it) => (it.__series ? seriesStats(seriesMap.get(it.__series)) : states[it.id]);
+  const itReading = (it) => (it.__series ? (() => { const x = stOf(it); return x.started && !x.finished; })() : isReading(it));
+  const itUnread = (it) => (it.__series ? !stOf(it).started : isUnread(it));
+  const itDone = (it) => !!stOf(it).finished;
+  const isStatusTab = (c) => c === STATUS_FAV || c === STATUS_READING || c === STATUS_DONE || c === STATUS_UNREAD;
+
+  // عدد العناصر ضمن تصنيف/حالة (السلسلة تُعدّ عنصراً واحداً كما تظهر في الشبكة)
   function countFor(cat) {
-    if (cat === 'الكل') return books.length;
-    if (cat === STATUS_FAV) return books.filter((b) => b.fav).length;
-    if (cat === STATUS_READING) return books.filter(isReading).length;
-    if (cat === STATUS_UNREAD) return books.filter(isUnread).length;
-    if (cat === STATUS_DONE) return books.filter((b) => states[b.id].finished).length;
-    return books.filter((b) => b.category === cat).length;
+    const items = collapseSeries(books);
+    if (cat === 'الكل') return items.length;
+    if (cat === STATUS_FAV) return items.filter((it) => it.fav).length;
+    if (cat === STATUS_READING) return items.filter(itReading).length;
+    if (cat === STATUS_UNREAD) return items.filter(itUnread).length;
+    if (cat === STATUS_DONE) return items.filter(itDone).length;
+    return items.filter((it) => it.category === cat).length;
   }
 
   // يربط كل نسخة نصّية مُستخرَجة (OCR) بأصلها PDF: بالمرجع sourceId أو بلاحقة «— نص» عند غيابه
@@ -396,24 +541,35 @@ create policy "midad_own_files" on storage.objects for all
       if (pairView === 'pdf') list = list.filter((b) => !pdfOf[b.id]);        // أخفِ النسخ النصية المشتقّة
       else if (pairView === 'text') list = list.filter((b) => !textTwinOf[b.id]); // أخفِ الأصل PDF الذي له نسخة نصية
     }
-    if (activeCat === STATUS_FAV) list = list.filter((b) => b.fav);
-    else if (activeCat === STATUS_READING) list = list.filter(isReading);
-    else if (activeCat === STATUS_DONE) list = list.filter((b) => states[b.id].finished);
-    else if (activeCat === STATUS_UNREAD) list = list.filter(isUnread);
-    else if (activeCat.startsWith(SHELF_PREFIX)) { const sh = activeCat.slice(SHELF_PREFIX.length); list = list.filter((b) => (b.shelves || []).includes(sh)); }
-    else if (activeCat !== 'الكل') list = list.filter((b) => b.category === activeCat);
-    if (query) {
-      const q = query.toLowerCase();
-      list = list.filter((b) => (b.title + ' ' + (b.author || '')).toLowerCase().includes(q));
+    const matchQ = (b) => !query || (b.title + ' ' + (b.author || '')).toLowerCase().includes(query.toLowerCase());
+    // داخل سلسلة: أجزاؤها بترتيبها الطبيعي
+    if (activeCat.startsWith(SERIES_PREFIX)) {
+      const sr = seriesMap.get(activeCat.slice(SERIES_PREFIX.length));
+      return sr ? sr.parts.filter((b) => list.includes(b) && matchQ(b)) : [];
     }
-    const st = (b) => states[b.id];
-    if (sort === 'recent') list.sort((a, b) => (st(b).lastRead || 0) - (st(a).lastRead || 0) || b.addedAt - a.addedAt);
-    else if (sort === 'added') list.sort((a, b) => b.addedAt - a.addedAt);
-    else if (sort === 'oldest') list.sort((a, b) => a.addedAt - b.addedAt);
-    else if (sort === 'title') list.sort((a, b) => a.title.localeCompare(b.title, 'ar'));
-    else if (sort === 'author') list.sort((a, b) => (a.author || 'ﻯ').localeCompare(b.author || 'ﻯ', 'ar') || a.title.localeCompare(b.title, 'ar'));
-    else if (sort === 'progress') list.sort((a, b) => st(b).pct - st(a).pct);
-    return list;
+    const inShelf = activeCat.startsWith(SHELF_PREFIX);
+    if (inShelf) { const sh = activeCat.slice(SHELF_PREFIX.length); list = list.filter((b) => (b.shelves || []).includes(sh)); }
+    else if (!isStatusTab(activeCat) && activeCat !== 'الكل') list = list.filter((b) => b.category === activeCat);
+    list = list.filter(matchQ);
+    // داخل رفّ تظهر الأجزاء منفردة؛ وفي غيره تُطوى كل سلسلة في بطاقة واحدة
+    let items = inShelf ? list : collapseSeries(list);
+    if (activeCat === STATUS_FAV) items = items.filter((it) => it.fav);
+    else if (activeCat === STATUS_READING) items = items.filter(itReading);
+    else if (activeCat === STATUS_DONE) items = items.filter(itDone);
+    else if (activeCat === STATUS_UNREAD) items = items.filter(itUnread);
+    // رفّ يضمّ سلسلة واحدة فقط ⇒ ترتيب الأجزاء أوضح من أي فرز
+    if (inShelf && items.length > 1) {
+      const k = seriesOfBook[items[0].id];
+      if (k && items.every((b) => seriesOfBook[b.id] === k)) return seriesMap.get(k).parts.filter((b) => items.includes(b));
+    }
+    const st = stOf;
+    if (sort === 'recent') items.sort((a, b) => (st(b).lastRead || 0) - (st(a).lastRead || 0) || b.addedAt - a.addedAt);
+    else if (sort === 'added') items.sort((a, b) => b.addedAt - a.addedAt);
+    else if (sort === 'oldest') items.sort((a, b) => a.addedAt - b.addedAt);
+    else if (sort === 'title') items.sort((a, b) => a.title.localeCompare(b.title, 'ar'));
+    else if (sort === 'author') items.sort((a, b) => (a.author || 'ﻯ').localeCompare(b.author || 'ﻯ', 'ar') || a.title.localeCompare(b.title, 'ar'));
+    else if (sort === 'progress') items.sort((a, b) => st(b).pct - st(a).pct);
+    return items;
   }
 
   // بطاقة كتاب واحدة (تصلح للشبكة والمضغوط والقائمة — التخطيط عبر CSS)
@@ -441,8 +597,86 @@ create policy "midad_own_files" on storage.objects for all
       </article>`;
   }
 
+  // بطاقة سلسلة: غلاف مكدّس + عدد الأجزاء + تقدّم السلسلة + زرّ «واصل» للجزء الحالي
+  function seriesCardHTML(it) {
+    const sr = seriesMap.get(it.__series);
+    const ss = seriesStats(sr), cur = currentPart(sr);
+    const pct = Math.round(ss.pct * 100);
+    const curLbl = cur ? partLabelOf(cur) : '';
+    const extra = ss.finished ? '✓ أنهيت كل الأجزاء'
+      : ss.started ? `${esc(curLbl)} · ${ss.done} من ${ss.total} مكتمل` : `${partsWord(ss.total)} · لم تبدأ`;
+    return `
+      <article class="book-card series-card" data-series="${esc(sr.key)}">
+        <div class="bk" role="button" tabindex="0" aria-label="${esc(sr.title)} — ${partsWord(ss.total)}، اعرض الأجزاء">
+          ${coverHTML({ ...sr.parts[0], title: sr.title })}
+          <span class="series-badge">📚 ${partsWord(ss.total)}</span>
+          ${ss.finished ? '<span class="done-badge">✓ مكتملة</span>' : ''}
+          ${pct > 0 && !ss.finished ? `<div class="prog-ring" title="${pct}٪ من السلسلة">
+            <svg viewBox="0 0 36 36"><circle class="pr-bg" cx="18" cy="18" r="15.5"/><circle class="pr-fg" cx="18" cy="18" r="15.5" stroke-dasharray="${(pct * 0.974).toFixed(1)} 100"/></svg>
+            <span>${pct}<i>٪</i></span>
+          </div>` : ''}
+          ${cur && !ss.finished ? `<button class="series-go" title="${ss.started ? 'واصل' : 'ابدأ'}: ${esc(curLbl)}" aria-label="${ss.started ? 'واصل' : 'ابدأ'} ${esc(curLbl)}">▶</button>` : ''}
+        </div>
+        <div class="bc-meta">
+          <b>${esc(sr.title)}</b>
+          <span class="bc-author">${esc(it.author || '—')}</span>
+          <span class="bc-extra">${extra}</span>
+          <button class="bc-menu-btn" title="خيارات السلسلة" aria-label="خيارات السلسلة">⋯</button>
+        </div>
+      </article>`;
+  }
+  const itemCardHTML = (it) => (it.__series ? seriesCardHTML(it) : bookCardHTML(it));
+
+  function openSeriesView(key) {
+    setCat(SERIES_PREFIX + key);
+    const gh = document.querySelector('.grid-head');
+    if (gh) window.scrollTo({ top: gh.getBoundingClientRect().top + window.scrollY - 70, behavior: 'smooth' });
+  }
+  function continueSeries(key) {
+    const sr = seriesMap.get(key); if (!sr) return;
+    const cur = currentPart(sr) || sr.parts[0];
+    openBook(cur.id);
+  }
+  function openSeriesMenu(x, y, key) {
+    closeCardMenu();
+    const sr = seriesMap.get(key); if (!sr) return;
+    const ss = seriesStats(sr), cur = currentPart(sr);
+    const menu = document.createElement('div');
+    menu.className = 'bc-menu';
+    menu.innerHTML = `
+      ${cur ? `<button data-act="go">▶ ${ss.started ? 'واصل' : 'ابدأ'}: ${esc(partLabelOf(cur))}</button>` : ''}
+      <button data-act="view">📚 اعرض الأجزاء (${ss.total})</button>
+      <button data-act="first">↺ من الجزء الأول</button>`;
+    document.body.appendChild(menu);
+    menu.style.top = Math.min(y, innerHeight - menu.offsetHeight - 12) + 'px';
+    menu.style.left = Math.min(Math.max(10, x - menu.offsetWidth + 30), innerWidth - menu.offsetWidth - 10) + 'px';
+    menu.onclick = (e) => {
+      const act = e.target.dataset.act; if (!act) return;
+      closeCardMenu();
+      if (act === 'go') continueSeries(key);
+      else if (act === 'view') openSeriesView(key);
+      else if (act === 'first') openBook(sr.parts[0].id);
+    };
+    setTimeout(() => document.addEventListener('pointerdown', (ev) => { if (!menu.contains(ev.target)) closeCardMenu(); }, { once: true }));
+  }
+  function wireSeriesCard(card) {
+    const key = card.dataset.series;
+    const bk = card.querySelector('.bk');
+    bk.onclick = () => openSeriesView(key);
+    bk.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSeriesView(key); } };
+    const go = card.querySelector('.series-go');
+    if (go) go.onclick = (e) => { e.stopPropagation(); continueSeries(key); };
+    card.querySelector('.bc-menu-btn').onclick = (e) => {
+      e.stopPropagation();
+      const r = e.currentTarget.getBoundingClientRect();
+      openSeriesMenu(r.left, r.bottom + 6, key);
+    };
+    card.oncontextmenu = (e) => { e.preventDefault(); openSeriesMenu(e.clientX, e.clientY, key); };
+  }
+
   function wireCards(cards) {
     cards.forEach((card) => {
+      if (card.dataset.series) { wireSeriesCard(card); return; }
       const id = card.dataset.id;
       card.querySelector('.bk').onclick = () => openBook(id);
       card.querySelector('.bc-menu-btn').onclick = (e) => {
@@ -466,7 +700,7 @@ create policy "midad_own_files" on storage.objects for all
     const grid = $('#book-grid');
     const slice = curList.slice(renderCursor, renderCursor + CHUNK);
     const tmp = document.createElement('div');
-    tmp.innerHTML = slice.map((b) => bookCardHTML(b)).join('');
+    tmp.innerHTML = slice.map((b) => itemCardHTML(b)).join('');
     const nodes = [...tmp.children];
     nodes.forEach((n) => grid.appendChild(n));
     wireCards(nodes);
@@ -482,9 +716,13 @@ create policy "midad_own_files" on storage.objects for all
     const grid = $('#book-grid');
     grid.className = 'book-grid view-' + viewMode;
     $('#empty-state').hidden = books.length > 0;
+    const inSeries = activeCat.startsWith(SERIES_PREFIX);
+    const sr = inSeries ? seriesMap.get(activeCat.slice(SERIES_PREFIX.length)) : null;
     $('#grid-title').textContent = activeCat === 'الكل' ? 'كل الكتب'
+      : sr ? '📚 ' + sr.title
       : activeCat.startsWith(SHELF_PREFIX) ? '📚 ' + activeCat.slice(SHELF_PREFIX.length) : activeCat;
-    { const gc = $('#grid-count'); if (gc) gc.textContent = curList.length ? curList.length + ' كتاب' : ''; }
+    { const gc = $('#grid-count'); if (gc) gc.textContent = !curList.length ? '' : sr ? partsWord(curList.length) : curList.length + ' كتاب'; }
+    renderSeriesBar(sr);
     { const pf = $('#pair-filter'); if (pf) pf.hidden = !hasPairs(); }
     grid.innerHTML = '';
     // وضع القائمة: مجموعات قابلة للطي (بلا تحميل تدريجي — صفوف خفيفة)
@@ -499,6 +737,24 @@ create policy "midad_own_files" on storage.objects for all
       window.addEventListener('scroll', maybeLoadMore, { passive: true });
     }
     renderChunk();
+  }
+
+  // شريط أعلى عرض السلسلة: رجوع + تقدّم السلسلة + واصل من الجزء الحالي
+  function renderSeriesBar(sr) {
+    const bar = $('#series-bar');
+    if (!bar) return;
+    if (!sr) { bar.hidden = true; bar.innerHTML = ''; return; }
+    const ss = seriesStats(sr), cur = currentPart(sr), pct = Math.round(ss.pct * 100);
+    bar.hidden = false;
+    bar.innerHTML = `
+      <button class="sb-back" aria-label="رجوع إلى كل الكتب">→ كل الكتب</button>
+      <div class="sb-prog">
+        <div class="sb-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="تقدّم السلسلة"><i style="width:${pct}%"></i></div>
+        <span>${ss.finished ? '✓ أنهيت كل الأجزاء' : `أنجزت ${pct}٪ · ${ss.done} من ${ss.total} مكتمل`}${ss.seconds ? ' · ' + fmtDuration(ss.seconds) : ''}</span>
+      </div>
+      ${cur ? `<button class="btn-gold sb-go">▶ ${ss.started ? 'واصل' : 'ابدأ'}: ${esc(partLabelOf(cur))}</button>` : ''}`;
+    bar.querySelector('.sb-back').onclick = () => setCat('الكل');
+    const go = bar.querySelector('.sb-go'); if (go) go.onclick = () => continueSeries(sr.key);
   }
 
   // يحمّل الدفعة التالية عند الاقتراب من نهاية القائمة (يعمل حتى لو تعذّر قياس الشاشة)
@@ -528,7 +784,7 @@ create policy "midad_own_files" on storage.objects for all
       h.innerHTML = `<span class="ls-chev">▾</span><span class="ls-name">${esc(cat)}</span><span class="ls-count">${arr.length}</span>`;
       const body = document.createElement('div');
       body.className = 'list-section-body'; body.hidden = isC;
-      body.innerHTML = arr.map((b) => bookCardHTML(b)).join('');
+      body.innerHTML = arr.map((b) => itemCardHTML(b)).join('');
       grid.appendChild(h); grid.appendChild(body);
       wireCards([...body.querySelectorAll('.book-card')]);
       h.onclick = () => { const c = getCollapsed(); c[cat] = !c[cat]; setCollapsed(c); h.classList.toggle('collapsed', c[cat]); body.hidden = c[cat]; };
@@ -545,7 +801,20 @@ create policy "midad_own_files" on storage.objects for all
 
   /* ─── البحث الشامل داخل كل الكتب ─── */
   let deepTimer = null, deepToken = 0, notesToken = 0;
-  let lastDeep = null; // {q, ids} — لتضييق البحث عند إطالة نفس الكلمة
+  let lastDeep = null; // {q, ids, scope} — لتضييق البحث عند إطالة نفس الكلمة
+
+  // نطاق البحث داخل الكتب: السلسلة أو الرفّ المعروض، وإلا المكتبة كلها
+  function searchScope() {
+    if (activeCat.startsWith(SERIES_PREFIX)) {
+      const sr = seriesMap.get(activeCat.slice(SERIES_PREFIX.length));
+      if (sr) return { list: sr.parts, label: sr.title, id: activeCat };
+    }
+    if (activeCat.startsWith(SHELF_PREFIX)) {
+      const sh = activeCat.slice(SHELF_PREFIX.length);
+      return { list: books.filter((b) => (b.shelves || []).includes(sh)), label: sh, id: activeCat };
+    }
+    return { list: books, label: '', id: '' };
+  }
 
   const normSpace = (s) => s.replace(/\s+/g, ' ').trim();
   // تنظيف مقتطف للعرض: يوحّد المسافات دون قصّ الحواف الملاصقة، ويزيل علامات #
@@ -837,9 +1106,11 @@ create policy "midad_own_files" on storage.objects for all
   async function deepSearch(q) {
     const token = ++deepToken;
     const panel = $('#deep-results'), list = $('#deep-list');
+    const scopeInfo = searchScope(), pool = scopeInfo.list;
+    { const h = panel.querySelector('h3'); if (h) h.textContent = scopeInfo.label ? `📖 داخل «${scopeInfo.label}»` : '📖 داخل الكتب'; }
     // فهرسة كسولة لملفات PDF غير المفهرسة
     const pdfsToIndex = [];
-    for (const b of books) {
+    for (const b of pool) {
       if (b.type === 'pdf' && !(await Store.getFulltext(b.id))) pdfsToIndex.push(b);
     }
     if (token !== deepToken) return;
@@ -859,10 +1130,10 @@ create policy "midad_own_files" on storage.objects for all
 
     // نطاق البحث: عند إطالة نفس الكلمة («الجاح» ← «الجاحظ») لا يمكن أن يطابق
     // كتابٌ لم يطابق الأقصر، فنبحث في نتائج المرّة السابقة فقط.
-    let scope = books;
-    if (lastDeep && q.toLowerCase().startsWith(lastDeep.q) && lastDeep.q.length >= 2) {
+    let scope = pool;
+    if (lastDeep && lastDeep.scope === scopeInfo.id && q.toLowerCase().startsWith(lastDeep.q) && lastDeep.q.length >= 2) {
       const keep = new Set(lastDeep.ids);
-      scope = books.filter((b) => keep.has(b.id));
+      scope = pool.filter((b) => keep.has(b.id));
     }
 
     // اقرأ النصوص بالتوازي (بسقف تزامن) بدل قراءة متسلسلة لكل كتاب
@@ -884,7 +1155,7 @@ create policy "midad_own_files" on storage.objects for all
     await Promise.all(Array.from({ length: Math.min(8, scope.length) }, worker));
     if (token !== deepToken) return;
     const results = slots.filter(Boolean); // الترتيب محفوظ حسب ترتيب المكتبة
-    lastDeep = { q: q.toLowerCase(), ids: results.map((r) => r.book.id) };
+    lastDeep = { q: q.toLowerCase(), ids: results.map((r) => r.book.id), scope: scopeInfo.id };
 
     const total = results.reduce((n, r) => n + r.hits.length, 0);
     $('#deep-count').textContent = total ? `${total} نتيجة في ${results.length} كتاب` : '';
@@ -946,7 +1217,9 @@ create policy "midad_own_files" on storage.objects for all
     const needle = q.toLowerCase();
     const found = [];
     // الحالات محمّلة أصلاً في الذاكرة من refresh() — لا داعي لقراءة القرص لكل كتاب
-    for (const b of books) {
+    const nScope = searchScope();
+    { const h = panel.querySelector('h3'); if (h) h.textContent = nScope.label ? `✍️ تظليلاتك في «${nScope.label}»` : '✍️ تظليلاتك وملاحظاتك'; }
+    for (const b of nScope.list) {
       const st = states[b.id];
       if (!st) continue;
       for (const a of annotationsOf(b, st)) {
@@ -1893,7 +2166,7 @@ create policy "midad_own_files" on storage.objects for all
 
   /* استيراد كتاب من مصدر خارجي (مكتبة الاكتشاف): blob جاهز + بيانات وصفية غنية.
      expectedSize (اختياري) للتحقق من اكتمال التنزيل. */
-  async function addRemoteBook({ blob, name, kind, title, author, category, cover, expectedSize, shelves }) {
+  async function addRemoteBook({ blob, name, kind, title, author, category, cover, expectedSize, shelves, series }) {
     if (blob instanceof Blob && expectedSize && blob.size < expectedSize * 0.9) {
       throw new Error('التنزيل غير مكتمل — تحقّق من اتصالك وحاول مجدداً');
     }
@@ -1917,7 +2190,9 @@ create policy "midad_own_files" on storage.objects for all
       try { await pdf.destroy(); } catch {}
       id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'pdf', cover: c, pages,
         // أجزاء الكتاب الواحد تُجمع في رفّ باسمه كي تبقى متجاورة في المكتبة
-        ...(Array.isArray(shelves) && shelves.length ? { shelves: shelves.slice() } : {}) }, new Blob([buf], { type: 'application/pdf' }));
+        ...(Array.isArray(shelves) && shelves.length ? { shelves: shelves.slice() } : {}),
+        // انتماء صريح لسلسلة (لا يعتمد على صيغة العنوان إن عُدِّل لاحقاً)
+        ...(series && series.key ? { series: { ...series } } : {}) }, new Blob([buf], { type: 'application/pdf' }));
     } else {
       const text = cleanImportedText(typeof blob === 'string' ? blob : await blob.text());
       if (!text.trim()) throw new Error('لم يُعثر على نص قابل للقراءة في هذه الصيغة — جرّب صيغة أخرى');
@@ -2835,6 +3110,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm };
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf };
 })();
 window.Library = Library;
