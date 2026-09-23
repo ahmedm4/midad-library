@@ -105,7 +105,7 @@ function parseParts(html: string): Part[] {
   if (!lists.length) return [];
 
   // تسمية مختصرة دقيقة: «الجزء 3» ، «الجزء 3 · القسم 1» ، «الجزآن 9–10».
-  // (لا نستخدم : حدود الكلمات في JS لا تعمل مع الحروف العربية)
+  // (لا نستخدم حدود الكلمات b في التعابير: لا تعمل مع الحروف العربية في JS)
   const designator = (label: string) => {
     const m = label.match(/(?:الجزء|ج)\s*[-:]?\s*0*(\d{1,3})(?:\s*[-–]\s*0*(\d{1,3}))?(?!\d)/);
     if (!m) return null;
