@@ -184,9 +184,9 @@ function parseDetail(html: string, id: string) {
 // الاستجابة ملفّ (لا صفحة HTML)؟ — لا نستهلك الجسم هنا
 const isFileResponse = (r: Response) => r.ok && !/text\/html/i.test(r.headers.get("content-type") || "");
 
-// MediaFire: غالباً يحوّل رابط الملف مباشرةً (302) إلى خادم التنزيل فيصل الملف نفسه؛
+// MediaFire: رابط الملف يحوّل غالباً (302) إلى خادم التنزيل فيصل الملف نفسه؛
 // وإن أعاد صفحة الملف استخرجنا رابط زرّ التنزيل منها.
-async function mediafireFetch(pageUrl: string): Promise<Response> {
+async function mediafireFetchOne(pageUrl: string): Promise<Response> {
   const headers = { "User-Agent": UA, "Accept-Language": "ar,en;q=0.8" };
   const r = await fetch(pageUrl, { headers, redirect: "follow" });
   if (isFileResponse(r)) return r;
@@ -195,11 +195,30 @@ async function mediafireFetch(pageUrl: string): Promise<Response> {
   if (/file has been removed|invalid or deleted|File Removed|dmca/i.test(html)) throw new Error("الملف محذوف");
   const direct =
     (html.match(/href="(https?:\/\/download\d*\.mediafire\.com\/[^"]+)"/i) || [])[1] ||
-    (html.match(/(https?:\/\/download\d*\.mediafire\.com\/[^"'\s\\<>]+)/i) || [])[1];
+    (html.match(/(https?:\/\/download\d*\.mediafire\.com\/[^"'\s\<>]+)/i) || [])[1];
   if (!direct) throw new Error(/captcha/i.test(html) ? "يطلب تحقّقاً بشرياً" : "تعذّر استخراج رابط التنزيل");
   const r2 = await fetch(decode(direct), { headers: { ...headers, "Referer": pageUrl }, redirect: "follow" });
   if (!isFileResponse(r2)) throw new Error("لم يُعِد ملفاً");
   return r2;
+}
+
+// المفتاح السريع للملف من أيّ صيغة رابط: ?KEY ، /file/KEY ، /file_premium/KEY ، /download/KEY ، /view/KEY
+const mfKeyOf = (u: string) =>
+  (u.match(/mediafire\.com\/(?:(?:file|file_premium|download|view)\/|\?)([a-z0-9]{8,20})/i) || [])[1] || "";
+
+// ⚠ روابط الموقع القديمة بصيغة «mediafire.com/?KEY» يرفضها MediaFire بـ403 حين يطلبها خادم
+// في مركز بيانات (كخوادم Supabase)، بينما الصيغة القياسية «www.mediafire.com/file/KEY» للملف
+// نفسه تعمل وتحوّل إلى الملف مباشرةً. (من جهاز منزلي تعمل الصيغتان، فلا يظهر الفرق محلياً.)
+// لذا نجرّب الصيغة القياسية أولاً ثم الرابط الأصلي احتياطاً.
+async function mediafireFetch(pageUrl: string): Promise<Response> {
+  const key = mfKeyOf(pageUrl);
+  const tries = [...new Set([key ? `https://www.mediafire.com/file/${key}` : "", pageUrl].filter(Boolean))];
+  let last: Error | null = null;
+  for (const u of tries) {
+    try { return await mediafireFetchOne(u); }
+    catch (e) { last = e as Error; }
+  }
+  throw last || new Error("تعذّر التنزيل");
 }
 
 // Google Drive مع معالجة صفحة التأكيد (فحص الفيروسات للملفات الكبيرة) وكشف طلب تسجيل الدخول
