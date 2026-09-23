@@ -181,6 +181,7 @@ const Cloud = (() => {
         }
       }
       await syncStats(); // سجلّ القراءة اليومي (السلسلة والهدف عبر الأجهزة)
+      await syncSettings(); // تفضيلات القراءة وسمة المكتبة
       lastSyncAt = Date.now();
       setStatus('synced', syncedMsg());
       if (window.Library) Library.refresh();
@@ -232,6 +233,32 @@ const Cloud = (() => {
       if (window.Library && Library.refresh) Library.refresh();
     } catch (e) { console.error('syncStats', e); }
   }
+
+  /* ── مزامنة الإعدادات عبر بيانات الحساب نفسه (user_metadata) — بلا جداول جديدة ──
+     آخر تعديل يفوز للحزمة كلها؛ الختم يتحرّك فقط عند تغيّر تفضيلة مُزامَنة فعلاً. */
+  let settingsTimer = null;
+  async function syncSettings() {
+    if (!ready || !user || !Store.getSyncedSettings) return;
+    try {
+      const { data, error } = await sb.auth.getUser();
+      if (error || !data || !data.user) return;
+      const meta = data.user.user_metadata || {};
+      const rAt = +meta.midad_settings_at || 0, lAt = Store.getSettingsAt();
+      if (meta.midad_settings && rAt > lAt) {
+        Store.adoptSyncedSettings(meta.midad_settings, rAt);
+        window.dispatchEvent(new Event('midad-settings-adopted'));
+      } else if (lAt > rAt) {
+        const { error: upErr } = await sb.auth.updateUser({ data: { midad_settings: Store.getSyncedSettings(), midad_settings_at: lAt } });
+        if (upErr) throw upErr;
+      }
+    } catch (e) { console.error('syncSettings', e); }
+  }
+  function pushSettings() {
+    if (!ready || !user) return;
+    clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(syncSettings, 3000);
+  }
+  window.addEventListener('midad-settings-changed', pushSettings);
 
   // يُستدعى بينما تتراكم دقائق القراءة — مؤجَّل كي لا نرفع كل خمس ثوانٍ
   function pushStats() {
@@ -561,7 +588,7 @@ const Cloud = (() => {
   return {
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
-    pushBook, pushState, pushDeck, pushStats, syncStats, deleteBook, ensurePayload,
+    pushBook, pushState, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,

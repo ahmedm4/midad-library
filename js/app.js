@@ -1,5 +1,5 @@
 /* ═══════ مِداد — التشغيل ═══════ */
-const APP_VERSION = 'v104'; // يُحدَّث مع كل إصدار
+const APP_VERSION = 'v105'; // يُحدَّث مع كل إصدار
 
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
@@ -11,6 +11,7 @@ const APP_VERSION = 'v104'; // يُحدَّث مع كل إصدار
   try { Reader.wire(); } catch (e) { console.error('reader wire', e); }
   try { await Library.init(); } catch (e) { console.error('library init', e); }
   try { if (window.Cloud) Cloud.init(); } catch (e) { console.error('cloud init', e); }
+  try { if (window.A11y) A11y.init(); } catch (e) { console.error('a11y init', e); }
 
   // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت) مع تحديث مُتحكَّم فيه
   if ('serviceWorker' in navigator) {

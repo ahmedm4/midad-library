@@ -1833,6 +1833,13 @@ const Reader = (() => {
     });
   }
 
+  window.addEventListener('midad-settings-adopted', () => {
+    if (!isOpen) return;
+    settings = Store.getSettings();
+    applySettings(false);
+    if (!isPdf) scheduleRepaginate();
+  });
+
   function applySettings(save = true) {
     const r = $('#reader');
     let paper, ink;

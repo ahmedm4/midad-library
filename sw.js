@@ -1,9 +1,9 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v104';
+const VERSION = 'midad-v105';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',
-  'js/store.js', 'js/config.js', 'js/cloud.js', 'js/library.js', 'js/reader.js', 'js/discover.js', 'js/app.js',
+  'js/store.js', 'js/config.js', 'js/cloud.js', 'js/library.js', 'js/reader.js', 'js/discover.js', 'js/a11y.js', 'js/app.js',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/fflate.min.js',
   'icon.svg', 'manifest.webmanifest',
 ];

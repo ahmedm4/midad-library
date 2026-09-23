@@ -433,8 +433,14 @@ create policy "midad_own_files" on storage.objects for all
       </div>`;
     }
     hero.innerHTML = html;
-    const cc = hero.querySelector('.continue-card'); if (cc && last) cc.onclick = () => openBook(last.id);
-    const sc = hero.querySelector('.suggest-card'); if (sc && sug) sc.onclick = () => openBook(sug.id);
+    const asButton = (el, fn, label) => {
+      if (!el) return;
+      el.setAttribute('role', 'button'); el.tabIndex = 0; el.setAttribute('aria-label', label);
+      el.onclick = fn;
+      el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
+    };
+    if (last) asButton(hero.querySelector('.continue-card'), () => openBook(last.id), `واصل قراءة «${last.title}»`);
+    if (sug) asButton(hero.querySelector('.suggest-card'), () => openBook(sug.id), `اقرأ التالي: «${sug.title}»`);
   }
 
   // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
@@ -578,7 +584,7 @@ create policy "midad_own_files" on storage.objects for all
     const pct = Math.round(st.pct * 100);
     return `
       <article class="book-card" data-id="${b.id}">
-        <div class="bk">
+        <div class="bk" data-label="افتح «${esc(b.title)}»${st.finished ? ' — مكتمل' : pct > 0 ? ' — ' + pct + '٪' : ''}">
           ${coverHTML(b)}
           <button class="bc-fav ${b.fav ? 'on' : ''}" title="${b.fav ? 'إزالة من المفضلة' : 'أضف إلى المفضلة'}">${b.fav ? '★' : '☆'}</button>
           ${st.finished ? '<span class="done-badge">✓ مكتمل</span>' : ''}
@@ -607,7 +613,7 @@ create policy "midad_own_files" on storage.objects for all
       : ss.started ? `${esc(curLbl)} · ${ss.done} من ${ss.total} مكتمل` : `${partsWord(ss.total)} · لم تبدأ`;
     return `
       <article class="book-card series-card" data-series="${esc(sr.key)}">
-        <div class="bk" role="button" tabindex="0" aria-label="${esc(sr.title)} — ${partsWord(ss.total)}، اعرض الأجزاء">
+        <div class="bk" data-label="${esc(sr.title)} — ${partsWord(ss.total)}، اعرض الأجزاء">
           ${coverHTML({ ...sr.parts[0], title: sr.title })}
           <span class="series-badge">📚 ${partsWord(ss.total)}</span>
           ${ss.finished ? '<span class="done-badge">✓ مكتملة</span>' : ''}
@@ -663,7 +669,7 @@ create policy "midad_own_files" on storage.objects for all
     const key = card.dataset.series;
     const bk = card.querySelector('.bk');
     bk.onclick = () => openSeriesView(key);
-    bk.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSeriesView(key); } };
+    coverAsButton(bk, () => openSeriesView(key));
     const go = card.querySelector('.series-go');
     if (go) go.onclick = (e) => { e.stopPropagation(); continueSeries(key); };
     card.querySelector('.bc-menu-btn').onclick = (e) => {
@@ -674,11 +680,25 @@ create policy "midad_own_files" on storage.objects for all
     card.oncontextmenu = (e) => { e.preventDefault(); openSeriesMenu(e.clientX, e.clientY, key); };
   }
 
+  // الغلاف زرٌّ للوحة المفاتيح وقارئ الشاشة. (لا نضع الدور على الحاوية .bk لأنها تضمّ
+  // أزراراً أخرى — المفضّلة و▶ — وأبناء role="button" يُعامَلون زخرفةً فيختفون عن قارئ الشاشة.)
+  function coverAsButton(bk, fn) {
+    const cov = bk.querySelector('img, .gen-cover');
+    if (!cov) return;
+    cov.setAttribute('role', 'button');
+    cov.tabIndex = 0;
+    cov.setAttribute('aria-label', bk.dataset.label || '');
+    if (cov.tagName === 'IMG') cov.alt = '';
+    cov.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
+  }
+
   function wireCards(cards) {
     cards.forEach((card) => {
       if (card.dataset.series) { wireSeriesCard(card); return; }
       const id = card.dataset.id;
-      card.querySelector('.bk').onclick = () => openBook(id);
+      const bk = card.querySelector('.bk');
+      bk.onclick = () => openBook(id);
+      coverAsButton(bk, () => openBook(id));
       card.querySelector('.bc-menu-btn').onclick = (e) => {
         e.stopPropagation();
         const r = e.currentTarget.getBoundingClientRect();
@@ -2515,6 +2535,11 @@ create policy "midad_own_files" on storage.objects for all
     else document.documentElement.removeAttribute('data-lib-theme');
     try { localStorage.setItem('midad-lib-theme', id || 'purple'); } catch {}
   }
+  // إعدادات وصلت من جهاز آخر: طبّق سمة المكتبة فوراً
+  window.addEventListener('midad-settings-adopted', () => {
+    let t = 'purple'; try { t = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
+    applyLibTheme(t);
+  });
   function openThemePicker() {
     let cur = 'purple'; try { cur = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
     document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
@@ -2536,6 +2561,7 @@ create policy "midad_own_files" on storage.objects for all
     overlay.onclick = (e) => { if (e.target === overlay) close(); };
     overlay.querySelectorAll('.theme-swatch').forEach((sw) => sw.onclick = () => {
       applyLibTheme(sw.dataset.id);
+      if (Store.markSettingsChanged) Store.markSettingsChanged();
       overlay.querySelectorAll('.theme-swatch').forEach((x) => x.classList.toggle('on', x === sw));
     });
   }

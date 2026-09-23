@@ -88,8 +88,39 @@ const Store = (() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
     catch { return { ...DEFAULT_SETTINGS }; }
   }
-  function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
-  function resetSettings() { localStorage.removeItem(SETTINGS_KEY); return { ...DEFAULT_SETTINGS }; }
+  /* مزامنة الإعدادات بين الأجهزة: تُزامَن التفضيلات فقط، أما ما يتبع الشاشة والمكان
+     (حجم الخط، عرض النص، الصفحتان المتقابلتان، السطوع) فيبقى لكل جهاز. */
+  const SYNC_SETTING_KEYS = ['theme', 'customPaper', 'warmth', 'bg', 'font', 'lineHeight', 'flip', 'realFlip',
+    'ttsRate', 'paperFx', 'autoSpeed', 'enhanceScan', 'focusMode', 'pdfFit', 'ocrProvider', 'ttsEngine', 'ttsVoice', 'ttsSleep'];
+  const SETTINGS_AT_KEY = 'midad-settings-at', LIBTHEME_KEY = 'midad-lib-theme';
+  const syncedOf = (s) => { const o = {}; for (const k of SYNC_SETTING_KEYS) if (s && s[k] !== undefined) o[k] = s[k]; return o; };
+  // يُختَم وقت التعديل فقط حين تتغيّر تفضيلة مُزامَنة فعلاً (الحفظ يحدث عند كل تطبيق للإعدادات)
+  function saveSettings(s, opts = {}) {
+    const before = JSON.stringify(syncedOf(getSettings()));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    if (!opts.quiet && JSON.stringify(syncedOf(s)) !== before) markSettingsChanged();
+  }
+  function resetSettings() { localStorage.removeItem(SETTINGS_KEY); markSettingsChanged(); return { ...DEFAULT_SETTINGS }; }
+  function markSettingsChanged() {
+    try { localStorage.setItem(SETTINGS_AT_KEY, String(Date.now())); } catch {}
+    try { window.dispatchEvent(new Event('midad-settings-changed')); } catch {}
+  }
+  const getSettingsAt = () => parseInt(localStorage.getItem(SETTINGS_AT_KEY) || '0', 10);
+  // الحزمة المُزامَنة: تفضيلات القراءة + سمة المكتبة
+  function getSyncedSettings() {
+    const o = syncedOf(getSettings());
+    try { o.libTheme = localStorage.getItem(LIBTHEME_KEY) || 'purple'; } catch {}
+    return o;
+  }
+  // اعتماد حزمة أحدث من جهاز آخر (مع ختمها الأصلي، دون اعتبارها تعديلاً محلياً جديداً)
+  function adoptSyncedSettings(remote, at) {
+    if (!remote) return;
+    const next = { ...getSettings() };
+    for (const k of SYNC_SETTING_KEYS) if (remote[k] !== undefined) next[k] = remote[k];
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    if (remote.libTheme) { try { localStorage.setItem(LIBTHEME_KEY, remote.libTheme); } catch {} }
+    try { localStorage.setItem(SETTINGS_AT_KEY, String(at || Date.now())); } catch {}
+  }
 
   /* ── سجلّ القراءة اليومي (سلسلة أيام + هدف) ── */
   const LOG_KEY = 'midad-log', GOAL_KEY = 'midad-goal';
@@ -157,6 +188,7 @@ const Store = (() => {
   }
 
   return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
-    deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal };
+    deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal,
+    markSettingsChanged, getSettingsAt, getSyncedSettings, adoptSyncedSettings };
 })();
 window.Store = Store;

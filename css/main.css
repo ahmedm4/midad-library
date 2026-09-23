@@ -1095,3 +1095,29 @@ a.disc-import.disc-openfile { text-decoration: none; }
   border-color: rgba(217,169,79,.4); color: var(--gold-soft); }
 .replace-bar .btn-ghost:hover { background: rgba(217,169,79,.1); }
 .replace-hint { margin-top: 8px; font-size: 12px; color: #e0a33a; text-align: center; line-height: 1.7; }
+
+
+/* ═══════ إتاحة الوصول ═══════ */
+/* حلقة تركيز واضحة لمستخدمي لوحة المفاتيح فقط (:focus-visible) — تتجاوز قواعد outline:none */
+:where(button, a[href], [role="button"], input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2.5px solid var(--gold, #d9a94f) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 5px rgba(217,169,79,.25) !important;
+}
+/* الغلاف (زرّ): الحلقة على الحاوية المائلة كلها */
+.book-card .bk:has(> [role="button"]:focus-visible) { outline: 2.5px solid var(--gold, #d9a94f); outline-offset: 4px; }
+.book-card .bk [role="button"]:focus-visible { outline: none !important; box-shadow: none !important; }
+:root[data-lib-theme="paper"] :where(button, a[href], [role="button"], input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline-color: #8a6418 !important; box-shadow: 0 0 0 5px rgba(138,100,24,.2) !important;
+}
+
+/* أهداف لمس لا تقلّ عن ٤٤px على الشاشات اللمسية (بلا مساس بتخطيط الحاسوب) */
+@media (pointer: coarse) {
+  .icon-btn, .streak-chip, .view-toggle button { min-width: 44px; min-height: 44px; }
+  .book-card .bc-fav { width: 40px; height: 40px; }
+  .book-card .bc-menu-btn { width: 40px; height: 40px; bottom: -4px; }
+  .bc-menu button { min-height: 44px; }
+  #status-tabs button, #cat-chips button { min-height: 42px; }
+  .af-part .afp-add { min-height: 40px; padding-inline: 16px; }
+  .af-part .afp-manual { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+}
