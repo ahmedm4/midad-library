@@ -399,6 +399,34 @@ input, select, textarea { font-family: inherit; }
 .di-size { font-size: 12px; color: var(--muted); flex: none; }
 a.disc-import.disc-openfile { text-decoration: none; }
 .disc-note { font-size: 12px; color: var(--muted); line-height: 1.8; margin-top: 6px; }
+
+/* أجزاء كتاب «شبكة الفكر» متعدّد الأجزاء */
+.af-parts-head { font-size: 13.5px; color: var(--cream); margin: 2px 0 10px; }
+.af-parts-head b { color: var(--gold); }
+.af-parts { display: flex; flex-direction: column; gap: 6px; margin-top: 12px;
+  max-height: 340px; overflow-y: auto; padding-inline-end: 2px; }
+.af-part { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04); }
+.af-part .afp-name { font-size: 14px; color: var(--cream); }
+.af-part .afp-size { font-size: 11.5px; color: var(--muted); white-space: nowrap; direction: ltr; unicode-bidi: isolate; } /* «15.58 MB» لا «MB 15.58» */
+.af-part .afp-add { padding: 5px 14px; border-radius: 8px; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+  background: rgba(217,169,79,.14); border: 1px solid rgba(217,169,79,.45); color: var(--gold-soft, #e8c77a); }
+.af-part .afp-add:hover:not(:disabled) { background: rgba(217,169,79,.24); }
+.af-part .afp-add:disabled { cursor: default; opacity: .75; }
+.af-part .afp-manual { color: var(--muted); text-decoration: none; font-size: 15px; padding: 0 4px; }
+.af-part .afp-manual:hover { color: var(--gold-soft, #e8c77a); }
+.af-part.loading { border-color: rgba(217,169,79,.4); }
+.af-part.done { border-color: rgba(90,180,120,.35); }
+.af-part.done .afp-add { background: rgba(90,180,120,.14); border-color: rgba(90,180,120,.45); color: #8fd6a9; }
+.af-part.failed { border-color: rgba(220,110,100,.45); }
+.af-part.failed .afp-add { background: rgba(220,110,100,.12); border-color: rgba(220,110,100,.5); color: #f0a49b; }
+.af-part .afp-err { grid-column: 1 / -1; font-size: 11.5px; line-height: 1.7; color: #e8a097; }
+:root[data-lib-theme="paper"] .af-part { background: rgba(60,45,20,.04); border-color: rgba(60,45,20,.14); }
+:root[data-lib-theme="paper"] .af-part .afp-add { color: #8a6418; }
+:root[data-lib-theme="paper"] .af-part.done .afp-add { color: #2f7d4c; }
+:root[data-lib-theme="paper"] .af-part.failed .afp-add,
+:root[data-lib-theme="paper"] .af-part .afp-err { color: #a8423a; }
 .disc-alt { display: inline-block; margin-top: 4px; font-size: 12.5px; color: var(--muted); text-decoration: none; }
 .disc-alt:hover { color: var(--gold-soft); }
 

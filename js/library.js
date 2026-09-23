@@ -1893,7 +1893,7 @@ create policy "midad_own_files" on storage.objects for all
 
   /* استيراد كتاب من مصدر خارجي (مكتبة الاكتشاف): blob جاهز + بيانات وصفية غنية.
      expectedSize (اختياري) للتحقق من اكتمال التنزيل. */
-  async function addRemoteBook({ blob, name, kind, title, author, category, cover, expectedSize }) {
+  async function addRemoteBook({ blob, name, kind, title, author, category, cover, expectedSize, shelves }) {
     if (blob instanceof Blob && expectedSize && blob.size < expectedSize * 0.9) {
       throw new Error('التنزيل غير مكتمل — تحقّق من اتصالك وحاول مجدداً');
     }
@@ -1915,7 +1915,9 @@ create policy "midad_own_files" on storage.objects for all
       if (!pages) { try { await pdf.destroy(); } catch {} throw new Error('ملف PDF فارغ — جرّب صيغة أخرى'); }
       const c = cover || await renderPdfCover(pdf);
       try { await pdf.destroy(); } catch {}
-      id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'pdf', cover: c, pages }, new Blob([buf], { type: 'application/pdf' }));
+      id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'pdf', cover: c, pages,
+        // أجزاء الكتاب الواحد تُجمع في رفّ باسمه كي تبقى متجاورة في المكتبة
+        ...(Array.isArray(shelves) && shelves.length ? { shelves: shelves.slice() } : {}) }, new Blob([buf], { type: 'application/pdf' }));
     } else {
       const text = cleanImportedText(typeof blob === 'string' ? blob : await blob.text());
       if (!text.trim()) throw new Error('لم يُعثر على نص قابل للقراءة في هذه الصيغة — جرّب صيغة أخرى');

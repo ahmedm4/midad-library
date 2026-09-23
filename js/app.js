@@ -1,5 +1,5 @@
 /* ═══════ مِداد — التشغيل ═══════ */
-const APP_VERSION = 'v102'; // يُحدَّث مع كل إصدار
+const APP_VERSION = 'v103'; // يُحدَّث مع كل إصدار
 
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';

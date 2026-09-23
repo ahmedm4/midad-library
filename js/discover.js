@@ -464,6 +464,7 @@ const Discover = (() => {
   }
 
   // ── تفاصيل كتاب «شبكة الفكر» (عبر الوسيط) ──
+  const AF_HOST = { drive: 'Google Drive', mediafire: 'MediaFire', dropbox: 'Dropbox', direct: 'رابط مباشر' };
   async function openAlfekerDetail(ds) {
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -473,9 +474,164 @@ const Discover = (() => {
     const title = d.title || ds.title || 'بدون عنوان';
     const author = d.author || ds.author || '';
     const cover = d.cover || ds.cover || '';
+    // الوسيط الحديث يعيد الأجزاء بمراياها؛ القديم (قبل إعادة نشر الدالة) رابطاً واحداً فقط
+    if (!Array.isArray(d.parts)) return renderAlfekerLegacy(ds, d, title, author, cover);
+
+    const parts = d.parts;
+    const multi = parts.length > 1;
+    const base = d.baseTitle || title;
+    const partTitle = (p) => (multi ? `${base} — ${p.short}` : title);
+    // رابط التنزيل اليدوي: MediaFire يفتح في المتصفح دائماً، ثم أي مرآة أخرى
+    const manualOf = (p) => ((p.mirrors || []).find((m) => m.host === 'mediafire') || (p.mirrors || [])[0] || {}).url || '';
+    const hostsOf = (p) => [...new Set((p.mirrors || []).map((m) => AF_HOST[m.host] || m.host))].join(' ← ');
+    let have = new Set();
+    try { have = new Set((await Store.getBooks()).map((b) => b.title)); } catch {}
+    const countText = (n) => (n === 2 ? 'جزأين' : `${n} ${n <= 10 ? 'أجزاء' : 'جزءاً'}`);
+    const allDone = multi && parts.every((p) => have.has(partTitle(p)));
+
+    sheet.innerHTML = `
+      <div class="disc-sheet-box">
+        <button class="disc-back" title="رجوع">→ رجوع</button>
+        <div class="disc-detail">
+          <div class="disc-detail-cover"><img src="${esc(cover)}" alt="" onerror="this.style.display='none'"></div>
+          <div class="disc-detail-meta">
+            <h3>${esc(title)}</h3>
+            ${author ? `<p class="dd-author">${esc(author)}</p>` : ''}
+            <p class="dd-desc">${d.category ? 'القسم: ' + esc(d.category) + '<br>' : ''}${d.pages ? 'عدد الصفحات: ' + esc(d.pages) : ''}</p>
+            <a class="dd-link" href="https://alfeker.net/library.php?id=${encodeURIComponent(ds.id)}" target="_blank" rel="noopener">↗ صفحة الكتاب في شبكة الفكر</a>
+          </div>
+        </div>
+        <div class="disc-formats">
+          ${!parts.length ? '<p>لا يوجد ملف قابل للتنزيل لهذا الكتاب.</p>' : ''}
+          ${parts.length && !multi ? `
+            <button class="disc-import af-one"${have.has(title) ? ' disabled' : ''}>
+              <span class="di-label">${have.has(title) ? '✓ في مكتبتك' : '📕 أضِف إلى مكتبتي (PDF)'}<em>يُنزَّل عبر خادمك · ${esc(hostsOf(parts[0]))}</em></span>
+            </button>
+            <a class="disc-alt" href="${esc(manualOf(parts[0]))}" target="_blank" rel="noopener">أو نزّله يدوياً من متصفحك ↗</a>` : ''}
+          ${multi ? `
+            <p class="af-parts-head">📚 هذا الكتاب من <b>${countText(parts.length)}</b></p>
+            <button class="disc-import af-all"${allDone ? ' disabled' : ''}>
+              <span class="di-label">${allDone ? '✓ كل الأجزاء في مكتبتك' : `📕 أضِف كل الأجزاء (${parts.length})`}<em>تُحفظ معاً في رفّ «${esc(base)}»</em></span>
+            </button>
+            <div class="af-parts">${parts.map((p, i) => {
+              const done = have.has(partTitle(p));
+              return `<div class="af-part${done ? ' done' : ''}" data-i="${i}">
+                <span class="afp-name">${esc(p.short)}</span>
+                <span class="afp-size">${esc(p.size || '')}</span>
+                <button class="afp-add"${done ? ' disabled' : ''}>${done ? '✓ في مكتبتك' : 'أضِف'}</button>
+                <a class="afp-manual" href="${esc(manualOf(p))}" target="_blank" rel="noopener" title="تنزيل يدوي من متصفحك">↗</a>
+              </div>`;
+            }).join('')}</div>` : ''}
+        </div>
+      </div>`;
+    sheet.querySelector('.disc-back').onclick = closeSheet;
+    const info = (p) => ({ title: partTitle(p), author, cover, category: d.category, shelves: multi ? [base] : undefined });
+
+    // كتاب من جزء واحد
+    const one = sheet.querySelector('.af-one');
+    if (one && !one.disabled) one.onclick = async () => {
+      const orig = one.innerHTML;
+      one.disabled = true; one.classList.add('loading');
+      one.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ التنزيل… (قد يستغرق دقيقة)</span>`;
+      try {
+        const bookId = await addAlfekerPart(ds, info(parts[0]), parts[0], 0);
+        one.classList.remove('loading'); one.classList.add('done');
+        one.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;
+        Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+        addReadNow(bookId);
+      } catch (e) {
+        one.disabled = false; one.classList.remove('loading'); one.innerHTML = orig;
+        Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      }
+    };
+
+    if (!multi) return;
+    // كتاب متعدّد الأجزاء: زرّ لكل جزء + «أضِف الكل»
+    const rows = [...sheet.querySelectorAll('.af-part')];
+    const setRow = (row, st, text, err) => {
+      row.classList.remove('loading', 'done', 'failed');
+      if (st) row.classList.add(st);
+      const b = row.querySelector('.afp-add');
+      b.textContent = text; b.disabled = st === 'loading' || st === 'done';
+      let e = row.querySelector('.afp-err');
+      if (err) { if (!e) { e = document.createElement('div'); e.className = 'afp-err'; row.appendChild(e); } e.textContent = err; }
+      else if (e) e.remove();
+    };
+    const doPart = async (i) => {
+      const row = rows[i];
+      if (row.classList.contains('done')) return true;
+      setRow(row, 'loading', 'جارٍ…');
+      try {
+        await addAlfekerPart(ds, info(parts[i]), parts[i], i);
+        setRow(row, 'done', '✓ في مكتبتك');
+        return true;
+      } catch (e) {
+        setRow(row, 'failed', 'أعِد المحاولة', e.message || String(e));
+        return false;
+      }
+    };
+    rows.forEach((row) => {
+      const i = +row.dataset.i;
+      row.querySelector('.afp-add').onclick = async () => {
+        if (await doPart(i)) Library.toast(`أُضيف «${parts[i].short}» إلى مكتبتك 📚`, 'gold');
+      };
+    });
+    const all = sheet.querySelector('.af-all');
+    if (all && !all.disabled) all.onclick = async () => {
+      const todo = rows.map((r, i) => i).filter((i) => !rows[i].classList.contains('done'));
+      if (!todo.length) return;
+      all.disabled = true; all.classList.add('loading');
+      let ok = 0, fail = 0;
+      // تنزيل متتابع (لا متوازٍ): يرفق بحصص المستضيفات ويُظهر تقدّماً واضحاً
+      for (let k = 0; k < todo.length; k++) {
+        all.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ تنزيل ${esc(parts[todo[k]].short)} (${k + 1} من ${todo.length})…</span>`;
+        if (await doPart(todo[k])) ok++; else fail++;
+      }
+      all.classList.remove('loading');
+      if (!fail) {
+        all.classList.add('done');
+        all.innerHTML = `<span class="di-label">✓ أُضيفت كل الأجزاء<em>في رفّ «${esc(base)}»</em></span>`;
+        Library.toast(`أُضيفت ${countText(ok)} إلى مكتبتك 📚`, 'gold');
+      } else {
+        all.disabled = false;
+        all.innerHTML = `<span class="di-label">أُضيف ${ok} وتعذّر ${fail} — اضغط لإعادة المحاولة<em>سبب كل تعذّر مكتوب تحت الجزء، وزرّ ↗ للتنزيل اليدوي</em></span>`;
+        Library.toast(`أُضيف ${ok} من ${todo.length} — تعذّر ${fail}`);
+      }
+    };
+  }
+
+  // زرّ «اقرأ الآن» بعد إضافة كتاب
+  function addReadNow(bookId) {
+    const fmts = sheet.querySelector('.disc-formats');
+    if (!fmts || !bookId || fmts.querySelector('.disc-readnow')) return;
+    const rn = document.createElement('button');
+    rn.className = 'disc-readnow'; rn.innerHTML = '📖 اقرأ الآن';
+    rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+    fmts.prepend(rn);
+  }
+
+  // ينزّل جزءاً عبر الوسيط (يجرّب كل مراياه بالترتيب) ويضيفه للمكتبة
+  async function addAlfekerPart(ds, meta, part, idx) {
+    if (!window.Library || !Library.addRemoteBook) throw new Error('المكتبة غير جاهزة');
+    const r = await Cloud.invokeFnRaw('alfeker', { action: 'file', id: ds.id, part: idx, mirrors: part.mirrors || [] });
+    const ct = r.headers.get('content-type') || '';
+    if (!r.ok || /application\/json/i.test(ct)) {
+      let msg = 'تعذّر تنزيل الملف';
+      try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    return Library.addRemoteBook({
+      blob, name: meta.title, kind: 'pdf',
+      title: meta.title, author: meta.author, category: meta.category || 'أخرى', cover: meta.cover || '',
+      shelves: meta.shelves,
+    });
+  }
+
+  // العرض السابق: يُستعمل فقط إن كانت دالة alfeker في مشروعك لم يُعَد نشرها بعد
+  function renderAlfekerLegacy(ds, d, title, author, cover) {
     const hasFile = !!d.fileUrl;
-    const hostName = { drive: 'Google Drive', mediafire: 'MediaFire', dropbox: 'Dropbox', direct: 'رابط مباشر' }[d.host] || 'المستضيف';
-    // الاستيراد الآلي يعمل لـ Drive/الروابط المباشرة فقط؛ MediaFire يمنع التنزيل من الخادم → تنزيل يدوي
+    const hostName = AF_HOST[d.host] || 'المستضيف';
     const autoImport = hasFile && (d.host === 'drive' || d.host === 'direct');
     sheet.innerHTML = `
       <div class="disc-sheet-box">
