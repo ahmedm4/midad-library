@@ -89,6 +89,7 @@ const Reader = (() => {
     pdfZoom = 1;
     $('#zoom-pill').hidden = !isPdf;
     $('#zoom-val').textContent = '100٪';
+    if (isPdf) updateZoomUI();
     reader.classList.remove('zoomed');
 
     buildSettingsUI();
@@ -1165,11 +1166,21 @@ const Reader = (() => {
     } else showPdfPage(pdfPage);
   }
 
-  function setZoom(z) {
-    if (!isPdf) return;
-    pdfZoom = Math.min(2.4, Math.max(1, Math.round(z * 10) / 10));
+  // حدود التكبير: في التمرير المتصل يمكن التصغير دون 100٪ (صفحات أضيق وأكثر على الشاشة)؛
+  // أما في أوضاع الصفحات فـ100٪ تعني «الصفحة كاملة على الشاشة» فلا معنى للنزول تحتها.
+  const ZOOM_MAX = 2.4;
+  const minZoom = () => (pdfScrollActive() ? 0.4 : 1);
+  function updateZoomUI() {
     $('#zoom-val').textContent = Math.round(pdfZoom * 100) + '٪';
     $('#reader').classList.toggle('zoomed', pdfZoom > 1.001);
+    const zo = $('#zoom-out'), zi = $('#zoom-in');
+    if (zo) zo.disabled = pdfZoom <= minZoom() + 0.001;
+    if (zi) zi.disabled = pdfZoom >= ZOOM_MAX - 0.001;
+  }
+  function setZoom(z) {
+    if (!isPdf) return;
+    pdfZoom = Math.min(ZOOM_MAX, Math.max(minZoom(), Math.round(z * 10) / 10));
+    updateZoomUI();
     relayoutPdf();
   }
 
@@ -1817,6 +1828,8 @@ const Reader = (() => {
         const scrollChanged = (was === 'scroll') !== (settings.flip === 'scroll');
         applySettings();
         if (isPdf) {
+          if (pdfZoom < minZoom()) pdfZoom = minZoom(); // أوضاع الصفحات لا تنزل تحت 100٪
+          updateZoomUI();
           if (pdfScrollActive()) { teardownPageFlip(); await buildPdfScroll(); }
           else { teardownPdfScroll(); showPdfPage(pdfPage); } // يبني/يهدم StPageFlip حسب الوضع
           updateHUD();
@@ -2764,7 +2777,7 @@ const Reader = (() => {
       e.preventDefault(); // امنع تكبير المتصفح والتمرير أثناء القرص
       const ratio = twoDist(e.touches) / pinch.d0;
       if (isPdf) {
-        const target = Math.min(2.4, Math.max(1, pinch.z0 * ratio));
+        const target = Math.min(ZOOM_MAX, Math.max(minZoom(), pinch.z0 * ratio));
         pinch.target = target;
         // معاينة حيّة سلسة عبر تحويل CSS في كل الأوضاع، ثم رسم واضح عند رفع الإصبع
         const previewScale = (target / (pinch.z0 || 1)).toFixed(3);

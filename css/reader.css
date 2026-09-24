@@ -471,13 +471,16 @@
 }
 
 /* ═══════ التمرير العمودي المتصل لملفات PDF ═══════ */
+/* الصفحات تتوسّط بهوامش تلقائية (لا align-items:center): إن اتّسعت الصفحة عن الشاشة بالتكبير
+   تنعدم الهوامش فيبدأ الفائض من جهة واحدة ويمكن التمرير أفقياً إليه — مع التوسيط كان الفائض
+   يتوزّع على الجانبين ويُقصّ جانبا الصفحة بلا وسيلة للوصول إليهما. */
 .r-pdf-scroll { position: absolute; inset: 0; z-index: 25; display: none;
-  flex-direction: column; align-items: center; gap: 20px;
-  overflow-y: auto; overflow-x: hidden; padding: 22px 0 60px;
-  scrollbar-width: thin; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
+  flex-direction: column; align-items: flex-start; gap: 20px;
+  overflow-y: auto; overflow-x: auto; padding: 22px 0 60px;
+  scrollbar-width: thin; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-x pan-y; }
 #reader.pdf-scroll .r-pdf-scroll { display: flex; }
 #reader.pdf-scroll .r-book { display: none; }
-.pdf-slot { position: relative; flex: 0 0 auto; background: #fff; border-radius: 4px;
+.pdf-slot { position: relative; flex: 0 0 auto; margin-inline: auto; background: #fff; border-radius: 4px;
   box-shadow: -8px 12px 30px rgba(0,0,0,.42); overflow: hidden; }
 .pdf-slot canvas { display: block; width: 100%; height: 100%; }
 .pdf-slot .slot-tint { position: absolute; inset: 0; background: var(--paper);
@@ -670,3 +673,6 @@
 .r-nextpart:hover { filter: brightness(1.06); }
 .r-nextpart:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 @keyframes rnp-in { from { opacity: 0; transform: translate(-50%, 12px); } }
+
+/* زرّا التكبير عند حدّهما */
+#zoom-pill button:disabled { opacity: .35; cursor: default; }
