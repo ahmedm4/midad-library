@@ -455,6 +455,7 @@ const Cloud = (() => {
       } else row.has_file = true;
     } else if (typeof payload === 'string') {
       row.content = payload;
+      if (b.assets && b.assets.length) await uploadAssets(id); // صور كتاب EPUB
     }
     // مزامنة نص الـOCR للكتب المصوّرة عبر عمود content (نص الكتاب المصوّر لا ملفه)
     if (b.type === 'pdf') {
@@ -516,10 +517,49 @@ const Cloud = (() => {
 
   // حذف ناعم (tombstone): لا نحذف الصف فعلياً بل نعلّمه، فينتقل الحذف بأمان
   // دون الاعتماد على أحداث DELETE الخام (غير الموثوقة والخطرة على البيانات).
+  /* ── صور كتب EPUB في المخزن: «المستخدم/assets/الكتاب/الاسم» ── */
+  const assetDir = (id) => `${user.id}/assets/${id}`;
+  // ترفع ما ليس في المخزن بعد فقط (لا إعادة رفع في كل مزامنة)
+  async function uploadAssets(id) {
+    try {
+      const local = await Store.getAssets(id);
+      if (!local.size) return;
+      const { data: listed } = await sb.storage.from(BUCKET).list(assetDir(id), { limit: 1000 });
+      const have = new Set((listed || []).map((f) => f.name));
+      for (const [name, blob] of local) {
+        if (have.has(name)) continue;
+        const { error } = await sb.storage.from(BUCKET).upload(`${assetDir(id)}/${name}`, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
+        if (error) console.warn('asset upload', name, error.message);
+      }
+    } catch (e) { console.warn('uploadAssets', e); }
+  }
+  // تنزيل صور الكتاب الغائبة عن هذا الجهاز (عند فتحه)
+  async function ensureAssets(id) {
+    if (!ready || !user) return;
+    const b = await Store.getBook(id);
+    if (!b || !b.assets || !b.assets.length) return;
+    const local = await Store.getAssets(id);
+    const missing = b.assets.filter((a) => !local.has(a.name));
+    if (!missing.length) return;
+    setStatus('syncing', 'جارٍ تنزيل صور الكتاب…');
+    await Promise.all(missing.map(async (a) => {
+      try {
+        const { data, error } = await sb.storage.from(BUCKET).download(`${assetDir(id)}/${a.name}`);
+        if (!error && data && data.size) await Store.putAsset(id, a.name, data);
+      } catch {}
+    }));
+    emitStatus();
+  }
+
   async function deleteBook(id) {
     if (!ready || !user) return;
     try {
       await sb.storage.from(BUCKET).remove([`${user.id}/${id}`]).catch(() => {});
+      // صور الكتاب (إن وُجدت)
+      try {
+        const { data: listed } = await sb.storage.from(BUCKET).list(assetDir(id), { limit: 1000 });
+        if (listed && listed.length) await sb.storage.from(BUCKET).remove(listed.map((f) => `${assetDir(id)}/${f.name}`));
+      } catch {}
       recentlyPushed.set(id, Date.now());
       const { error } = await sb.from(TABLE).update({ deleted: true, content: null, has_file: false, updated_at: new Date().toISOString() }).eq('id', id);
       // إن فشل الحذف الناعم (غالباً عمود deleted غير موجود) نحذف الصف فعلياً حتى لا يعود الكتاب
@@ -606,7 +646,7 @@ const Cloud = (() => {
   return {
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
-    pushBook, pushMeta, pushState, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
+    pushBook, pushMeta, pushState, ensureAssets, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,

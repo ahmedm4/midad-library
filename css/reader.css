@@ -676,3 +676,10 @@
 
 /* زرّا التكبير عند حدّهما */
 #zoom-pill button:disabled { opacity: .35; cursor: default; }
+
+/* ── صور كتب EPUB ── */
+.r-content figure.bk-img { margin: .9em auto; text-align: center; break-inside: avoid; }
+/* width/height:auto مع حدّين أقصيين يحفظ نسبة الصورة (أبعادها من سمتي width/height) */
+.r-content figure.bk-img img { display: block; margin: 0 auto; width: auto; height: auto;
+  max-width: 100%; max-height: calc(var(--page-h, 80vh) - 2.4em); border-radius: 3px; }
+#reader.mode-scroll .r-content figure.bk-img img { max-height: 85vh; }

@@ -42,11 +42,27 @@ const Store = (() => {
   async function deleteBook(id) {
     await p(os('books', 'readwrite').delete(id));
     await p(os('files', 'readwrite').delete(id));
+    try { await deleteAssets(id); } catch {}
     await p(os('states', 'readwrite').delete(id));
     try { await p(os('fulltext', 'readwrite').delete(id)); } catch {}
     try { await p(os('decks', 'readwrite').delete(id)); } catch {}
   }
   const getPayload = (id) => p(os('files').get(id));
+
+  /* ── صور الكتاب (من EPUB): تُخزَّن في مخزن الملفات بمفتاح «معرّف::a::اسم» ── */
+  const assetPrefix = (bookId) => `${bookId}::a::`;
+  const assetRange = (bookId) => IDBKeyRange.bound(assetPrefix(bookId), assetPrefix(bookId) + '\uffff');
+  const putAsset = (bookId, name, blob) => p(os('files', 'readwrite').put(blob, assetPrefix(bookId) + name));
+  const deleteAssets = (bookId) => p(os('files', 'readwrite').delete(assetRange(bookId)));
+  // كل صور الكتاب: Map(اسم → Blob)
+  function getAssets(bookId) {
+    return new Promise((resolve, reject) => {
+      const out = new Map(), pre = assetPrefix(bookId);
+      const req = os('files').openCursor(assetRange(bookId));
+      req.onsuccess = () => { const c = req.result; if (c) { out.set(String(c.key).slice(pre.length), c.value); c.continue(); } else resolve(out); };
+      req.onerror = () => reject(req.error);
+    });
+  }
   const updatePayload = (id, payload) => p(os('files', 'readwrite').put(payload, id));
   const getFulltext = (id) => p(os('fulltext').get(id));
   const saveFulltext = (id, text) => p(os('fulltext', 'readwrite').put(text, id));
@@ -187,7 +203,7 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, putAsset, getAssets, deleteAssets, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
     deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal,
     markSettingsChanged, getSettingsAt, getSyncedSettings, adoptSyncedSettings };
 })();

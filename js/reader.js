@@ -121,6 +121,7 @@ const Reader = (() => {
       let text = await Store.getPayload(id);
       if (text == null && window.Cloud) { await Cloud.ensurePayload(id); text = await Store.getPayload(id); }
       text = text || '';
+      await loadAssetUrls(book); // صور EPUB (تُنزَّل من السحابة إن غابت عن هذا الجهاز)
       pristineHTML = buildHTML(text);
       renderContent();
       setTimeout(() => {
@@ -162,6 +163,7 @@ const Reader = (() => {
     // إتلاف مستند PDF لتحرير الخطوط والذاكرة (يمنع تبعثر الخطوط عند إعادة الفتح)
     if (pdfDoc) { try { await pdfDoc.destroy(); } catch {} }
     pdfDoc = null; ocrFull = null; pristineHTML = ''; contentEl.innerHTML = '';
+    revokeAssets();
     Library.refresh();
   }
 
@@ -172,6 +174,21 @@ const Reader = (() => {
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/_(\S[^_\n]*?\S|\S)_/g, '<em>$1</em>')
       .replace(/==(.+?)==/g, '<mark class="static-hl">$1</mark>');
+  }
+
+  /* صور الكتاب (EPUB): روابط محلية مؤقتة لكل صورة مخزّنة، تُحرَّر عند الإغلاق */
+  let assetUrls = new Map(), assetDims = new Map();
+  function revokeAssets() { for (const u of assetUrls.values()) URL.revokeObjectURL(u); assetUrls = new Map(); assetDims = new Map(); }
+  async function loadAssetUrls(b) {
+    revokeAssets();
+    if (!b || !b.assets || !b.assets.length) return;
+    for (const a of b.assets) assetDims.set(a.name, a);
+    let m = new Map();
+    try { m = await Store.getAssets(b.id); } catch {}
+    if (m.size < b.assets.length && window.Cloud && Cloud.ensureAssets) {
+      try { await Cloud.ensureAssets(b.id); m = await Store.getAssets(b.id); } catch {}
+    }
+    for (const [name, blob] of m) assetUrls.set(name, URL.createObjectURL(blob));
   }
 
   function buildHTML(text) {
@@ -192,6 +209,13 @@ const Reader = (() => {
       const line = raw.trim();
       if (!line) { flushAll(); continue; }
       let m;
+      // صورة من الكتاب:  ![وصف](img:اسم)  — أبعادها معروفة مسبقاً فلا يتغيّر الترقيم بعد تحميلها
+      if ((m = line.match(/^!\[([^\]]*)\]\(img:([^)\s]+)\)$/))) {
+        flushAll();
+        const url = assetUrls.get(m[2]), dim = assetDims.get(m[2]);
+        if (url) html += `<figure class="bk-img"><img src="${url}" alt="${esc(m[1])}"${dim ? ` width="${dim.w}" height="${dim.h}"` : ''} decoding="async"></figure>`;
+        continue;
+      }
       // فاصل زخرفي
       if (/^([-*_]\s?){3,}$/.test(line)) { flushAll(); html += '<hr class="orn">'; continue; }
       // عناوين
@@ -247,6 +271,10 @@ const Reader = (() => {
     reader.style.setProperty('--font-scale', fontScale.toFixed(3));
     if (settings.flip === 'scroll') { pageCount = 1; return; }
     pageW = viewportEl.clientWidth;
+    { // الصورة لا تتجاوز الصفحة — ولا نضبط قياساً غير صالح (تخطيط لم يكتمل) كي لا تنطوي الصور إلى صفر
+      const ph = contentEl.clientHeight || viewportEl.clientHeight;
+      if (ph > 120) reader.style.setProperty('--page-h', ph + 'px'); else reader.style.removeProperty('--page-h');
+    }
     colW = spreadOn ? (pageW - GAP) / 2 : pageW; // عمودان متقابلان = صفحة واحدة منطقياً
     contentEl.style.columnWidth = colW + 'px';
     contentEl.style.transform = 'translateX(0)';

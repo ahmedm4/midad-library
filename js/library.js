@@ -818,6 +818,53 @@ create policy "midad_own_files" on storage.objects for all
     return s.length >= 4 && l.startsWith(s);
   };
 
+  /* ─── رقم الجزء من الغلاف (عبر استخراج النص بالذكاء الاصطناعي) ───
+     كثير من الكتب يُطبع رقم جزئها على الغلاف وحده («الجزء السابع»). نمرّر صورة الغلاف إلى
+     إجراء OCR الموجود في دالة الذكاء، ثم نقرأ الرقم محلياً من النص بالمحلّل نفسه. */
+  // من نصّ الغلاف: فقط ما بعد «الجزء/ج/المجلد» (لا أرقام الهواتف والسنوات)
+  function partNoFromCoverText(t) {
+    const x = toLatinDigits(t).replace(/ـ/g, '');
+    let m = x.match(new RegExp(`(?:^|[^\\p{L}])${PART_WORD}\\s*[.:\\-–]?\\s*0*(\\d{1,3})(?!\\d)`, 'u'));
+    if (m) return +m[1];
+    m = x.match(new RegExp(`(?:^|[^\\p{L}])(?:الجزء|جزء|المجلد|مجلد)\\s+(.{2,30})`, 'u'));
+    if (m) for (const [n, re] of ORD_LIST) if (re.test(m[1])) return n;
+    return 0;
+  }
+  // صور مرشّحة للقراءة: الصفحة الأولى ثم الثانية لـPDF (بدقّة كافية)، أو الغلاف المخزّن
+  async function coverImagesFor(b) {
+    const out = [];
+    if (b.type === 'pdf') {
+      let blob = await Store.getPayload(b.id);
+      if (!(blob instanceof Blob) && window.Cloud) { try { await Cloud.ensurePayload(b.id); blob = await Store.getPayload(b.id); } catch {} }
+      if (blob instanceof Blob) {
+        const pdf = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+        try {
+          for (let n = 1; n <= Math.min(2, pdf.numPages); n++) {
+            const page = await pdf.getPage(n);
+            const v1 = page.getViewport({ scale: 1 });
+            const vp = page.getViewport({ scale: Math.min(2.2, 1400 / Math.max(v1.width, v1.height)) });
+            const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+            await page.render({ canvasContext: c.getContext('2d'), viewport: vp, intent: 'print' }).promise;
+            out.push({ data: c.toDataURL('image/jpeg', 0.85).split(',')[1], mime: 'image/jpeg' });
+          }
+        } finally { try { await pdf.destroy(); } catch {} }
+      }
+    }
+    if (!out.length && b.cover && /^data:image\//.test(b.cover)) {
+      const mime = (b.cover.match(/^data:([^;]+)/) || [])[1] || 'image/jpeg';
+      out.push({ data: b.cover.split(',')[1], mime });
+    }
+    return out;
+  }
+  async function readPartNoFromCover(b) {
+    for (const img of await coverImagesFor(b)) {
+      const text = await Cloud.aiInvoke({ action: 'ocr', image: img.data, mimeType: img.mime });
+      const n = partNoFromCoverText(text || '');
+      if (n) return n;
+    }
+    return 0;
+  }
+
   function openSeriesEditor({ seedId, seriesKey, preset } = {}) {
     document.querySelectorAll('.shelf-modal').forEach((m) => m.remove());
     const editing = seriesKey ? seriesMap.get(seriesKey) : (seedId && seriesOfBook[seedId] ? seriesMap.get(seriesOfBook[seedId]) : null);
@@ -847,6 +894,7 @@ create policy "midad_own_files" on storage.objects for all
           <label class="se-name">اسم السلسلة<input type="text" class="sm-input se-name-in" maxlength="120" value="${esc(name)}" autocomplete="off"></label>
           <input type="search" class="sm-input se-filter" placeholder="🔎 ابحث عن كتاب لإضافته…" aria-label="ابحث عن كتاب لإضافته إلى السلسلة" autocomplete="off">
           <p class="se-hint">اختر الأجزاء واكتب رقم كل جزء. الرقم يُستخرج من العنوان تلقائياً إن وُجد، والفارغ يُرقَّم بالترتيب.</p>
+          <button class="se-ocr" type="button">🔎 اقرأ الأرقام الفارغة من أغلفة الكتب</button>
         </div>
         <div class="sm-list se-list"></div>
         <div class="sm-add se-actions">
@@ -875,7 +923,7 @@ create policy "midad_own_files" on storage.objects for all
         return `<div class="se-row${on ? ' on' : ''}" data-id="${b.id}">
           <input type="checkbox" ${on ? 'checked' : ''} aria-label="ضمّ «${esc(b.title)}» إلى السلسلة">
           <input type="number" class="se-no" min="1" max="999" inputmode="numeric" value="${r.n || ''}" placeholder="رقم" aria-label="رقم الجزء لـ «${esc(b.title)}»">
-          <span class="se-t">${esc(b.title)}${other ? `<em>في سلسلة «${esc(other)}»</em>` : ''}</span>
+          <span class="se-t">${esc(b.title)}${other ? `<em>في سلسلة «${esc(other)}»</em>` : ''}${r.src === 'cover' ? '<i class="se-src ok">📖 من الغلاف</i>' : r.src === 'none' ? '<i class="se-src no">لم يُعثر على رقم في الغلاف</i>' : r.src === 'busy' ? '<i class="se-src">⏳ جارٍ القراءة…</i>' : ''}</span>
         </div>`;
       };
       listEl.innerHTML = (chosen.length ? chosen.map((b) => rowHTML(b, true)).join('') : '<div class="sm-empty">لم تُختر أجزاء بعد — ابحث عن الكتب أعلاه.</div>')
@@ -894,6 +942,28 @@ create policy "midad_own_files" on storage.objects for all
           rows.set(id, { ...cur, n: Math.max(0, parseInt(toLatinDigits(e.target.value), 10) || 0) });
         };
       });
+    };
+    overlay.querySelector('.se-ocr').onclick = async (e) => {
+      const btn = e.currentTarget;
+      if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) return toast('قراءة الأغلفة تحتاج تسجيل الدخول (زر السحابة) لاستخدام المساعد الذكي');
+      const todo = books.filter((b) => rows.get(b.id)?.on && !rows.get(b.id).n);
+      if (!todo.length) return toast('كل الأجزاء المختارة مرقّمة — امسح رقماً لإعادة قراءته من الغلاف');
+      btn.disabled = true;
+      let found = 0;
+      for (let i = 0; i < todo.length; i++) {
+        const b = todo[i];
+        btn.textContent = `⏳ جارٍ قراءة الغلاف ${i + 1} من ${todo.length}…`;
+        rows.set(b.id, { ...rows.get(b.id), src: 'busy' }); renderRows();
+        let n = 0;
+        try { n = await readPartNoFromCover(b); } catch (err) { console.warn('cover ocr', err); }
+        const cur = rows.get(b.id);
+        if (cur && !cur.n) rows.set(b.id, { ...cur, n: n || 0, src: n ? 'cover' : 'none' }); // لا نمسّ رقماً كتبه المستخدم أثناء القراءة
+        if (n) found++;
+        renderRows();
+      }
+      btn.disabled = false;
+      btn.textContent = '🔎 اقرأ الأرقام الفارغة من أغلفة الكتب';
+      toast(found ? `قُرئ ${found} من ${todo.length} رقماً من الأغلفة ✓ — راجعها قبل الحفظ` : 'لم يُعثر على أرقام أجزاء في الأغلفة', found ? 'gold' : '');
     };
     overlay.querySelector('.se-name-in').oninput = (e) => { name = e.target.value; if (!filter) renderRows(); };
     overlay.querySelector('.se-filter').oninput = (e) => { filter = e.target.value.trim(); renderRows(); };
@@ -1072,7 +1142,7 @@ create policy "midad_own_files" on storage.objects for all
   async function searchableOf(b, allowIndex) {
     if (b.type === 'text') {
       const t = await Store.getPayload(b.id);
-      return typeof t === 'string' ? { text: t } : null;
+      return typeof t === 'string' ? { text: b.assets ? stripImageMarkers(t) : t } : null;
     }
     const cached = await Store.getFulltext(b.id);
     if (cached && cached.text != null) return cached;
@@ -1728,7 +1798,7 @@ create policy "midad_own_files" on storage.objects for all
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b) return;
     let text = '';
-    if (b.type === 'text') { const t = await Store.getPayload(id); text = typeof t === 'string' ? t : ''; }
+    if (b.type === 'text') { const t = await Store.getPayload(id); text = typeof t === 'string' ? stripImageMarkers(t) : ''; }
     else { const ft = await Store.getFulltext(id); text = (ft && ft.text) || ''; }
     if (!text.trim()) return toast('لا يوجد نص للتصدير (لكتب PDF المصوّرة استخرج النص أولاً)');
     const opts = await exportOptions();
@@ -2370,7 +2440,8 @@ create policy "midad_own_files" on storage.objects for all
         const fname = f.name.replace(/\.(pdf|txt|md|epub)$/i, '').replace(/[_-]+/g, ' ').trim() || 'بدون عنوان';
         if (isEpub) {
           const p = await parseEpub(await f.arrayBuffer());
-          const tid = await Store.addBook({ title: p.title || fname, author: p.author || '', category: 'أخرى', type: 'text', cover: p.cover || undefined }, p.text);
+          const tid = await Store.addBook({ title: p.title || fname, author: p.author || '', category: 'أخرى', type: 'text', cover: p.cover || undefined, assets: assetMeta(p.assets) }, p.text);
+          await saveBookAssets(tid, p.assets);
           if (window.Cloud) Cloud.pushBook(tid);
         } else if (isPdf) {
           const buf = await f.arrayBuffer();
@@ -2427,7 +2498,8 @@ create policy "midad_own_files" on storage.objects for all
       const p = await parseEpub(await blob.arrayBuffer());
       const etext = cleanImportedText(p.text);
       if (!etext.trim()) throw new Error('لم يُعثر على نص قابل للقراءة في هذه الصيغة — جرّب صيغة أخرى (PDF مثلاً)');
-      id = await Store.addBook({ title: title || p.title || name, author: author || p.author || '', category: category || 'أخرى', type: 'text', cover: cover || p.cover || undefined }, etext);
+      id = await Store.addBook({ title: title || p.title || name, author: author || p.author || '', category: category || 'أخرى', type: 'text', cover: cover || p.cover || undefined, assets: assetMeta(p.assets) }, etext);
+      await saveBookAssets(id, p.assets);
     } else if (kind === 'pdf') {
       const buf = await blob.arrayBuffer();
       const head = new Uint8Array(buf.slice(0, 5));
@@ -2544,9 +2616,10 @@ create policy "midad_own_files" on storage.objects for all
         const parsed = await parseEpub(await file.arrayBuffer());
         if (parsed.title) $('#meta-title').value = parsed.title;
         if (parsed.author && !$('#meta-author').value.trim()) $('#meta-author').value = parsed.author;
-        pendingFile = { kind: 'text', text: parsed.text, cover: parsed.cover };
+        pendingFile = { kind: 'text', text: parsed.text, cover: parsed.cover, assets: parsed.assets || [] };
         const chapters = (parsed.text.match(/(^|\n)# /g) || []).length;
-        chip.textContent = `✓ ${file.name} — كتاب EPUB${chapters ? ` · ${chapters} فصل` : ''} جاهز`;
+        const imgs = (parsed.assets || []).length;
+        chip.textContent = `✓ ${file.name} — كتاب EPUB${chapters ? ` · ${chapters} فصل` : ''}${imgs ? ` · ${imgs} صورة` : ''} جاهز`;
       } catch (err) {
         console.error('epub', err);
         chip.textContent = '⚠ تعذّرت قراءة ملف EPUB';
@@ -2580,19 +2653,57 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   /* ─── تحويل كتاب EPUB إلى نص غني ─── */
+  /* ─── EPUB: نصّ منسّق + صور الكتاب + عناوين الفصول ───
+     نُبقي مسار الكتب النصية (فتعمل معه كل المزايا: التظليل، البحث، القراءة الصوتية، المساعد…)
+     ونضيف إليه الصور: تُستخرج من الملف وتُخزَّن مع الكتاب، ويوضع في النص سطر علامة
+     «![وصف](img:اسم)» في موضع كل صورة يرسمه القارئ صورةً. الصور لا تضيف نصاً، فلا تُزيح
+     مواضع التظليلات (المحفوظة بإزاحات الحروف). */
+  const EPUB_IMG_MAX = 1400;              // أقصى بُعد للصورة المخزّنة
+  const EPUB_ASSETS_BUDGET = 60 * 1024 * 1024; // سقف مجموع صور الكتاب
+
+  // يحوّل بايتات صورة إلى صورة مخزّنة: يُبقي الصغيرة كما هي، ويصغّر الكبيرة إلى JPEG
+  async function processEpubImage(bytes, type) {
+    const blob = new Blob([bytes], { type: type || 'image/jpeg' });
+    let src = null, w0 = 0, h0 = 0;
+    try { src = await createImageBitmap(blob); w0 = src.width; h0 = src.height; }
+    catch {
+      // SVG وما لا يدعمه createImageBitmap: عبر عنصر صورة
+      try {
+        const url = URL.createObjectURL(blob);
+        src = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+        w0 = src.naturalWidth; h0 = src.naturalHeight;
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch { return null; }
+    }
+    if (!w0 || !h0 || w0 < 8 || h0 < 8) return null; // صور فارغة/فواصل مخفية
+    const big = Math.max(w0, h0) > EPUB_IMG_MAX;
+    if (!big && /jpe?g/i.test(type) && blob.size <= 450 * 1024) return { blob, w: w0, h: h0, ext: 'jpg' };
+    if (!big && /png|gif|webp/i.test(type) && blob.size <= 300 * 1024) return { blob, w: w0, h: h0, ext: (type.match(/png|gif|webp/i) || ['png'])[0].toLowerCase() };
+    const k = Math.min(1, EPUB_IMG_MAX / Math.max(w0, h0));
+    const w = Math.max(1, Math.round(w0 * k)), h = Math.max(1, Math.round(h0 * k));
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const cx = cv.getContext('2d');
+    cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, w, h); // خلفية بيضاء للصور الشفافة
+    cx.drawImage(src, 0, 0, w, h);
+    const out = await new Promise((res) => cv.toBlob(res, 'image/jpeg', 0.82));
+    return out ? { blob: out, w, h, ext: 'jpg' } : null;
+  }
+
   async function parseEpub(ab) {
     if (!window.fflate) throw new Error('fflate missing');
     const files = fflate.unzipSync(new Uint8Array(ab));
     const dec = (name) => (files[name] ? fflate.strFromU8(files[name]) : null);
-    const norm = (p) => { const parts = []; p.split('/').forEach((s) => { if (s === '..') parts.pop(); else if (s !== '.' && s !== '') parts.push(s); }); return parts.join('/'); };
+    const norm = (p) => { const parts = []; p.split('/').forEach((x) => { if (x === '..') parts.pop(); else if (x !== '.' && x !== '') parts.push(x); }); return parts.join('/'); };
+    const dirOf = (path) => (path.includes('/') ? path.replace(/[^/]+$/, '') : '');
+    const safeDecode = (x) => { try { return decodeURIComponent(x); } catch { return x; } };
 
     // مسار OPF من container.xml
     const container = dec('META-INF/container.xml') || '';
     let opfPath = (container.match(/full-path="([^"]+)"/) || [])[1] || Object.keys(files).find((f) => /\.opf$/i.test(f));
     if (!opfPath) throw new Error('no opf');
     opfPath = norm(opfPath);
-    const opfDir = opfPath.includes('/') ? opfPath.replace(/[^/]+$/, '') : '';
-    const resolve = (href) => norm(opfDir + decodeURIComponent(href));
+    const opfDir = dirOf(opfPath);
+    const resolve = (href) => norm(opfDir + safeDecode(href));
 
     const xml = new DOMParser().parseFromString(dec(opfPath) || '', 'application/xml');
     const byLocal = (ln) => { for (const e of xml.getElementsByTagName('*')) if (e.localName === ln) return e; return null; };
@@ -2602,32 +2713,111 @@ create policy "midad_own_files" on storage.objects for all
     const manifest = {};
     for (const it of xml.getElementsByTagName('item')) manifest[it.getAttribute('id')] = { href: it.getAttribute('href'), type: it.getAttribute('media-type') || '', props: it.getAttribute('properties') || '' };
     const spine = [...xml.getElementsByTagName('itemref')].map((ir) => ir.getAttribute('idref'));
+    const typeOfPath = {};
+    for (const id in manifest) typeOfPath[resolve(manifest[id].href)] = manifest[id].type;
 
     // الغلاف
     let cover = null, coverItem = null;
     for (const m of xml.getElementsByTagName('meta')) if (m.getAttribute('name') === 'cover') coverItem = manifest[m.getAttribute('content')];
     if (!coverItem) for (const id in manifest) if (/cover-image/.test(manifest[id].props)) { coverItem = manifest[id]; break; }
     if (coverItem && /image/.test(coverItem.type)) {
-      const p = resolve(coverItem.href);
-      if (files[p]) { try { cover = await imageToCover(new Blob([files[p]], { type: coverItem.type })); } catch {} }
+      const cp = resolve(coverItem.href);
+      if (files[cp]) { try { cover = await imageToCover(new Blob([files[cp]], { type: coverItem.type })); } catch {} }
     }
 
-    // الفصول بترتيب القراءة
+    // عناوين الفصول من فهرس الكتاب نفسه (nav في EPUB3، أو toc.ncx في EPUB2)
+    const tocTitles = {};
+    try {
+      const navItem = Object.values(manifest).find((m) => /(^|\s)nav(\s|$)/.test(m.props));
+      if (navItem) {
+        const navPath = resolve(navItem.href), navDir = dirOf(navPath);
+        const nd = new DOMParser().parseFromString(dec(navPath) || '', 'text/html');
+        const navs = [...nd.querySelectorAll('nav')];
+        const tocNav = navs.find((x) => /toc/.test(x.getAttribute('epub:type') || x.getAttribute('type') || x.id || '')) || navs[0];
+        if (tocNav) for (const a of tocNav.querySelectorAll('a[href]')) {
+          const pth = norm(navDir + safeDecode(a.getAttribute('href').split('#')[0]));
+          const t = a.textContent.replace(/\s+/g, ' ').trim();
+          if (pth && t && !tocTitles[pth]) tocTitles[pth] = t;
+        }
+      }
+      if (!Object.keys(tocTitles).length) {
+        const spineEl = xml.getElementsByTagName('spine')[0];
+        const tocId = spineEl && spineEl.getAttribute('toc');
+        const ncxItem = (tocId && manifest[tocId]) || Object.values(manifest).find((m) => /ncx/.test(m.type));
+        if (ncxItem) {
+          const ncxPath = resolve(ncxItem.href), ncxDir = dirOf(ncxPath);
+          const nx = new DOMParser().parseFromString(dec(ncxPath) || '', 'application/xml');
+          for (const np of nx.getElementsByTagName('navPoint')) {
+            const lab = np.getElementsByTagName('text')[0], con = np.getElementsByTagName('content')[0];
+            if (!lab || !con) continue;
+            const pth = norm(ncxDir + safeDecode((con.getAttribute('src') || '').split('#')[0]));
+            const t = lab.textContent.replace(/\s+/g, ' ').trim();
+            if (pth && t && !tocTitles[pth]) tocTitles[pth] = t;
+          }
+        }
+      }
+    } catch (e) { console.warn('epub toc', e); }
+
+    // الفصول بترتيب القراءة: حلّل كل فصل مرة، واجمع صوره
     const chapters = [];
     for (const idref of spine) {
       const item = manifest[idref];
       if (!item || !/(html|xml)/i.test(item.type)) continue;
-      const html = dec(resolve(item.href));
+      const path = resolve(item.href);
+      const html = dec(path);
       if (!html) continue;
-      const md = xhtmlToMarkup(html);
-      if (md.trim()) chapters.push(md.trim());
+      chapters.push({ path, dir: dirOf(path), doc: new DOMParser().parseFromString(html, 'text/html') });
     }
-    return { title, author, cover, text: chapters.join('\n\n---\n\n') || '(كتاب فارغ)' };
+    const imgPathOf = (ch, src) => (src && !/^(data:|https?:)/i.test(src) ? norm(ch.dir + safeDecode(src.split('#')[0])) : '');
+    const wanted = [];
+    for (const ch of chapters) {
+      for (const el of ch.doc.querySelectorAll('img, image')) {
+        const src = el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('xlink:href');
+        const ip = imgPathOf(ch, src);
+        if (ip && files[ip] && !wanted.includes(ip)) wanted.push(ip);
+      }
+    }
+    // عالج الصور (تصغير عند الحاجة) ضمن سقف الحجم
+    const nameOf = {}, assets = [];
+    let total = 0;
+    for (const ip of wanted) {
+      if (total > EPUB_ASSETS_BUDGET) break;
+      const type = typeOfPath[ip] || (/\.png$/i.test(ip) ? 'image/png' : /\.gif$/i.test(ip) ? 'image/gif' : /\.svg$/i.test(ip) ? 'image/svg+xml' : /\.webp$/i.test(ip) ? 'image/webp' : 'image/jpeg');
+      let r = null;
+      try { r = await processEpubImage(files[ip], type); } catch {}
+      if (!r) continue;
+      const name = `i${assets.length + 1}.${r.ext}`;
+      nameOf[ip] = name;
+      assets.push({ name, blob: r.blob, w: r.w, h: r.h });
+      total += r.blob.size;
+    }
+
+    const texts = [];
+    for (const ch of chapters) {
+      let md = xhtmlToMarkup(ch.doc, (src) => nameOf[imgPathOf(ch, src)] || null).trim();
+      if (!md) continue;
+      // فصل بلا عنوان ⇒ عنوانه من فهرس الكتاب (فيظهر في «الفهرس» ويُقرأ عنواناً)
+      const tocT = tocTitles[ch.path];
+      const hasText = md.split('\n').some((l) => l.trim() && !/^!\[/.test(l));
+      if (tocT && hasText) {
+        const lines = md.split('\n');
+        const head = lines.slice(0, 5);
+        if (!head.some((l) => /^#{1,4}\s/.test(l))) {
+          const i = head.findIndex((l) => loose(l.replace(/[*_]/g, '')) === loose(tocT));
+          if (i >= 0) lines[i] = '# ' + lines[i].replace(/[*_]/g, '');
+          else lines.unshift('# ' + tocT);
+          md = lines.join('\n');
+        }
+      }
+      texts.push(md);
+    }
+    return { title, author, cover, text: texts.join('\n\n---\n\n') || '(كتاب فارغ)', assets };
   }
 
-  function xhtmlToMarkup(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const body = doc.body;
+  // XHTML ⇒ أسطر ترميز مِداد. imgName(src) يعيد اسم الصورة المخزّنة أو null
+  function xhtmlToMarkup(htmlOrDoc, imgName) {
+    const doc = typeof htmlOrDoc === 'string' ? new DOMParser().parseFromString(htmlOrDoc, 'text/html') : htmlOrDoc;
+    const body = doc && doc.body;
     if (!body) return '';
     const lines = [];
     const inline = (el) => {
@@ -2644,24 +2834,53 @@ create policy "midad_own_files" on storage.objects for all
       });
       return s.replace(/\s+/g, ' ');
     };
+    const pushImg = (el) => {
+      if (!imgName) return;
+      const src = el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('xlink:href');
+      const name = imgName(src);
+      if (name) lines.push(`![${(el.getAttribute('alt') || '').replace(/[\[\]\n]/g, ' ').trim()}](img:${name})`);
+    };
+    const hasImg = (el) => !!(imgName && el.querySelector && el.querySelector('img, image'));
+    // كتلة نصية تحوي صوراً: الصور أولاً ثم نصّها (بلا الصور)
+    const blockWithImages = (n, prefix) => {
+      n.querySelectorAll('img, image').forEach(pushImg);
+      const c = n.cloneNode(true);
+      c.querySelectorAll('img, svg, image').forEach((x) => x.remove());
+      const t = inline(c).trim();
+      if (t) lines.push(prefix + t);
+    };
     const walk = (el) => {
       el.childNodes.forEach((n) => {
         if (n.nodeType === 3) { const t = n.textContent.trim(); if (t) lines.push(t); return; }
         if (n.nodeType !== 1) return;
         const tag = n.tagName.toLowerCase();
-        if (/^h[1-6]$/.test(tag)) { const t = inline(n).trim(); if (t) lines.push((tag === 'h1' ? '# ' : tag === 'h2' ? '## ' : '### ') + t); }
-        else if (tag === 'p') { const t = inline(n).trim(); if (t) lines.push(t); }
-        else if (tag === 'blockquote') { const t = inline(n).trim(); if (t) lines.push('> ' + t); }
-        else if (tag === 'li') { const t = inline(n).trim(); if (t) lines.push('- ' + t); }
+        const hp = tag === 'h1' ? '# ' : tag === 'h2' ? '## ' : '### ';
+        if (tag === 'img') pushImg(n);
+        else if (tag === 'svg') { const im = n.querySelector('image'); if (im) pushImg(im); }
+        else if (/^h[1-6]$/.test(tag)) { if (hasImg(n)) blockWithImages(n, hp); else { const t = inline(n).trim(); if (t) lines.push(hp + t); } }
+        else if (tag === 'p') { if (hasImg(n)) blockWithImages(n, ''); else { const t = inline(n).trim(); if (t) lines.push(t); } }
+        else if (tag === 'blockquote') { if (hasImg(n)) blockWithImages(n, '> '); else { const t = inline(n).trim(); if (t) lines.push('> ' + t); } }
+        else if (tag === 'li') { if (hasImg(n)) blockWithImages(n, '- '); else { const t = inline(n).trim(); if (t) lines.push('- ' + t); } }
+        else if (tag === 'figcaption') { const t = inline(n).trim(); if (t) lines.push('~ ' + t); }
         else if (tag === 'hr') lines.push('---');
         else if (['script', 'style', 'head', 'nav'].includes(tag)) { /* تجاهل */ }
-        else if (['div', 'section', 'article', 'ul', 'ol', 'main', 'header', 'footer', 'span', 'a', 'figure'].includes(tag)) walk(n);
+        else if (['div', 'section', 'article', 'ul', 'ol', 'main', 'header', 'footer', 'span', 'a', 'figure', 'center', 'aside'].includes(tag)) walk(n);
+        else if (hasImg(n)) walk(n);
         else { const t = inline(n).trim(); if (t) lines.push(t); }
       });
     };
     walk(body);
     return lines.join('\n');
   }
+
+  // بيانات صور الكتاب في meta (الأسماء والأبعاد فقط — الصور نفسها في المخزن)
+  const assetMeta = (assets) => (assets && assets.length ? assets.map(({ name, w, h }) => ({ name, w, h })) : undefined);
+  async function saveBookAssets(bookId, assets) {
+    try { await Store.deleteAssets(bookId); } catch {}
+    for (const a of assets || []) await Store.putAsset(bookId, a.name, a.blob);
+  }
+  // سطر علامة الصورة لا يُعرض في البحث ولا يُرسل للمساعد الذكي
+  const stripImageMarkers = (t) => String(t || '').replace(/^!\[[^\]\n]*\]\(img:[^)\n]+\)[ \t]*$/gm, '');
 
   async function renderPdfCover(pdf) {
     try {
@@ -2694,13 +2913,15 @@ create policy "midad_own_files" on storage.objects for all
       if (pendingFile) {
         if (!(await uiConfirm('استبدال محتوى الكتاب بالملف الجديد سيصفّر موضع القراءة والتظليلات والملاحظات.', { title: 'استبدال المحتوى؟', okText: 'استبدل', danger: true }))) return;
         if (pendingFile.kind === 'pdf') {
-          meta.type = 'pdf'; meta.pages = pendingFile.pages;
+          meta.type = 'pdf'; meta.pages = pendingFile.pages; meta.assets = undefined;
           if (!pendingCover) meta.cover = pendingFile.cover;
           await Store.updatePayload(editingId, pendingFile.blob);
-        } else { // نص (يشمل EPUB المحوّل)
-          meta.type = 'text'; meta.pages = undefined;
+          try { await Store.deleteAssets(editingId); } catch {}
+        } else { // نص (يشمل EPUB المحوّل بصوره)
+          meta.type = 'text'; meta.pages = undefined; meta.assets = assetMeta(pendingFile.assets);
           if (pendingFile.cover && !pendingCover) meta.cover = pendingFile.cover;
           await Store.updatePayload(editingId, pendingFile.text);
+          await saveBookAssets(editingId, pendingFile.assets);
         }
         // تصفير حالة القراءة لأن المحتوى تغيّر
         const st = await Store.getState(editingId);
@@ -2737,6 +2958,7 @@ create policy "midad_own_files" on storage.objects for all
     } else if (pendingFile && pendingFile.kind === 'text') {
       meta.type = 'text'; payload = pendingFile.text;
       if (pendingFile.cover && !pendingCover) meta.cover = pendingFile.cover; // غلاف EPUB
+      meta.assets = assetMeta(pendingFile.assets);
     } else if (pasted) {
       meta.type = 'text'; payload = pasted;
     } else {
@@ -2744,6 +2966,7 @@ create policy "midad_own_files" on storage.objects for all
     }
 
     const newId = await Store.addBook(meta, payload);
+    if (pendingFile && pendingFile.assets && pendingFile.assets.length) await saveBookAssets(newId, pendingFile.assets);
     if (window.Cloud) Cloud.pushBook(newId);
     closeAddModal(); await refresh();
     toast(`أُضيف «${title}» إلى مكتبتك 📚`, 'gold');
@@ -3133,6 +3356,15 @@ create policy "midad_own_files" on storage.objects for all
           it.payloadKind = 'text'; it.payloadFile = `files/${b.id}.txt`;
           zipObj[it.payloadFile] = [fflate.strToU8(payload || ''), { level: 8 }];
         }
+        if (b.assets && b.assets.length) {
+          let am = new Map(); try { am = await Store.getAssets(b.id); } catch {}
+          it.assetFiles = [];
+          for (const [name, blob] of am) {
+            const path = `assets/${b.id}/${name}`;
+            zipObj[path] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }]; // صور مضغوطة أصلاً
+            it.assetFiles.push({ name, path, type: blob.type || '' });
+          }
+        }
         if (fulltext != null) {
           it.fulltextFile = `fulltext/${b.id}.txt`;
           const ft = typeof fulltext === 'string' ? fulltext : JSON.stringify(fulltext);
@@ -3193,6 +3425,9 @@ create policy "midad_own_files" on storage.objects for all
       await Store.addBook(it.meta, payload);
       if (it.state) { it.state.bookId = it.meta.id; await Store.saveState(it.state); }
       if (it.deck && it.deck.cards) { try { await Store.saveDeck(it.meta.id, it.deck.cards); } catch {} }
+      for (const a of it.assetFiles || []) {
+        if (files[a.path]) { try { await Store.putAsset(it.meta.id, a.name, new Blob([files[a.path]], { type: a.type || 'image/jpeg' })); } catch {} }
+      }
       if (it.fulltextFile && files[it.fulltextFile]) {
         try { const ft = fflate.strFromU8(files[it.fulltextFile]); await Store.saveFulltext(it.meta.id, it.fulltextObj ? JSON.parse(ft) : ft); } catch {}
       }
@@ -3363,7 +3598,7 @@ create policy "midad_own_files" on storage.objects for all
   async function getBookText(id) {
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b) return '';
-    if (b.type === 'text') { const t = await Store.getPayload(id); return typeof t === 'string' ? t : ''; }
+    if (b.type === 'text') { const t = await Store.getPayload(id); return typeof t === 'string' ? stripImageMarkers(t) : ''; }
     const s = await searchableOf(b, true);
     return (s && s.text) || '';
   }

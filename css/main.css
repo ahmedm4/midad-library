@@ -1156,3 +1156,12 @@ a.disc-import.disc-openfile { text-decoration: none; }
   .af-part .afp-add { min-height: 40px; padding-inline: 16px; }
   .af-part .afp-manual { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
 }
+/* قراءة أرقام الأجزاء من الأغلفة */
+.series-modal .se-ocr { align-self: flex-start; padding: 8px 14px; border-radius: 10px; font-size: 13px; color: var(--cream);
+  border: 1px dashed rgba(217,169,79,.55); background: rgba(217,169,79,.07); }
+.series-modal .se-ocr:hover:not(:disabled) { background: rgba(217,169,79,.15); }
+.series-modal .se-ocr:disabled { opacity: .7; cursor: default; }
+.series-modal .se-src { display: block; font-style: normal; font-size: 11.5px; color: var(--muted); }
+.series-modal .se-src.ok { color: #6fcf97; }
+.series-modal .se-src.no { color: #e0a33a; }
+:root[data-lib-theme="paper"] .series-modal .se-src.ok { color: #2f7d4c; }
