@@ -90,7 +90,8 @@ function parseParts(html: string): Part[] {
     const items: Item[] = [];
     for (const li of ul[1].matchAll(/<li>([\s\S]*?)<\/li>/g)) {
       const body = li[1];
-      const href = (body.match(/href="(https?:\/\/[^"]+)"/i) || [])[1];
+      // نتسامح مع مسافات داخل الاقتباس وعلامة الاقتباس المفردة: بعض الصفحات تكتب href=" https://… "
+      const href = (body.match(/href\s*=\s*["']\s*(https?:\/\/[^"'\s]+)\s*["']/i) || [])[1];
       if (!href) continue;
       const url = decode(href);
       const host = classifyHost(url);
