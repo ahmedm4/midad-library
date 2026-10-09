@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>سياسة الخصوصية — مِداد</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root { --bg: #0e0b16; --card: #17121f; --line: #2c2438; --text: #e9e3f2; --muted: #a59cb5; --gold: #d9a94f; }
+  @media (prefers-color-scheme: light) { :root { --bg: #f7f4ee; --card: #fff; --line: #e4dccd; --text: #2a2233; --muted: #6b6276; --gold: #9a6b14; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.9 system-ui, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 60px; }
+  h1 { color: var(--gold); font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 28px 0 6px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; margin-top: 18px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  ul { padding-inline-start: 22px; margin: 6px 0; }
+  a { color: var(--gold); }
+  [lang="en"] { direction: ltr; text-align: left; }
+</style>
+</head>
+<body>
+<main>
+  <h1>سياسة الخصوصية — مِداد</h1>
+  <p class="muted">آخر تحديث: 9 أكتوبر 2026</p>
+
+  <div class="card">
+    <p>«مِداد» تطبيق قراءة يعمل في المتصفح. صُمّم ليبقى ما تقرؤه ملكك: لا إعلانات، ولا تتبّع، ولا بيع لأي بيانات.</p>
+
+    <h2>ما يُحفظ وأين</h2>
+    <ul>
+      <li><b>على جهازك:</b> الكتب والتقدّم والتظليلات والملاحظات والإعدادات تُحفظ في متصفحك نفسه.</li>
+      <li><b>عند المزامنة بحساب Google:</b> تُحفظ نسخة منها في <b>مجلد بيانات التطبيق</b> داخل Google Drive الخاص بك (appDataFolder). لا يصل التطبيق إلى أي ملف آخر في Drive، ولا يطّلع على هذه البيانات أحد غيرك.</li>
+      <li><b>مفتاح Gemini</b> (إن أضفته): يبقى على جهازك فقط، ويتصل المتصفح بـ Google مباشرة.</li>
+    </ul>
+
+    <h2>بيانات حساب Google</h2>
+    <p>نطلب صلاحية واحدة لحفظ بيانات التطبيق في Drive (<code>drive.appdata</code>)، إضافة إلى بريدك الإلكتروني لعرضه داخل التطبيق كي تعرف الحساب المتصل. يمرّ رمز الدخول لمرة واحدة بخادم صغير يحوّله إلى إذن دائم، ولا يُحفظ فيه شيء، ولا تمرّ كتبك بأي خادم: تنتقل مباشرة بين متصفحك وGoogle Drive.</p>
+    <p>استخدام «مِداد» للمعلومات المتلقّاة من واجهات Google يلتزم <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">سياسة بيانات المستخدم لخدمات Google API</a>، بما فيها متطلبات الاستخدام المحدود (Limited Use).</p>
+
+    <h2>الحذف وإلغاء الإذن</h2>
+    <ul>
+      <li>«تسجيل الخروج» من نافذة السحابة يلغي إذن التطبيق على هذا الجهاز.</li>
+      <li>يمكنك إلغاء الإذن وحذف بيانات التطبيق من Drive في أي وقت من <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">إعدادات حساب Google ← الجهات الخارجية</a>، أو من Drive ← الإعدادات ← إدارة التطبيقات.</li>
+      <li>مسح بيانات الموقع من المتصفح يحذف النسخة المحلية.</li>
+    </ul>
+
+    <h2>التواصل</h2>
+    <p>للأسئلة: <a href="https://github.com/ahmedm4/midad-library/issues" target="_blank" rel="noopener">صفحة المشروع على GitHub</a>.</p>
+  </div>
+
+  <div class="card" lang="en">
+    <h2 style="margin-top:0">Privacy Policy (English summary)</h2>
+    <p>Midad is a browser-based reading app with no ads, tracking or data sales. Your books, reading progress, highlights and settings are stored in your browser. If you choose “Sync with Google”, a copy is stored in the hidden app-data folder of <b>your own</b> Google Drive (scope <code>drive.appdata</code>); the app cannot access any other Drive files, and no one else can see this data. We also read your email address only to show which account is connected. A small token-exchange service turns the one-time sign-in code into a refresh token and stores nothing; book files travel directly between your browser and Google Drive.</p>
+    <p>Midad's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    <p>You can revoke access and delete the app's data at any time from <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">your Google Account permissions</a>. Contact: <a href="https://github.com/ahmedm4/midad-library/issues" target="_blank" rel="noopener">GitHub issues</a>.</p>
+  </div>
+  <p class="muted" style="text-align:center;margin-top:24px"><a href="./">العودة إلى مِداد</a></p>
+</main>
+</body>
+</html>
