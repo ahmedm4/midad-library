@@ -98,7 +98,7 @@ const Store = (() => {
     brightness: 100, warmth: 0, bg: 'dusk',
     font: "'Noto Naskh Arabic', serif", fontSize: 20, lineHeight: 190, width: 680,
     flip: 'flip', spread: false, realFlip: true, ttsRate: 100, paperFx: 'none', autoSpeed: 50, enhanceScan: true, focusMode: false,
-    pdfFit: 'page', ocrProvider: 'gemini', ttsEngine: 'natural', ttsVoice: 'Kore', ttsSleep: 0,
+    pdfFit: 'page', ocrProvider: 'gemini', ttsEngine: 'natural', ttsVoice: 'Kore', ttsSleep: 0, keepAwake: true,
   };
   function getSettings() {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
@@ -107,7 +107,7 @@ const Store = (() => {
   /* مزامنة الإعدادات بين الأجهزة: تُزامَن التفضيلات فقط، أما ما يتبع الشاشة والمكان
      (حجم الخط، عرض النص، الصفحتان المتقابلتان، السطوع) فيبقى لكل جهاز. */
   const SYNC_SETTING_KEYS = ['theme', 'customPaper', 'warmth', 'bg', 'font', 'lineHeight', 'flip', 'realFlip',
-    'ttsRate', 'paperFx', 'autoSpeed', 'enhanceScan', 'focusMode', 'pdfFit', 'ocrProvider', 'ttsEngine', 'ttsVoice', 'ttsSleep'];
+    'ttsRate', 'paperFx', 'autoSpeed', 'enhanceScan', 'focusMode', 'pdfFit', 'ocrProvider', 'ttsEngine', 'ttsVoice', 'ttsSleep', 'keepAwake'];
   const SETTINGS_AT_KEY = 'midad-settings-at', LIBTHEME_KEY = 'midad-lib-theme';
   const syncedOf = (s) => { const o = {}; for (const k of SYNC_SETTING_KEYS) if (s && s[k] !== undefined) o[k] = s[k]; return o; };
   // يُختَم وقت التعديل فقط حين تتغيّر تفضيلة مُزامَنة فعلاً (الحفظ يحدث عند كل تطبيق للإعدادات)

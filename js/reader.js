@@ -55,6 +55,7 @@ const Reader = (() => {
     settings = Store.getSettings();
     isPdf = book.type === 'pdf';
     celebrated = state.finished;
+    lastActivity = Date.now();
 
     contentEl = $('#r-content');
     viewportEl = $('#r-viewport');
@@ -63,6 +64,7 @@ const Reader = (() => {
     $('#reader').hidden = false;
     document.body.style.overflow = 'hidden';
     isOpen = true;
+    startWakeLock(); // إبقاء الشاشة مضاءة أثناء القراءة
 
     const reader = $('#reader');
     reader.classList.toggle('mode-pdf', isPdf);
@@ -148,6 +150,7 @@ const Reader = (() => {
     isOpen = false;
     await persist(true);
     clearInterval(tickTimer); clearTimeout(uiTimer); clearTimeout(saveTimer);
+    stopWakeLock();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     $('#reader').hidden = true;
     document.body.style.overflow = '';
@@ -1832,6 +1835,9 @@ const Reader = (() => {
     $('#fx-row').querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.paperFx = b.dataset.fx; applySettings(); };
     });
+    { const ar = $('#awake-row'); if (ar) ar.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { settings.keepAwake = b.dataset.awake === '1'; Store.saveSettings(settings); applySettings(); syncWakeLock(); };
+    }); }
     { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.focusMode = b.dataset.focus === '1'; Store.saveSettings(settings); applySettings(); };
     }); }
@@ -1929,6 +1935,7 @@ const Reader = (() => {
     { const rfr = $('#realflip-row'); if (rfr) rfr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.realflip === '1') === (settings.realFlip !== false))); }
     { const fitr = $('#fit-row'); if (fitr) fitr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fit === (settings.pdfFit || 'page'))); }
     { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.focus === '1') === !!settings.focusMode)); }
+    { const ar = $('#awake-row'); if (ar) ar.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.awake === '1') === (settings.keepAwake !== false))); }
     { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
     $('#set-ttsrate').value = settings.ttsRate || 100;
     $('#set-autospeed').value = settings.autoSpeed || 50;
@@ -2459,7 +2466,44 @@ const Reader = (() => {
     if (window.Cloud) Cloud.pushState(book.id);
   }
 
-  function bump() { lastActivity = Date.now(); }
+  function bump() { lastActivity = Date.now(); if (isOpen && !wakeLock) syncWakeLock(); }
+
+  /* ═══════ إبقاء الشاشة مضاءة أثناء القراءة (Screen Wake Lock) ═══════
+     القراءة لا تلمس الشاشة كثيراً فيطفئها الجهاز. نطلب قفل الشاشة ما دام الكتاب مفتوحاً،
+     ونعيد طلبه عند العودة للتطبيق (المتصفح يلغيه عند الخروج منه)، ونتركه بعد خمول طويل
+     كي لا يستنزف البطارية كتابٌ نُسي مفتوحاً — إلا أثناء القراءة الصوتية أو التلقائية. */
+  const AWAKE_IDLE_MS = 15 * 60 * 1000;
+  let wakeLock = null, wakeReq = null, wakeTimer = null;
+  const wakeWanted = () => isOpen && settings && settings.keepAwake !== false && !document.hidden
+    && (ttsOn || autoOn || Date.now() - lastActivity < AWAKE_IDLE_MS);
+  async function syncWakeLock() {
+    if (!('wakeLock' in navigator)) return; // متصفح لا يدعمه: يبقى سلوك الجهاز المعتاد
+    if (wakeWanted()) {
+      // طلبٌ واحد فقط في كل مرة: لمسة واحدة تطلق حدثَي نشاط، ولولا هذا لاجتمع قفلان
+      // ويبقى أحدهما معلّقاً بعد إغلاق الكتاب فلا تنطفئ الشاشة
+      if (wakeLock || wakeReq) return;
+      wakeReq = navigator.wakeLock.request('screen');
+      try {
+        const l = await wakeReq;
+        wakeLock = l;
+        l.addEventListener('release', () => { if (wakeLock === l) wakeLock = null; });
+        if (!wakeWanted()) syncWakeLock(); // تغيّر الحال أثناء الطلب (أُغلق الكتاب مثلاً) ⇒ اتركه
+      } catch { wakeLock = null; } // قد يُرفض (توفير الطاقة/البطارية المنخفضة) — لا ضرر
+      finally { wakeReq = null; }
+    } else if (wakeLock) {
+      const l = wakeLock; wakeLock = null;
+      try { await l.release(); } catch {}
+    }
+  }
+  function startWakeLock() {
+    syncWakeLock();
+    clearInterval(wakeTimer);
+    wakeTimer = setInterval(syncWakeLock, 60 * 1000); // يتحقق من الخمول كل دقيقة
+  }
+  function stopWakeLock() {
+    clearInterval(wakeTimer); wakeTimer = null;
+    syncWakeLock(); // isOpen صار false ⇒ يُترك القفل (وأيّ طلب جارٍ يُترك عند اكتماله)
+  }
 
   function startTimers() {
     bump();
@@ -2553,7 +2597,10 @@ const Reader = (() => {
     };
 
     // حفظ فوري عند إخفاء الصفحة أو إغلاقها (حماية البيانات)
-    document.addEventListener('visibilitychange', () => { if (document.hidden && isOpen) persist(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && isOpen) persist();
+      if (!document.hidden && isOpen) { bump(); syncWakeLock(); } // المتصفح ألغى القفل عند الخروج
+    });
     window.addEventListener('pagehide', () => { if (isOpen) persist(); });
 
     $('#drawer-tabs').querySelectorAll('button').forEach((btn) => {
