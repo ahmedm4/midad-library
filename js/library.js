@@ -179,6 +179,7 @@ const Library = (() => {
     wireGlobalDrop();
     wireCloud();
     await refresh();
+    setTimeout(maybeWelcome, 1200);
   }
 
   /* ─── واجهة المزامنة السحابية ─── */
@@ -207,8 +208,22 @@ const Library = (() => {
       if (Cloud.hasBuiltin && Cloud.hasBuiltin()) $('#cloud-reconfig').hidden = true;
       if (signedIn) {
         $('#cloud-user-email').textContent = Cloud.getUserEmail() || '';
+        const drive = Cloud.provider && Cloud.provider() === 'drive';
+        const info = $('#cloud-sync-info');
+        if (info) info.textContent = drive ? 'Google Drive · مكتبتك متزامنة مع كل أجهزتك' : 'مكتبتك متزامنة مع كل أجهزتك';
+        const av = document.querySelector('.cloud-avatar'); if (av) av.textContent = drive ? 'G' : '☁️';
       }
     });
+
+    // زر «المزامنة بحساب Google» يظهر حين يكون مُفعّلاً في خادم التطبيق
+    const gBtn = $('#cloud-google');
+    const showGoogle = async () => {
+      const ok = Cloud.googleAvailable ? await Cloud.googleAvailable() : false;
+      gBtn.hidden = !ok; $('#cloud-google-note').hidden = !ok;
+    };
+    showGoogle();
+    gBtn.onclick = () => googleSignIn(gBtn);
+    $('#cloud-report').onclick = () => { modal.hidden = true; openCloudReport(); };
 
     $('#cloud-connect').onclick = async () => {
       const url = $('#cloud-url').value, key = $('#cloud-key').value;
@@ -251,6 +266,155 @@ const Library = (() => {
   }
 
   function openCloudModal() { $('#cloud-modal').hidden = false; }
+
+  async function googleSignIn(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await Cloud.signInGoogle();
+      toast('أهلاً بك 👋 — تُزامَن مكتبتك الآن مع Google Drive', 'gold');
+      $('#cloud-modal').hidden = true;
+    } catch (e) { toast(e.message || 'تعذّر الدخول بحساب Google'); }
+    finally { if (btn) btn.disabled = false; }
+  }
+
+  /* ─── الترحيب: أول تشغيل لمن لم يختر طريقة حفظ بعد ───
+     خيار واحد واضح للمستخدم البسيط (حساب Google)، والبقاء محلياً، دون أي مصطلح تقني. */
+  async function maybeWelcome() {
+    try { if (localStorage.getItem('midad-welcomed')) return; } catch { return; }
+    if (!window.Cloud || Cloud.isConfigured()) { try { localStorage.setItem('midad-welcomed', '1'); } catch {} return; }
+    if (document.querySelector('.ui-dialog') || !$('#reader').hidden) return setTimeout(maybeWelcome, 4000);
+    const google = Cloud.googleAvailable ? await Cloud.googleAvailable() : false;
+    const done = () => { try { localStorage.setItem('midad-welcomed', '1'); } catch {} overlay.remove(); };
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `
+      <div class="ud-box wl-box" role="dialog" aria-modal="true" aria-labelledby="wl-title">
+        <div class="ud-icon">📚</div>
+        <h3 id="wl-title">أهلاً بك في مِداد</h3>
+        <p>أين تريد أن تُحفظ مكتبتك؟</p>
+        <div class="ud-choices">
+          ${google ? `<button class="ud-choice rec" data-c="google"><b>🔵 بحساب Google (مُوصى)</b><span>كتبك وتقدّمك في Google Drive الخاص بك، وتتزامن تلقائياً بين هاتفك وحاسبك.</span></button>` : ''}
+          <button class="ud-choice${google ? '' : ' rec'}" data-c="local"><b>📱 على هذا الجهاز فقط</b><span>بلا حساب. يمكنك تفعيل المزامنة لاحقاً من زر السحابة ☁️ أعلى المكتبة.</span></button>
+        </div>
+        <p class="wl-ai">💡 المساعد الذكي واستخراج النص من الصفحات المصوّرة يحتاجان مفتاح Gemini مجانياً — من القائمة ⋮ ← «🤖 الذكاء الاصطناعي» متى شئت.</p>
+        ${Cloud.hasBuiltin && Cloud.hasBuiltin() ? '<button class="cloud-link" data-c="builtin">لديّ حساب في مشروع التطبيق</button>' : ''}
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) done(); };
+    overlay.querySelectorAll('[data-c]').forEach((b) => (b.onclick = async () => {
+      const c = b.dataset.c;
+      done();
+      if (c === 'google') googleSignIn();
+      else if (c === 'builtin') { await Cloud.useBuiltin(); openCloudModal(); }
+      else toast('مكتبتك محفوظة على هذا الجهاز ✓');
+    }));
+  }
+
+  /* ─── لوحة «حالة السحابة»: ما المرفوع، وما على هذا الجهاز، وما يحتاج تدخّلاً ─── */
+  const fmtBytes = (n) => {
+    if (!n) return '0';
+    if (n < 1048576) return Math.max(1, Math.round(n / 1024)) + ' ك.ب';
+    if (n < 1073741824) return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' م.ب';
+    return (n / 1073741824).toFixed(2) + ' غ.ب';
+  };
+  async function openCloudReport() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `<div class="ud-box cr-box" role="dialog" aria-modal="true" aria-labelledby="cr-title">
+      <h3 id="cr-title">📊 حالة السحابة</h3><div class="cr-body"><p class="cr-empty">⏳ جارٍ فحص السحابة…</p></div>
+      <div class="ud-actions"><button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.ud-cancel').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    const body = overlay.querySelector('.cr-body');
+    let filter = 'issues', busy = false, rep;
+
+    const LBL = { ok: 'في السحابة', pending: 'لم يُرفع بعد', missing: 'على جهاز آخر فقط', toobig: 'أكبر من حدّ المخزن', text: 'نصّي — مُزامَن' };
+    const meter = (label, used, limit) => {
+      const pct = limit ? Math.min(100, used * 100 / limit) : 0;
+      return `<div class="cr-meter"><div class="cr-lbl"><span>${label}</span><span>${fmtBytes(used)}${limit ? ' من ' + fmtBytes(limit) : ''}</span></div>
+        ${limit ? `<div class="cr-bar"><i class="${pct > 85 ? 'warn' : ''}" style="width:${pct.toFixed(1)}%"></i></div>` : ''}</div>`;
+    };
+
+    async function load() {
+      try { rep = await Cloud.storageReport(); }
+      catch (e) { body.innerHTML = `<p class="cr-empty">${esc(e.message || 'تعذّر الفحص')}</p>`; return; }
+      draw();
+    }
+    function draw(msg) {
+      const bk = rep.books;
+      const n = (f) => bk.filter(f).length;
+      const pending = bk.filter((b) => b.cloud === 'pending');
+      const notLocal = bk.filter((b) => !b.local && (b.cloud === 'ok' || b.cloud === 'text'));
+      const dlBytes = notLocal.reduce((t, b) => t + (b.cloudSize || 0), 0);
+      const issues = (b) => b.cloud === 'pending' || b.cloud === 'missing' || b.cloud === 'toobig';
+      const shown = bk.filter(filter === 'issues' ? issues : filter === 'local' ? (b) => b.local : filter === 'remote' ? (b) => !b.local : () => true);
+      const drive = rep.provider === 'drive';
+      body.innerHTML = `
+        <p class="cloud-intro" style="text-align:center;margin-bottom:10px">${drive ? 'مكتبتك في <b>Google Drive</b> الخاص بك' : 'مكتبتك في مشروع <b>Supabase</b>'}</p>
+        ${drive && rep.quota ? meter('مساحة حسابك في Google (كل خدماته)', rep.quota.used, rep.quota.limit) : ''}
+        ${meter(drive ? 'ما تشغله كتب مِداد' : 'مساحة المخزن (الخطة المجانية ١ غ.ب)', rep.cloudBytes, drive ? 0 : rep.supabaseLimit)}
+        ${meter('على هذا الجهاز', rep.localBytes, rep.localQuota)}
+        <div class="cr-sum">
+          <div><b>${n((b) => b.cloud === 'ok' || b.cloud === 'text')}</b><span>في السحابة</span></div>
+          <div><b>${n((b) => b.local)}</b><span>على هذا الجهاز</span></div>
+          <div class="${pending.length ? 'bad' : ''}"><b>${pending.length}</b><span>لم تُرفع بعد</span></div>
+          <div class="${n((b) => b.cloud === 'missing' || b.cloud === 'toobig') ? 'bad' : ''}"><b>${n((b) => b.cloud === 'missing' || b.cloud === 'toobig')}</b><span>على جهاز آخر فقط</span></div>
+        </div>
+        <div class="cr-msg" role="status">${msg || ''}</div>
+        <div class="cr-actions">
+          ${pending.length ? `<button class="gold" data-a="up">⬆️ ارفع الآن ما لم يُرفع (${pending.length})</button>` : ''}
+          ${notLocal.length ? `<button data-a="down">⬇️ نزّل الكل لهذا الجهاز (${notLocal.length}${dlBytes ? ' · ' + fmtBytes(dlBytes) : ''})</button>` : ''}
+        </div>
+        <label class="cr-toggle"><input type="checkbox" data-a="all" ${rep.offline.all ? 'checked' : ''}> أبقِ كل الكتب متاحة دون اتصال على هذا الجهاز (تُنزَّل تدريجياً في الخلفية)</label>
+        <div class="cr-filter" role="tablist">
+          ${[['issues', 'تحتاج انتباهاً'], ['remote', 'ليست على الجهاز'], ['local', 'على الجهاز'], ['all', 'الكل']].map(([k, t]) => `<button data-f="${k}" class="${filter === k ? 'on' : ''}" role="tab" aria-selected="${filter === k}">${t}</button>`).join('')}
+        </div>
+        ${shown.length ? `<ul class="cr-list">${shown.map((b) => `<li>
+          <span class="t" title="${esc(b.title)}">${esc(b.title)}</span>
+          <span class="s">${(b.local ? b.localSize : b.cloudSize) ? fmtBytes(b.local ? b.localSize : b.cloudSize) : '—'}</span>
+          <span class="st ${b.cloud}">${LBL[b.cloud] || ''}</span>
+          ${!b.local && b.cloud === 'ok' ? `<button data-b="down" data-id="${esc(b.id)}">تنزيل</button>`
+            : b.cloud === 'pending' ? `<button data-b="up" data-id="${esc(b.id)}">رفع</button>`
+            : b.local && b.type === 'pdf' && b.cloud === 'ok' ? `<button data-b="pin" data-id="${esc(b.id)}" aria-pressed="${b.pinned}" title="أبقِه على هذا الجهاز دائماً">${b.pinned ? '📌 مثبّت' : '📌'}</button>` : ''}
+        </li>`).join('')}</ul>` : `<p class="cr-empty">${filter === 'issues' ? '✓ لا شيء يحتاج انتباهاً — كل كتبك في السحابة' : 'لا كتب هنا'}</p>`}
+        ${n((b) => b.cloud === 'missing') ? '<p class="cloud-google-note" style="margin-top:10px">«على جهاز آخر فقط»: ملفه لم يصل السحابة بعد. افتح التطبيق على الجهاز الذي أضفته منه وسيُرفع تلقائياً في الخلفية.</p>' : ''}
+        ${n((b) => b.cloud === 'toobig') ? '<p class="cloud-google-note">«أكبر من حدّ المخزن»: أعد فتح التطبيق على الجهاز الذي فيه الكتاب — الإصدار الحالي يرفع الملفات الكبيرة مقسّمةً.</p>' : ''}`;
+
+      body.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => { filter = b.dataset.f; draw(); }));
+      const setMsg = (t) => { const m = body.querySelector('.cr-msg'); if (m) m.textContent = t; };
+      const lock = (on) => { busy = on; body.querySelectorAll('button[data-a],button[data-b]').forEach((x) => (x.disabled = on)); };
+      const run = async (fn) => { if (busy) return; lock(true); try { await fn(); } catch (e) { toast(e.message || 'تعذّر التنفيذ'); } finally { lock(false); } await load(); refresh(); };
+      const up = body.querySelector('[data-a="up"]');
+      if (up) up.onclick = () => run(() => Cloud.uploadPending(pending.map((b) => b.id), (d, t) => setMsg(`⏳ جارٍ الرفع… ${d}/${t}`)));
+      const down = body.querySelector('[data-a="down"]');
+      if (down) down.onclick = () => run(async () => {
+        const r = await Cloud.downloadBooks(notLocal.map((b) => b.id), (d, t) => setMsg(`⏳ جارٍ التنزيل… ${d}/${t}`));
+        toast(r.failed ? `نُزّل ${r.done} وتعذّر ${r.failed}` : `✓ نُزّلت ${r.done} كتب — متاحة دون اتصال`, r.failed ? '' : 'gold');
+      });
+      body.querySelector('[data-a="all"]').onchange = (e) => {
+        Cloud.setOffline({ all: e.target.checked });
+        toast(e.target.checked ? 'ستُنزَّل كل الكتب تدريجياً في الخلفية' : 'تُنزَّل الكتب عند فتحها فقط');
+      };
+      body.querySelectorAll('[data-b]').forEach((x) => (x.onclick = () => {
+        const id = x.dataset.id, k = x.dataset.b;
+        if (k === 'pin') {
+          const o = Cloud.offlinePrefs(); const ids = new Set(o.ids);
+          if (ids.has(id)) ids.delete(id); else ids.add(id);
+          Cloud.setOffline({ ids: [...ids] });
+          const b = rep.books.find((y) => y.id === id); if (b) b.pinned = ids.has(id) || o.all;
+          return draw();
+        }
+        run(async () => {
+          if (k === 'up') await Cloud.uploadPending([id]);
+          else { const r = await Cloud.downloadBooks([id]); if (r.failed) toast('تعذّر تنزيل الكتاب — أعد المحاولة'); }
+        });
+      }));
+    }
+    load();
+  }
 
   function fillCloudSteps() {
     const rls = `-- انسخ هذا كاملاً في SQL Editor واضغط Run

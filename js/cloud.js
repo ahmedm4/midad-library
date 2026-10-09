@@ -51,7 +51,10 @@ const Cloud = (() => {
     ready = false; user = null;
     await init();
   }
-  const isConfigured = () => !!getCfg();
+  /* وضع المزامنة: Google Drive الخاص بالمستخدم (بلا أي إعداد)، أو مشروع Supabase */
+  const MODE_KEY = 'midad-cloud-mode';
+  const isDriveMode = () => { try { return localStorage.getItem(MODE_KEY) === 'drive'; } catch { return false; } };
+  const isConfigured = () => isDriveMode() || !!getCfg();
   const hasBuiltin = () => !!builtinCfg();
   const isSignedIn = () => !!user;
 
@@ -83,11 +86,14 @@ const Cloud = (() => {
   let initDone = null; // وعد التهيئة: فتح كتاب فور بدء التطبيق ينتظره بدل أن يفشل
   function init() { initDone = initInner(); return initDone; }
   async function initInner() {
-    cfg = getCfg();
-    if (!cfg) { emitStatus(); return; }
+    cfg = isDriveMode() ? null : getCfg();
+    if (!cfg && !isDriveMode()) { emitStatus(); return; }
     try {
-      const createClient = window.__midadSbFactory || (await import(SDK_URL)).createClient;
-      sb = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+      if (isDriveMode()) sb = window.DriveClient.create({ callFn });
+      else {
+        const createClient = window.__midadSbFactory || (await import(SDK_URL)).createClient;
+        sb = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+      }
       ready = true;
       const { data } = await sb.auth.getSession();
       user = data.session ? data.session.user : null;
@@ -97,6 +103,8 @@ const Cloud = (() => {
         emitStatus();
         if (user && user.id !== was) { subscribe(); syncAll(); }
         if (!user && channel) { sb.removeChannel(channel); channel = null; }
+        // أُلغي إذن Google (من حساب المستخدم) ⇒ عُد لشاشة الاختيار بدل نموذج البريد/كلمة المرور
+        if (!user && sb && sb.isDrive) { try { localStorage.removeItem(MODE_KEY); } catch {} ready = false; sb = null; emitStatus(); }
       });
       emitStatus();
       if (user) { subscribe(); syncAll(); }
@@ -119,6 +127,7 @@ const Cloud = (() => {
 
   function disconnect() {
     localStorage.removeItem(CFG_KEY);
+    try { localStorage.removeItem(MODE_KEY); } catch {}
     try { localStorage.removeItem(BUILTIN_OPT); } catch {}
     if (sb && channel) sb.removeChannel(channel);
     sb = null; user = null; ready = false; channel = null; cfg = null;
@@ -138,7 +147,42 @@ const Cloud = (() => {
     if (!data.session) return 'confirm'; // يحتاج تأكيد بريد
     return 'ok';
   }
-  async function signOut() { if (sb) await sb.auth.signOut(); }
+  async function signOut() {
+    if (sb) await sb.auth.signOut();
+    // الخروج من Google يعيد الجهاز إلى شاشة الاختيار (محلي فقط)
+    if (isDriveMode()) { try { localStorage.removeItem(MODE_KEY); } catch {} sb = null; ready = false; user = null; emitStatus(); }
+  }
+
+  /* ── الدخول بحساب Google (المزامنة في Drive المستخدم) ── */
+  const GCLIENT_KEY = 'midad-gclient';
+  // هل فعّل صاحب التطبيق الدخول بحساب Google؟ (نسأل دالة الخادم مرة كل ست ساعات)
+  async function googleClientId(fresh) {
+    try {
+      const c = JSON.parse(localStorage.getItem(GCLIENT_KEY) || 'null');
+      if (!fresh && c && Date.now() - c.at < (c.id ? 6 * 3600e3 : 10 * 60e3)) return c.id || ''; // غير المفعّل يُعاد فحصه بعد ١٠ دقائق
+    } catch {}
+    try {
+      const r = await callFn('gdrive', { action: 'config' });
+      const d = r.ok ? await r.json() : {};
+      const id = (d && d.clientId) || '';
+      try { localStorage.setItem(GCLIENT_KEY, JSON.stringify({ id, at: Date.now() })); } catch {}
+      return id;
+    } catch { return ''; }
+  }
+  async function googleAvailable() { return !!window.DriveClient && !!(await googleClientId()); }
+  async function signInGoogle() {
+    const id = await googleClientId(true);
+    if (!id) throw new Error('الدخول بحساب Google غير مُفعّل في هذه النسخة بعد');
+    const prevMode = isDriveMode();
+    try { localStorage.setItem(MODE_KEY, 'drive'); } catch {}
+    try {
+      if (!prevMode || !sb || !sb.isDrive) { if (sb && channel) { try { sb.removeChannel(channel); } catch {} channel = null; } ready = false; user = null; await init(); }
+      await sb.signIn(id); // يُطلق تغيّر الدخول ⇒ اشتراك + مزامنة كاملة
+    } catch (e) {
+      if (!user) { try { localStorage.removeItem(MODE_KEY); } catch {} sb = null; ready = false; emitStatus(); if (!prevMode) init(); }
+      throw e;
+    }
+  }
 
   function translateAuthError(m) {
     if (/invalid login/i.test(m)) return 'البريد أو كلمة المرور غير صحيحة';
@@ -148,6 +192,8 @@ const Cloud = (() => {
   }
 
   /* ── مزامنة كاملة ثنائية الاتجاه ── */
+  let lastSize = 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let syncing = false;
   // quiet: مزامنة خلفية دورية — بلا مؤشّر «جارٍ المزامنة» ولا إعادة رسم إن لم يتغيّر شيء
   async function syncAll(opts = {}) {
@@ -241,18 +287,90 @@ const Cloud = (() => {
     prefetchFiles(); // نزّل في الخلفية ملفات الكتب التي يُرجَّح فتحها قريباً
   }
 
-  /* ── قائمة ملفات المستخدم في المخزن (للتحقّق من وجود الملفات فعلاً) ── */
+  /* ── قائمة ملفات المستخدم في المخزن (للتحقّق من وجود الملفات فعلاً) ──
+     تعيد Map(معرّف الكتاب ⇒ الحجم). الكتاب المقسّم أجزاءً يُعدّ موجوداً بوجود ملف بيانه «.parts». */
   async function listStoredFiles() {
     try {
-      const out = new Map();
+      const raw = new Map();
       for (let offset = 0; offset < 20000; offset += 1000) {
         const { data, error } = await sb.storage.from(BUCKET).list(user.id, { limit: 1000, offset });
         if (error) throw error;
-        for (const f of data || []) if (f && f.id) out.set(f.name, (f.metadata && f.metadata.size) || 0); // f.id فارغ للمجلّدات (assets)
+        for (const f of data || []) if (f && f.id) raw.set(f.name, (f.metadata && f.metadata.size) || 0); // f.id فارغ للمجلّدات (assets)
         if (!data || data.length < 1000) break;
+      }
+      const out = new Map(), partSum = new Map();
+      for (const [n, sz] of raw) { const m = /^(.+)\.part\d+$/.exec(n); if (m) partSum.set(m[1], (partSum.get(m[1]) || 0) + sz); }
+      for (const [n, sz] of raw) {
+        if (/\.part\d+$/.test(n)) continue;
+        const m = /^(.+)\.parts$/.exec(n);
+        if (m) out.set(m[1], Math.max(out.get(m[1]) || 0, partSum.get(m[1]) || 1));
+        else out.set(n, Math.max(out.get(n) || 0, sz));
       }
       return out;
     } catch (e) { console.warn('list storage', e); return null; }
+  }
+
+  /* رفع ملف الكتاب. في Supabase يُقسَّم ما يزيد على 20 م.ب إلى أجزاء (كلٌّ تحت حدّ حجم الملف
+     في الخطة المجانية) مع ملف بيان «.parts» يُكتب أخيراً؛ الأجزاء المرفوعة سابقاً تُتخطّى
+     فيُستأنف الرفع المنقطع من حيث توقّف. في Google Drive: رفع مستأنَف على قطع داخل drive.js. */
+  const PART = 20 * 1048576;
+  async function putBookFile(id, blob, onProgress) {
+    const store = sb.storage.from(BUCKET);
+    if (sb.isDrive || blob.size <= PART) {
+      return store.upload(`${user.id}/${id}`, blob, { upsert: true, contentType: 'application/pdf', onProgress });
+    }
+    const n = Math.ceil(blob.size / PART);
+    let have = new Map();
+    try { const { data } = await store.list(user.id, { search: id, limit: 1000 }); for (const f of data || []) have.set(f.name, (f.metadata && f.metadata.size) || 0); } catch {}
+    for (let i = 0; i < n; i++) {
+      const part = blob.slice(i * PART, Math.min(blob.size, (i + 1) * PART));
+      const name = `${id}.part${i}`;
+      if (have.get(name) === part.size) { if (onProgress) onProgress((i + 1) / n); continue; } // رُفع سابقاً
+      let err = null;
+      for (let a = 0; a < 4; a++) {
+        ({ error: err } = await store.upload(`${user.id}/${name}`, part, { upsert: true, contentType: 'application/octet-stream' }));
+        if (!err) break;
+        if (/size|large|exceed|maximum|413/i.test((err.message || '') + (err.statusCode || ''))) return { error: err };
+        await sleep(900 * (a + 1));
+      }
+      if (err) return { error: err };
+      if (onProgress) onProgress((i + 1) / n);
+    }
+    const manifest = new Blob([JSON.stringify({ n, size: blob.size, part: PART })], { type: 'application/json' });
+    const r = await store.upload(`${user.id}/${id}.parts`, manifest, { upsert: true, contentType: 'application/json' });
+    if (!r.error) store.remove([`${user.id}/${id}`]).catch(() => {}); // نسخة قديمة غير مقسّمة إن وُجدت
+    return r;
+  }
+
+  // تنزيل ملف الكتاب كما رُفع (كامل، أو أجزاء)، مع نسبة التقدّم
+  async function downloadBookFile(id, quiet) {
+    const progress = (f) => { if (!quiet) setStatus('syncing', `جارٍ تنزيل الكتاب… ${Math.min(99, Math.round(f * 100))}٪`); };
+    if (sb.isDrive) return sb.storage.from(BUCKET).downloadRanged(`${user.id}/${id}`, progress);
+    try { return await downloadChunked(`${user.id}/${id}`, 0, progress); }
+    catch (e) {
+      if (!isNotFound(e)) throw e;
+      // ليس ملفاً واحداً ⇒ ربما مقسّم أجزاءً
+      const { data: mf, error: me } = await sb.storage.from(BUCKET).download(`${user.id}/${id}.parts`);
+      if (me || !mf) throw e;
+      const m = JSON.parse(await mf.text());
+      lastSize = m.size;
+      const blobs = [];
+      for (let i = 0; i < m.n; i++) {
+        const partSize = Math.min(m.part, m.size - i * m.part);
+        blobs.push(await downloadChunked(`${user.id}/${id}.part${i}`, partSize, (f) => progress((i + f) / m.n)));
+      }
+      return new Blob(blobs, { type: 'application/pdf' });
+    }
+  }
+  const isNotFound = (e) => { const st = Number((e && (e.status || e.statusCode)) || 0); return st === 400 || st === 404 || /not.?found|does not exist/i.test(String((e && e.message) || '')); };
+
+  async function removeBookFiles(id) {
+    const store = sb.storage.from(BUCKET);
+    const paths = [`${user.id}/${id}`];
+    if (!sb.isDrive) {
+      try { const { data } = await store.list(user.id, { search: id, limit: 1000 }); for (const f of data || []) if (f.name.startsWith(id + '.part')) paths.push(`${user.id}/${f.name}`); } catch {}
+    }
+    await store.remove(paths).catch(() => {});
   }
   async function setHasFile(id, v) {
     try { await sb.from(TABLE).update({ has_file: v }).eq('id', id); } catch {}
@@ -274,6 +392,8 @@ const Cloud = (() => {
     autoStarted = true;
     const tick = () => { if (!document.hidden && user && Date.now() - lastSyncAt > 60 * 1000) syncAll({ quiet: true }); };
     setInterval(tick, AUTO_MS);
+    // Drive بلا إشعارات لحظية ⇒ دورة إضافية بين الدورات
+    setInterval(() => { if (sb && sb.isDrive) tick(); }, AUTO_MS / 2);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(tick, 1500); });
     window.addEventListener('online', () => setTimeout(tick, 3000));
   }
@@ -292,22 +412,87 @@ const Cloud = (() => {
       const states = new Map(((await Store.getAllStates()) || []).map((s) => [s.bookId, s]));
       const now = Date.now(), DAY = 864e5;
       const want = [];
+      const pin = offlinePrefs();
       for (const b of books) {
         const st = states.get(b.id) || {};
         const added = b.addedAt || b.createdAt || 0;
+        const pinned = pin.all || pin.ids.includes(b.id);
         const reading = st.lastRead && !st.finished && now - st.lastRead < 90 * DAY;
         const fresh = added && now - added < 14 * DAY;
-        if (!reading && !fresh) continue;
+        if (!pinned && !reading && !fresh) continue;
         if ((await Store.getPayload(b.id)) != null) continue;
-        want.push({ id: b.id, t: st.lastRead || added });
+        want.push({ id: b.id, t: (pinned ? 1e15 : 0) + (st.lastRead || added) });
       }
       want.sort((a, b) => b.t - a.t);
-      for (const w of want.slice(0, 3)) {
+      for (const w of want.slice(0, pin.all || pin.ids.length ? 8 : 3)) {
         if (document.hidden || !navigator.onLine) break;
         await ensurePayload(w.id, { quiet: true });
       }
     } catch (e) { console.warn('prefetch', e); }
     finally { prefetching = false; }
+  }
+
+  /* ── «متاح دون اتصال»: كتب تُبقى ملفاتها على هذا الجهاز دائماً (تفضيل محلي لكل جهاز) ── */
+  const OFFLINE_KEY = 'midad-offline';
+  function offlinePrefs() { try { const o = JSON.parse(localStorage.getItem(OFFLINE_KEY) || 'null'); return { all: !!(o && o.all), ids: (o && o.ids) || [] }; } catch { return { all: false, ids: [] }; } }
+  function setOffline(patch) {
+    const o = { ...offlinePrefs(), ...patch };
+    try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(o)); } catch {}
+    // اطلب تخزيناً دائماً كي لا يمسح المتصفح الملفات عند ضيق المساحة
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
+    if (o.all || o.ids.length) setTimeout(prefetchFiles, 300);
+    return o;
+  }
+  // تنزيل قائمة كتب الآن (زر «نزّل للقراءة دون اتصال»)، مع تقدّم إجمالي
+  async function downloadBooks(ids, onProgress) {
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      if (!navigator.onLine) { failed += ids.length - done - failed; break; }
+      const r = await ensurePayload(id, { quiet: true });
+      if (r === 'ok') done++; else failed++;
+      if (onProgress) onProgress(done + failed, ids.length);
+    }
+    emitStatus();
+    return { done, failed };
+  }
+
+  /* ── تقرير حالة السحابة (للوحة «حالة السحابة») ── */
+  async function storageReport() {
+    if (initDone) { try { await initDone; } catch {} }
+    if (!ready || !user) throw new Error('سجّل الدخول أولاً');
+    const stored = await listStoredFiles();
+    if (!stored) throw new Error('تعذّر قراءة محتوى السحابة — تحقّق من الاتصال');
+    const books = (await Store.getBooks()).filter((b) => !b.guide);
+    const pin = offlinePrefs();
+    const out = [];
+    let cloudBytes = 0;
+    for (const sz of stored.values()) cloudBytes += sz > 1 ? sz : 0;
+    for (const b of books) {
+      const pl = await Store.getPayload(b.id);
+      const localSize = pl instanceof Blob ? pl.size : (typeof pl === 'string' ? pl.length * 2 : 0);
+      let cloud;
+      if (b.type !== 'pdf') cloud = 'text';
+      else if (stored.has(b.id)) cloud = 'ok';
+      else if (b.fileError === 'size') cloud = 'toobig';
+      else cloud = pl instanceof Blob ? 'pending' : 'missing';
+      out.push({ id: b.id, title: b.title || '', type: b.type, local: pl != null, localSize, cloudSize: stored.get(b.id) || 0, cloud, pinned: pin.all || pin.ids.includes(b.id) });
+    }
+    let quota = null;
+    if (sb.isDrive) { try { quota = await sb.quota(); } catch {} }
+    let localBytes = 0, localQuota = 0;
+    try { const e = await navigator.storage.estimate(); localBytes = e.usage || 0; localQuota = e.quota || 0; } catch {}
+    return {
+      provider: sb.isDrive ? 'drive' : 'supabase',
+      cloudBytes, quota, // Drive: {used, limit} لحساب المستخدم كله
+      supabaseLimit: sb.isDrive ? 0 : 1024 * 1048576, // الخطة المجانية (تقديري)
+      localBytes, localQuota, books: out, offline: pin,
+    };
+  }
+  // إعادة رفع ملفات «لم تُرفع بعد» من هذا الجهاز الآن (يتجاوز حدّ الخمسة في الدورة)
+  async function uploadPending(ids, onProgress) {
+    let done = 0;
+    for (const id of ids) { markBlocked(id, 0); try { await uploadBook(id, { silent: true }); } catch (e) { console.warn('uploadPending', e); } done++; if (onProgress) onProgress(done, ids.length); }
+    emitStatus();
   }
 
   /* ── مزامنة سجلّ القراءة اليومي (السلسلة + الهدف) ──
@@ -565,7 +750,8 @@ const Cloud = (() => {
     if (deckSupported) row.deck = await localDeck(id); // بطاقات المراجعة تُرفع مع الكتاب
     if (b.type === 'pdf' && payload instanceof Blob) {
       // نتحقق من نجاح الرفع فعلاً؛ لا نزعم has_file إلا إذا نجح (يمنع «كتاب لا يفتح» على الأجهزة الأخرى)
-      const { error: upErr } = await sb.storage.from(BUCKET).upload(`${user.id}/${id}`, payload, { upsert: true, contentType: 'application/pdf' });
+      const big0 = payload.size > 3 * 1048576 && !opts.silent;
+      const { error: upErr } = await putBookFile(id, payload, big0 ? (f) => setStatus('syncing', `جارٍ رفع «${(b.title || '').slice(0, 30)}»… ${Math.round(f * 100)}٪`) : null);
       if (upErr) {
         row.has_file = false;
         console.error('storage upload failed', upErr);
@@ -676,7 +862,7 @@ const Cloud = (() => {
   async function deleteBook(id) {
     if (!ready || !user) return;
     try {
-      await sb.storage.from(BUCKET).remove([`${user.id}/${id}`]).catch(() => {});
+      await removeBookFiles(id);
       // صور الكتاب (إن وُجدت)
       try {
         const { data: listed } = await sb.storage.from(BUCKET).list(assetDir(id), { limit: 1000 });
@@ -707,25 +893,26 @@ const Cloud = (() => {
   /* ── تنزيل المحتوى/الملف عند الحاجة (كسول) ──
      يُرجع سبباً محدّداً حين لا يتوفّر الملف كي يعرض القارئ رسالة صادقة:
      'ok' | 'off' (لا مزامنة) | 'signedout' | 'offline' | 'missing' (لم يُرفع) | 'toobig' | 'error' */
-  let lastPayloadError = '', lastSize = 0;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let lastPayloadError = '';
   const httpErr = (r) => Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
 
   /* تنزيل مجزّأ: رابط موقّع + طلبات Range بقطع 2 م.ب، لكلٍّ منها محاولاتها الخاصة.
      انقطاع عابر يعيد قطعة واحدة لا الملف كله، ويظهر التقدّم بالنسبة المئوية.
      الرابط الموقّع لا يحتاج ترويسة Authorization، فلا طلب تمهيدي (preflight) يُعرقل. */
-  async function downloadChunked(id, quiet) {
-    const path = `${user.id}/${id}`;
+  async function downloadChunked(path, knownSize, onProgress) {
     const { data: sg, error: se } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
     if (se) throw se; // «Object not found» ⇒ يعالجه المستدعي كملف غير مرفوع
     const url = sg.signedUrl;
-    let size = 0;
-    try {
-      const { data } = await sb.storage.from(BUCKET).list(user.id, { search: id, limit: 10 });
-      const f = (data || []).find((x) => x.name === id);
-      size = (f && f.metadata && f.metadata.size) || 0;
-    } catch {}
-    lastSize = size;
+    let size = knownSize || 0;
+    if (!size) {
+      const dir = path.slice(0, path.lastIndexOf('/')), name = path.slice(path.lastIndexOf('/') + 1);
+      try {
+        const { data } = await sb.storage.from(BUCKET).list(dir, { search: name, limit: 10 });
+        const f = (data || []).find((x) => x.name === name);
+        size = (f && f.metadata && f.metadata.size) || 0;
+      } catch {}
+      lastSize = size;
+    }
     if (!size) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw httpErr(r); return await r.blob(); }
     const CH = 2 * 1024 * 1024, parts = [];
     let got = 0;
@@ -743,7 +930,7 @@ const Cloud = (() => {
       }
       if (!part) throw err || new Error('chunk failed');
       parts.push(part); got += part.size;
-      if (!quiet) setStatus('syncing', `جارٍ تنزيل الكتاب… ${Math.min(99, Math.round(got * 100 / size))}٪`);
+      if (onProgress) onProgress(got / size);
     }
     return new Blob(parts, { type: 'application/pdf' });
   }
@@ -776,7 +963,7 @@ const Cloud = (() => {
         // المحاولة الأولى بالتنزيل المجزّأ (يصمد أمام انقطاع الاتصال وبرامج اعتراض التنزيل)،
         // ثم بطريقة المكتبة العادية احتياطاً
         let data;
-        if (attempt === 0 || attempt === 2) data = await downloadChunked(id, quiet);
+        if (sb.isDrive || attempt === 0 || attempt === 2) data = await downloadBookFile(id, quiet);
         else {
           const r = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);
           if (r.error) throw r.error;
@@ -800,6 +987,7 @@ const Cloud = (() => {
         }
         // الجلسة انتهت: جدّدها ثم أعد المحاولة
         if (st === 401 || st === 403 || /jwt|token|unauthori[sz]ed/i.test(msg)) { try { await sb.auth.refreshSession(); } catch {} }
+        if (st === 401 && sb.isDrive && !user) break; // أُلغي إذن Google
         if (!navigator.onLine) break;
         await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
       }
@@ -840,11 +1028,14 @@ const Cloud = (() => {
     signIn, signUp, signOut, syncAll, onStatus,
     pushBook, pushMeta, pushState, ensureAssets, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
     lastPayloadError: () => lastPayloadError,
+    // Google Drive + حالة السحابة + دون اتصال
+    googleAvailable, signInGoogle, provider: () => (sb && sb.isDrive ? 'drive' : (isConfigured() ? 'supabase' : 'none')),
+    storageReport, uploadPending, downloadBooks, offlinePrefs, setOffline,
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,
     // المساعد متاح بمفتاح المستخدم الخاص، أو بحساب في مشروعٍ فيه دالة الذكاء
-    aiReady: () => !!(window.AIDirect && AIDirect.hasKey()) || (ready && !!user),
+    aiReady: () => !!(window.AIDirect && AIDirect.hasKey()) || (ready && !!user && !(sb && sb.isDrive)),
     usingOwnAiKey: () => !!(window.AIDirect && AIDirect.hasKey()),
     useBuiltin,
     aiInvoke,
@@ -899,7 +1090,7 @@ const Cloud = (() => {
   /* ── نداء دالة الذكاء الطرفية ── */
   async function aiInvoke(body) {
     if (window.AIDirect && AIDirect.hasKey()) { const r = await AIDirect.invoke(body); return (r && r.text) || ''; }
-    if (!ready || !user) throw new Error('المساعد الذكي يحتاج مفتاح Gemini الخاص بك — من القائمة ⋮ ← «🤖 الذكاء الاصطناعي»');
+    if (!ready || !user || (sb && sb.isDrive)) throw new Error('المساعد الذكي يحتاج مفتاح Gemini الخاص بك — من القائمة ⋮ ← «🤖 الذكاء الاصطناعي»');
     const { data, error } = await sb.functions.invoke('ai', { body });
     if (error) {
       let msg = error.message || 'تعذّر الاتصال بالمساعد';
