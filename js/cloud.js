@@ -80,7 +80,9 @@ const Cloud = (() => {
   window.addEventListener('offline', emitStatus);
 
   /* ── تهيئة ── */
-  async function init() {
+  let initDone = null; // وعد التهيئة: فتح كتاب فور بدء التطبيق ينتظره بدل أن يفشل
+  function init() { initDone = initInner(); return initDone; }
+  async function initInner() {
     cfg = getCfg();
     if (!cfg) { emitStatus(); return; }
     try {
@@ -98,6 +100,7 @@ const Cloud = (() => {
       });
       emitStatus();
       if (user) { subscribe(); syncAll(); }
+      startAutoSync();
     } catch (e) {
       console.error('cloud init', e);
       setStatus('error', 'تعذّر تحميل مكتبة المزامنة');
@@ -146,10 +149,14 @@ const Cloud = (() => {
 
   /* ── مزامنة كاملة ثنائية الاتجاه ── */
   let syncing = false;
-  async function syncAll() {
+  // quiet: مزامنة خلفية دورية — بلا مؤشّر «جارٍ المزامنة» ولا إعادة رسم إن لم يتغيّر شيء
+  async function syncAll(opts = {}) {
     if (!ready || !user || syncing) return;
+    const quiet = !!opts.quiet;
+    if (quiet && !navigator.onLine) return;
     syncing = true;
-    setStatus('syncing', 'جارٍ المزامنة…');
+    let changed = false;
+    if (!quiet) setStatus('syncing', 'جارٍ المزامنة…');
     try {
       // نستثني عمود content الثقيل (نص الكتب/الـOCR) — يُجلب كسولاً عند فتح الكتاب فيسرع المزامنة كثيراً.
       // نتدرّج في الأعمدة: بعض الجداول القديمة بلا deck (البطاقات) أو بلا deleted (الحذف الناعم).
@@ -173,12 +180,18 @@ const Cloud = (() => {
       for (const r of rows || []) {
         if (r.deleted) { if (localById.has(r.id)) await Store.deleteBook(r.id); continue; }
         const lb = localById.get(r.id);
-        if (!lb) { await applyCloudRow(r); continue; } // كتاب جديد من السحابة (يدمج الحالة داخلياً)
+        if (!lb) { await applyCloudRow(r); changed = true; continue; } // كتاب جديد من السحابة (يدمج الحالة داخلياً)
+        // حالة الملف في السحابة تبقى محدّثة محلياً (رسائل الفتح تعتمد عليها)
+        const fe = (r.meta && r.meta.fileError) || undefined;
+        if (lb.cloudHasFile !== !!r.has_file || lb.fileError !== fe) {
+          await Store.updateBook(r.id, { cloudHasFile: !!r.has_file, fileError: fe, fileMB: (r.meta && r.meta.fileMB) || undefined });
+        }
         const cloudT = new Date(r.updated_at).getTime();
         const localT = lb.updatedAt || 0;
         if (cloudT > localT + 1500) {
           // ميتا السحابة أحدث ⇒ اعتمدها + ادمج الحالة والبطاقات؛ إن أضاف الدمج جديداً ارفعه
           const res = await applyCloudRow(r);
+          changed = true;
           const deckAhead = await mergeDeckInto(r.id, r.deck);
           if ((res && res.divergedFromCloud) || deckAhead) await pushStateNow(r.id);
           continue;
@@ -188,29 +201,113 @@ const Cloud = (() => {
         const cloudState = { ...(r.state || {}), bookId: r.id };
         const merged = mergeStates(localState, cloudState);
         const mSig = stateSig(merged);
-        if (mSig !== stateSig(localState)) await Store.saveState(merged);
+        if (mSig !== stateSig(localState)) { await Store.saveState(merged); changed = true; }
         const deckAhead = await mergeDeckInto(r.id, r.deck); // بطاقات المراجعة تُدمج كذلك
         if (localT > cloudT + 1500) await uploadBook(r.id, { silent: true }); // الميتا المحلية أحدث ⇒ ارفع الكل (مع الحالة والبطاقات المدموجة)
         else if (mSig !== stateSig(cloudState) || deckAhead) await pushStateNow(r.id); // الدمج أضاف ما ليس في السحابة
       }
       // ② محلي → سحابة: كتب لم تُرفع بعد، وإعادة رفع ملف PDF ناقص
+      // نتحقّق من المخزن نفسه لا من العلَم وحده: كتاب «has_file» بلا ملف فعلي يُصلَح هنا
+      let stored = await listStoredFiles(); // Map(id → size) أو null إن تعذّر
+      // قائمة فارغة والسحابة تزعم ملفات؟ لا نثق بها (صلاحيات/خلل مؤقّت) كي لا نعيد رفع المكتبة كلها
+      if (stored && !stored.size && (rows || []).some((r) => r.has_file && !r.deleted)) stored = null;
+      let healed = 0; // إعادة الرفع الذاتية محدودة في كل دورة (الباقي في الدورة التالية)
       for (const b of localBooks) {
         const r = cloudById.get(b.id);
         if (!r) { await uploadBook(b.id, { silent: true }); continue; }
-        if (!r.deleted && b.type === 'pdf' && !r.has_file) {
-          const pl = await Store.getPayload(b.id);
-          if (pl instanceof Blob) await uploadBook(b.id, { silent: true });
+        if (r.deleted || b.type !== 'pdf') continue;
+        const inStore = stored ? (stored.get(b.id) || 0) > 0 : !!r.has_file;
+        if (inStore) {
+          if (!r.has_file) await setHasFile(b.id, true); // الملف موجود لكن العلَم خاطئ
+          continue;
         }
+        const pl = await Store.getPayload(b.id);
+        if (pl instanceof Blob) {
+          // ملف أكبر من حدّ المخزن: لا نعيد محاولة رفعه كل مزامنة ما لم يتغيّر حجمه
+          if (uploadBlocked(b.id, pl.size) || healed >= 5) continue;
+          healed++;
+          await uploadBook(b.id, { silent: true });
+        } else if (r.has_file) await setHasFile(b.id, false); // لا ملف هنا ولا في المخزن: صحّح العلَم
       }
       await syncStats(); // سجلّ القراءة اليومي (السلسلة والهدف عبر الأجهزة)
       await syncSettings(); // تفضيلات القراءة وسمة المكتبة
       lastSyncAt = Date.now();
       setStatus('synced', syncedMsg());
-      if (window.Library) Library.refresh();
+      if (window.Library && (changed || !quiet)) Library.refresh();
     } catch (e) {
       console.error('syncAll', e);
-      setStatus('error', friendlyErr(e));
+      if (!quiet) setStatus('error', friendlyErr(e)); else emitStatus();
     } finally { syncing = false; }
+    prefetchFiles(); // نزّل في الخلفية ملفات الكتب التي يُرجَّح فتحها قريباً
+  }
+
+  /* ── قائمة ملفات المستخدم في المخزن (للتحقّق من وجود الملفات فعلاً) ── */
+  async function listStoredFiles() {
+    try {
+      const out = new Map();
+      for (let offset = 0; offset < 20000; offset += 1000) {
+        const { data, error } = await sb.storage.from(BUCKET).list(user.id, { limit: 1000, offset });
+        if (error) throw error;
+        for (const f of data || []) if (f && f.id) out.set(f.name, (f.metadata && f.metadata.size) || 0); // f.id فارغ للمجلّدات (assets)
+        if (!data || data.length < 1000) break;
+      }
+      return out;
+    } catch (e) { console.warn('list storage', e); return null; }
+  }
+  async function setHasFile(id, v) {
+    try { await sb.from(TABLE).update({ has_file: v }).eq('id', id); } catch {}
+    await Store.updateBook(id, { cloudHasFile: v });
+  }
+  // رفع فشل لأن الملف أكبر من حدّ المخزن ⇒ لا تُعِد المحاولة إلا إن تغيّر الملف
+  const BLOCK_KEY = 'midad-upload-blocked';
+  function readBlocked() { try { return JSON.parse(localStorage.getItem(BLOCK_KEY) || '{}') || {}; } catch { return {}; } }
+  function uploadBlocked(id, size) { const b = readBlocked()[id]; return !!b && b === size; }
+  function markBlocked(id, size) { try { const b = readBlocked(); if (size) b[id] = size; else delete b[id]; localStorage.setItem(BLOCK_KEY, JSON.stringify(b)); } catch {} }
+
+  /* ── مزامنة خلفية تلقائية ──
+     كل بضع دقائق ما دامت الصفحة ظاهرة والشبكة متاحة، وعند العودة للتطبيق، بلا أي إشعار.
+     (التغييرات اللحظية تصل أصلاً عبر الاشتراك؛ هذه شبكة أمان لما يفوته.) */
+  const AUTO_MS = 4 * 60 * 1000;
+  let autoStarted = false;
+  function startAutoSync() {
+    if (autoStarted) return;
+    autoStarted = true;
+    const tick = () => { if (!document.hidden && user && Date.now() - lastSyncAt > 60 * 1000) syncAll({ quiet: true }); };
+    setInterval(tick, AUTO_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(tick, 1500); });
+    window.addEventListener('online', () => setTimeout(tick, 3000));
+  }
+
+  /* ── تنزيل مسبق هادئ لملفات الكتب المرجَّح فتحها ──
+     لا ننزّل المكتبة كلها (مساحة الجهاز وحصّة التنزيل): فقط الكتب قيد القراءة والمضافة حديثاً،
+     بضعة كتب في كل دورة، وعلى اتصال غير مقتصِد. فيفتح الكتاب فوراً، وبلا إنترنت أيضاً. */
+  let prefetching = false;
+  async function prefetchFiles() {
+    if (prefetching || !ready || !user || !navigator.onLine) return;
+    const c = navigator.connection;
+    if (c && (c.saveData || /2g/.test(c.effectiveType || ''))) return;
+    prefetching = true;
+    try {
+      const books = (await Store.getBooks()).filter((b) => b.type === 'pdf' && b.cloudHasFile);
+      const states = new Map(((await Store.getAllStates()) || []).map((s) => [s.bookId, s]));
+      const now = Date.now(), DAY = 864e5;
+      const want = [];
+      for (const b of books) {
+        const st = states.get(b.id) || {};
+        const added = b.addedAt || b.createdAt || 0;
+        const reading = st.lastRead && !st.finished && now - st.lastRead < 90 * DAY;
+        const fresh = added && now - added < 14 * DAY;
+        if (!reading && !fresh) continue;
+        if ((await Store.getPayload(b.id)) != null) continue;
+        want.push({ id: b.id, t: st.lastRead || added });
+      }
+      want.sort((a, b) => b.t - a.t);
+      for (const w of want.slice(0, 3)) {
+        if (document.hidden || !navigator.onLine) break;
+        await ensurePayload(w.id, { quiet: true });
+      }
+    } catch (e) { console.warn('prefetch', e); }
+    finally { prefetching = false; }
   }
 
   /* ── مزامنة سجلّ القراءة اليومي (السلسلة + الهدف) ──
@@ -236,9 +333,11 @@ const Cloud = (() => {
         const lg = r.log || {};
         for (const k in lg) remote[k] = (remote[k] || 0) + (lg[k] || 0);
       }
+      const statsChanged = JSON.stringify(remote) !== JSON.stringify(Store.getRemoteLog ? Store.getRemoteLog() : null);
       Store.setRemoteLog(remote);
       // الهدف اليومي: أحدث ضبط بين الأجهزة يفوز
-      if (bestGoal && bestGoalAt > (Store.getGoalAt ? Store.getGoalAt() : 0)) Store.adoptGoal(bestGoal, bestGoalAt);
+      const goalAdopted = !!(bestGoal && bestGoalAt > (Store.getGoalAt ? Store.getGoalAt() : 0));
+      if (goalAdopted) Store.adoptGoal(bestGoal, bestGoalAt);
 
       // ارفع سجلّ هذا الجهاز
       const up = {
@@ -252,7 +351,7 @@ const Cloud = (() => {
         if (/does not exist|schema cache|relation/i.test(upErr.message || '')) { statsSupported = false; return; }
         throw upErr;
       }
-      if (window.Library && Library.refresh) Library.refresh();
+      if ((statsChanged || goalAdopted) && window.Library && Library.refresh) Library.refresh(); // لا إعادة رسم بلا جديد
     } catch (e) { console.error('syncStats', e); }
   }
 
@@ -470,11 +569,12 @@ const Cloud = (() => {
       if (upErr) {
         row.has_file = false;
         console.error('storage upload failed', upErr);
+        const big = /size|large|exceed|maximum|payload|413/i.test((upErr.message || '') + ' ' + (upErr.statusCode || upErr.status || ''));
+        if (big) { markBlocked(id, payload.size); const fm = { fileError: 'size', fileMB: Math.round(payload.size / 1048576) }; row.meta = { ...row.meta, ...fm }; await Store.updateBook(id, fm); }
         if (!opts.silent && window.Library) {
-          const big = /size|large|exceed|maximum|payload/i.test(upErr.message || '');
           Library.toast(`تعذّر رفع ملف «${b.title || ''}» للسحابة${big ? ' — الملف كبير جداً على حدّ المخزن' : ''}`);
         }
-      } else row.has_file = true;
+      } else { row.has_file = true; markBlocked(id, 0); if (b.fileError) { delete row.meta.fileError; delete row.meta.fileMB; await Store.updateBook(id, { fileError: undefined, fileMB: undefined }); } }
     } else if (typeof payload === 'string') {
       row.content = payload;
       if (b.assets && b.assets.length) await uploadAssets(id); // صور كتاب EPUB
@@ -604,41 +704,64 @@ const Cloud = (() => {
     catch { return null; }
   }
 
-  /* ── تنزيل المحتوى/الملف عند الحاجة (كسول) ── */
-  async function ensurePayload(id) {
-    if (!ready || !user) return;
+  /* ── تنزيل المحتوى/الملف عند الحاجة (كسول) ──
+     يُرجع سبباً محدّداً حين لا يتوفّر الملف كي يعرض القارئ رسالة صادقة:
+     'ok' | 'off' (لا مزامنة) | 'signedout' | 'offline' | 'missing' (لم يُرفع) | 'toobig' | 'error' */
+  let lastPayloadError = '';
+  async function ensurePayload(id, opts = {}) {
+    if (initDone) { try { await initDone; } catch {} }
+    if (!ready) return 'off';
+    if (!user) return 'signedout';
     const b = await Store.getBook(id);
-    if (!b) return;
+    if (!b) return 'error';
     const have = await Store.getPayload(id);
 
     // كتاب نصي: المحتوى في عمود content (لم يعُد يُجلب في المزامنة) — اجلبه الآن
     if (b.type !== 'pdf') {
-      if (have != null) return;
+      if (have != null) return 'ok';
       const c = await fetchContent(id);
-      if (typeof c === 'string') await Store.updatePayload(id, c);
-      return;
+      if (typeof c === 'string') { await Store.updatePayload(id, c); return 'ok'; }
+      return navigator.onLine ? 'missing' : 'offline';
     }
 
     // كتاب مصوّر: استعد نص الـOCR من content إن غاب (يُفعّل البحث/الذكاء/النسخة النصية)
     try { if (!(await Store.getFulltext(id))) { const c = await fetchContent(id); if (c) { const ft = JSON.parse(c); if (ft && ft.text != null) await Store.saveFulltext(id, ft); } } } catch {}
 
-    if (have != null) return; // الملف موجود محلياً
-    try {
-      setStatus('syncing', 'جارٍ تنزيل الكتاب…');
-      const { data, error } = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);
-      if (error) throw error;
-      if (!data || data.size === 0) throw new Error('empty file');
-      await Store.updatePayload(id, data); // Blob
-      setStatus('synced', syncedMsg());
-    } catch (e) {
-      console.error('download payload', e);
-      const notFound = /not.?found|does not exist|empty file|400|404/i.test((e && e.message) || '') || (e && (e.statusCode === '404' || e.status === 404));
-      if (notFound) {
-        // الملف غير موجود في المخزن — علّم السحابة كي يعيد الجهاز الأصلي رفعه تلقائياً عند مزامنته
-        try { await sb.from(TABLE).update({ has_file: false }).eq('id', id); } catch {}
-        setStatus('error', 'ملف الكتاب لم يُرفع للسحابة');
-      } else setStatus('error', 'تعذّر تنزيل ملف الكتاب — تحقق من الاتصال');
+    if (have != null) return 'ok'; // الملف موجود محلياً
+    if (!navigator.onLine) return 'offline';
+    const quiet = !!opts.quiet;
+    if (!quiet) setStatus('syncing', 'جارٍ تنزيل الكتاب…');
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const { data, error } = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);
+        if (error) throw error;
+        if (!data || data.size === 0) throw Object.assign(new Error('empty file'), { status: 404 });
+        await Store.updatePayload(id, data); // Blob
+        if (b.cloudHasFile === false) await Store.updateBook(id, { cloudHasFile: true });
+        if (!quiet) setStatus('synced', syncedMsg());
+        return 'ok';
+      } catch (e) {
+        lastErr = e;
+        const st = Number((e && (e.status || e.statusCode)) || 0);
+        const msg = String((e && e.message) || e || '');
+        if (st === 400 || st === 404 || /not.?found|does not exist|empty file/i.test(msg)) {
+          // الملف غير موجود في المخزن — علّم السحابة كي يعيد الجهاز الذي يملكه رفعه تلقائياً عند مزامنته
+          console.warn('download payload: not in storage', id, msg);
+          await setHasFile(id, false);
+          if (!quiet) emitStatus();
+          return b.fileError === 'size' ? 'toobig' : 'missing';
+        }
+        // الجلسة انتهت: جدّدها ثم أعد المحاولة
+        if (st === 401 || st === 403 || /jwt|token|unauthori[sz]ed/i.test(msg)) { try { await sb.auth.refreshSession(); } catch {} }
+        if (!navigator.onLine) break;
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      }
     }
+    console.error('download payload', lastErr);
+    lastPayloadError = String((lastErr && (lastErr.message || lastErr.error)) || lastErr || '');
+    if (!quiet) emitStatus();
+    return navigator.onLine ? 'error' : 'offline';
   }
 
   /* ── اشتراك اللحظة (تغييرات من أجهزة أخرى) ── */
@@ -669,6 +792,7 @@ const Cloud = (() => {
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
     pushBook, pushMeta, pushState, ensureAssets, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
+    lastPayloadError: () => lastPayloadError,
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,

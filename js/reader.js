@@ -99,12 +99,22 @@ const Reader = (() => {
 
     if (isPdf) {
       let blob = await Store.getPayload(id);
-      if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
+      let why = 'off';
+      if (!blob && window.Cloud) { why = await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
       if (!blob) {
-        const notUploaded = book.cloudHasFile === false;
-        Library.toast(notUploaded
-          ? 'ملف هذا الكتاب لم يُرفع للسحابة — افتح التطبيق على الجهاز الذي أضفته فيه وزامِن (سيُرفع تلقائياً)'
-          : 'تعذّر تنزيل ملف الكتاب — تحقّق من الاتصال ثم أعد المحاولة');
+        // رسالة صادقة بحسب السبب الفعلي، لا «تحقّق من الاتصال» لكل شيء
+        const fresh = (await Store.getBook(id)) || book;
+        if (fresh.fileError === 'size') why = 'toobig';
+        const detail = window.Cloud && Cloud.lastPayloadError ? Cloud.lastPayloadError() : '';
+        const MSG = {
+          off: 'ملف هذا الكتاب ليس على هذا الجهاز، والمزامنة غير مفعّلة هنا',
+          signedout: 'ملف هذا الكتاب في السحابة — سجّل الدخول (زر السحابة) ليُنزَّل',
+          offline: 'ملف هذا الكتاب لم يُنزَّل بعد إلى هذا الجهاز — اتصل بالإنترنت ثم افتحه',
+          missing: 'ملف هذا الكتاب غير موجود في السحابة بعد — افتح التطبيق على الجهاز الذي أضفته منه، وسيُرفع تلقائياً في الخلفية',
+          toobig: `ملف هذا الكتاب${fresh.fileMB ? ` (${fresh.fileMB} م.ب)` : ''} أكبر من الحدّ الذي يقبله مخزن السحابة، فبقي على الجهاز الذي أضفته منه`,
+          error: 'تعذّر تنزيل ملف الكتاب من السحابة' + (detail ? ` (${detail.slice(0, 80)})` : '') + ' — أعد المحاولة بعد قليل',
+        };
+        Library.toast(MSG[why] || MSG.error);
         close(); return;
       }
       const buf = await blob.arrayBuffer();
