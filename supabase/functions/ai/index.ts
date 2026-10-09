@@ -18,6 +18,21 @@ function json(obj: unknown, status = 200) {
   });
 }
 
+// ── هوية المتصل: مستخدم مسجَّل في هذا المشروع؟ (والاختياري: ضمن قائمة البُرد المسموح بها) ──
+// المفتاح العام (anon) مكشوف في الموقع بطبيعته، فلا يكفي وحده دليلاً على هوية المتصل.
+async function callerUser(req: Request): Promise<{ id: string; email: string } | null> {
+  const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  const url = Deno.env.get("SUPABASE_URL"), anon = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!token || !url || !anon || token === anon) return null;
+  try {
+    const r = await fetch(`${url}/auth/v1/user`, { headers: { Authorization: `Bearer ${token}`, apikey: anon } });
+    if (!r.ok) return null;
+    const u = await r.json();
+    return u && u.id ? { id: String(u.id), email: String(u.email || "").toLowerCase() } : null;
+  } catch { return null; }
+}
+const allowedEmails = () => (Deno.env.get("ALLOWED_EMAILS") || "").split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+
 function buildPrompt(action: string, p: { text: string; question: string; title: string }) {
   const book = p.text.slice(0, 200000); // سقف آمن للسياق
   const base = "أنت «مساعد القراءة» في تطبيق مِداد. أجب بالعربية الفصحى بأسلوب واضح ومنظّم، واستخدم عناوين ونقاطاً عند المناسبة. لا تُطل دون فائدة.";
@@ -153,6 +168,11 @@ async function geminiTTS(model: string, keys: string[], text: string, voice: str
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
+    // مفاتيح Gemini في هذا الخادم لصاحب المشروع ومن يأذن لهم فقط — لا لكل من يحمل المفتاح العام
+    const who = await callerUser(req);
+    if (!who) return json({ error: "المساعد الذكي في هذا الخادم خاص بأصحاب الحسابات — أضِف مفتاح Gemini الخاص بك من إعدادات التطبيق (🤖 الذكاء الاصطناعي)", code: "auth" }, 401);
+    const allow = allowedEmails();
+    if (allow.length && !allow.includes(who.email)) return json({ error: "حسابك غير مأذون له باستخدام مفاتيح هذا الخادم — أضِف مفتاح Gemini الخاص بك من إعدادات التطبيق", code: "forbidden" }, 403);
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "ask");
     const provider = String(b.provider || "gemini").toLowerCase();
@@ -223,7 +243,7 @@ Deno.serve(async (req) => {
       if (!key) return Promise.resolve({ ok: false, error: `${name} غير مضبوط`, status: 400 });
       const base = isOR ? "https://openrouter.ai/api/v1" : OAI_BASE;
       const model = isOR ? OR_MODEL : OAI_MODEL;
-      const headers = isOR ? { "HTTP-Referer": "https://midad.app", "X-Title": "Midad" } : {};
+      const headers: Record<string, string> = isOR ? { "HTTP-Referer": "https://midad.app", "X-Title": "Midad" } : {};
       const messages = action === "ocr"
         ? [{ role: "user", content: [{ type: "text", text: ocrPrompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${image}` } }] }]
         : [{ role: "user", content: promptText }];
@@ -246,7 +266,7 @@ Deno.serve(async (req) => {
     let lastErr = "تعذّر الاتصال بمزوّد الذكاء", lastStatus = 500;
     for (const name of order) {
       const r = await runProvider(name);
-      if (r.ok) return json({ text: r.text || "لم يصل رد." });
+      if (r.ok) return json({ text: (r as { text?: string }).text || "لم يصل رد." });
       lastErr = r.error || lastErr; lastStatus = r.status || 500;
       // بدّل للمزوّد التالي فقط عند تجاوز الحصّة/عدم التوفّر؛ الأخطاء الحقيقية تُعاد فوراً
       const canFailover = isQuota(r.status, r.error || "") || isKeyError(r.status, r.error || "") ||

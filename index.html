@@ -613,7 +613,8 @@
 
     <!-- شاشة الإعداد (قبل ضبط المشروع) -->
     <div id="cloud-setup">
-      <p class="cloud-intro">لمزامنة كتبك بين كل أجهزتك، اربط التطبيق بمشروع <b>Supabase</b> مجاني خاص بك (لا يحتاج بطاقة ائتمان). بياناتك تبقى ملكك وحدك في مشروعك.</p>
+      <p class="cloud-intro">التطبيق يعمل كاملاً على جهازك دون أي حساب. ولمزامنة كتبك بين أجهزتك، اربطه بمشروع <b>Supabase</b> مجاني خاص بك (لا يحتاج بطاقة ائتمان). بياناتك تبقى ملكك وحدك في مشروعك.</p>
+      <button class="cloud-builtin" id="cloud-use-builtin" hidden>لديّ حساب في مشروع التطبيق — سجّل الدخول</button>
       <details class="cloud-guide">
         <summary>📋 خطوات الإعداد لمرة واحدة (اضغط للعرض)</summary>
         <ol id="cloud-steps"></ol>
@@ -662,6 +663,7 @@
 <script src="vendor/fflate.min.js"></script>
 <script src="js/store.js"></script>
 <script src="js/config.js"></script>
+<script src="js/ai-direct.js"></script>
 <script src="js/cloud.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
 <script src="js/library.js"></script>

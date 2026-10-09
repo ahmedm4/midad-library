@@ -1165,3 +1165,22 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .series-modal .se-src.ok { color: #6fcf97; }
 .series-modal .se-src.no { color: #e0a33a; }
 :root[data-lib-theme="paper"] .series-modal .se-src.ok { color: #2f7d4c; }
+
+/* ── نافذة الذكاء الاصطناعي (مفتاح Gemini الخاص) ── */
+.aik-box { max-width: 480px; text-align: start; }
+.aik-box .ud-icon, .aik-box h3 { text-align: center; }
+.aik-box .aik-reason { color: #e0a33a; font-size: 13.5px; text-align: center; margin: 4px 0 8px; }
+.aik-box .aik-status { text-align: center; font-size: 13.5px; margin: 6px 0 10px; color: var(--cream); }
+.aik-box .aik-lead { font-size: 13.5px; line-height: 1.9; color: var(--muted); }
+.aik-box .aik-lead b { color: var(--cream); }
+.aik-box .aik-steps { font-size: 13.5px; line-height: 1.9; padding-inline-start: 20px; margin: 8px 0 12px; color: var(--cream); }
+.aik-box .aik-steps a { color: var(--gold-soft, #e8c77a); }
+.aik-box .aik-input { width: 100%; padding: 11px 12px; border-radius: 11px; font-size: 14px;
+  background: var(--ink-2, rgba(0,0,0,.25)); border: 1px solid var(--card-line); color: var(--cream); }
+.aik-box .aik-msg { min-height: 1.6em; font-size: 13px; margin: 6px 0 2px; color: var(--muted); }
+.aik-box .aik-msg.bad { color: #ff9a8f; }
+.aik-box .aik-note { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 10px; }
+.aik-box .aik-del, .aik-box .aik-diag { color: var(--cream); }
+.cloud-builtin { width: 100%; margin: 4px 0 12px; padding: 10px; border-radius: 11px; font-size: 13.5px;
+  color: var(--cream); border: 1px dashed var(--card-line); background: rgba(255,255,255,.03); }
+.cloud-builtin:hover { border-color: rgba(217,169,79,.5); }

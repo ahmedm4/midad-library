@@ -1459,11 +1459,7 @@ const Reader = (() => {
   let aiBusy = false;
 
   function openAI() {
-    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
-      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
-      Library.toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام المساعد الذكي' : 'المساعد الذكي يحتاج تفعيل المزامنة السحابية');
-      return;
-    }
+    if (Library.needAI && Library.needAI('المساعد الذكي')) return;
     $('#ai-modal').hidden = false;
     $('#r-btn-ai').classList.add('on');
     setTimeout(() => $('#ai-input').focus(), 80);
@@ -1691,10 +1687,7 @@ const Reader = (() => {
 
   // فقاعة ذكاء مشتركة (المعنى/الترجمة): تعرض العنوان وتنتظر نتيجة الاستدعاء
   async function aiBubble(title, rect, invokeBody, notReadyMsg) {
-    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
-      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
-      return Library.toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام هذه الميزة' : notReadyMsg);
-    }
+    if (Library.needAI && Library.needAI('هذه الميزة')) return;
     const bubble = $('#define-bubble');
     $('#db-word').textContent = title.length > 60 ? title.slice(0, 60) + '…' : title;
     $('#db-body').innerHTML = '<span class="ai-typing"><i></i><i></i><i></i></span>';
@@ -1792,7 +1785,7 @@ const Reader = (() => {
         settings.ttsEngine = b.dataset.engine; Store.saveSettings(settings);
         er.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
         const vl = $('#tts-voice-label'); if (vl) vl.hidden = settings.ttsEngine !== 'natural';
-        if (settings.ttsEngine === 'natural' && !(window.Cloud && Cloud.aiReady && Cloud.aiReady())) Library.toast('الصوت الطبيعي يحتاج تفعيل المزامنة السحابية وتسجيل الدخول (زر ☁️)');
+        if (settings.ttsEngine === 'natural' && !(window.Cloud && Cloud.aiReady && Cloud.aiReady())) Library.needAI && Library.needAI('الصوت الطبيعي');
       };
     }); }
     { const sv = $('#set-ttsvoice'); if (sv) sv.onchange = (e) => { settings.ttsVoice = e.target.value; ttsCache.clear(); Store.saveSettings(settings); }; }

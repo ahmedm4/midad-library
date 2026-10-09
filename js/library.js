@@ -220,6 +220,8 @@ const Library = (() => {
       finally { $('#cloud-connect').textContent = 'ربط المشروع'; }
     };
     $('#cloud-reconfig').onclick = () => { Cloud.disconnect(); };
+    // صاحب التطبيق ومن يدعوهم: تسجيل الدخول بالمشروع المضمّن على جهاز جديد
+    { const ub = $('#cloud-use-builtin'); if (ub) { ub.hidden = !(Cloud.hasBuiltin && Cloud.hasBuiltin()); ub.onclick = () => Cloud.useBuiltin(); } }
 
     $('#cloud-signin').onclick = () => doAuth('signin');
     $('#cloud-signup').onclick = () => doAuth('signup');
@@ -945,7 +947,7 @@ create policy "midad_own_files" on storage.objects for all
     };
     overlay.querySelector('.se-ocr').onclick = async (e) => {
       const btn = e.currentTarget;
-      if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) return toast('قراءة الأغلفة تحتاج تسجيل الدخول (زر السحابة) لاستخدام المساعد الذكي');
+      if (needAI('قراءة الأرقام من الأغلفة')) return;
       const todo = books.filter((b) => rows.get(b.id)?.on && !rows.get(b.id).n);
       if (!todo.length) return toast('كل الأجزاء المختارة مرقّمة — امسح رقماً لإعادة قراءته من الغلاف');
       btn.disabled = true;
@@ -1175,10 +1177,7 @@ create policy "midad_own_files" on storage.objects for all
 
   /* ─── استخراج النص من الكتب المصوّرة (OCR عبر الذكاء الاصطناعي) ─── */
   async function ocrBook(id) {
-    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
-      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
-      return toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام استخراج النص' : 'استخراج النص يحتاج تفعيل المزامنة السحابية');
-    }
+    if (needAI('استخراج النص من الصفحات المصوّرة')) return;
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b || b.type !== 'pdf') return;
 
@@ -2257,9 +2256,9 @@ create policy "midad_own_files" on storage.objects for all
     // 1) مباشر (يعمل مع المواقع المتيحة لـCORS)
     try { return await attempt(url, 20000); } catch {}
     // 2) عبر خادمك (الأوثق) إن كانت المزامنة السحابية مُفعّلة
-    if (window.Cloud && Cloud.isConfigured && Cloud.isConfigured()) {
+    if (window.Cloud && Cloud.fnReady && Cloud.fnReady()) {
       try {
-        onStep && onStep('⏳ الموقع يمنع الجلب المباشر — محاولة عبر خادمك…');
+        onStep && onStep('⏳ الموقع يمنع الجلب المباشر — محاولة عبر الخادم…');
         const ctrl = new AbortController();
         const to = setTimeout(() => ctrl.abort(), 45000);
         try {
@@ -3032,7 +3031,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
         <button data-act="theme">🎨 سمة المكتبة</button>
-        <button data-act="keys">🔑 فحص مفاتيح الذكاء</button>
+        <button data-act="keys">🤖 الذكاء الاصطناعي</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
         <button data-act="restore">📥 استيراد نسخة احتياطية</button>`;
       document.body.appendChild(menu);
@@ -3046,7 +3045,7 @@ create policy "midad_own_files" on storage.objects for all
         else if (act === 'theme') openThemePicker();
         else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();
-        else if (act === 'keys') checkAiKeys();
+        else if (act === 'keys') openAiKeyDialog();
         else if (act === 'backup') exportBackup();
         else if (act === 'restore') $('#import-input').click();
       };
@@ -3061,11 +3060,74 @@ create policy "midad_own_files" on storage.objects for all
     sm.onclick = (e) => { if (e.target === sm) sm.hidden = true; };
   }
 
+  /* ─── إعداد الذكاء الاصطناعي: مفتاح Gemini خاص بالمستخدم ───
+     لمن لا يملك حساباً في مشروع صاحب التطبيق: مفتاح مجاني من Google يُحفظ على هذا الجهاز فقط
+     ويتصل المتصفح بـGemini مباشرة. صاحب المشروع يستعمل مفاتيح الخادم كما كان. */
+  function openAiKeyDialog(reason) {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const own = !!(window.AIDirect && AIDirect.hasKey());
+    const server = !!(window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn());
+    const status = own ? '✅ يعمل بمفتاحك الخاص (…' + esc(AIDirect.getKey().slice(-4)) + ')'
+      : server ? '✅ يعمل عبر خادم التطبيق بحسابك' : '⚪ غير مفعّل بعد';
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `
+      <div class="ud-box aik-box" role="dialog" aria-modal="true" aria-labelledby="aik-title">
+        <div class="ud-icon">🤖</div>
+        <h3 id="aik-title">الذكاء الاصطناعي</h3>
+        ${reason ? `<p class="aik-reason">${esc(reason)}</p>` : ''}
+        <p class="aik-status">${status}</p>
+        <p class="aik-lead">المساعد واستخراج النص من الصفحات المصوّرة والصوت الطبيعي تعمل بمفتاح <b>Gemini</b> مجاني من Google.
+          يُحفظ مفتاحك <b>على هذا الجهاز فقط</b>، ويتصل المتصفح بـ Google مباشرة، فلا يمرّ بأي خادم آخر ولا يدخل النسخة الاحتياطية.</p>
+        <ol class="aik-steps">
+          <li>افتح <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> وسجّل الدخول بحساب Google.</li>
+          <li>اضغط <b>Create API key</b> وانسخ المفتاح.</li>
+          <li>الصقه هنا واضغط «اختبر واحفظ».</li>
+        </ol>
+        <input type="password" class="aik-input" dir="ltr" placeholder="AIza…" autocomplete="off" aria-label="مفتاح Gemini" value="">
+        <p class="aik-msg" role="status"></p>
+        <div class="ud-actions">
+          <button class="ud-cancel">إغلاق</button>
+          ${own ? '<button class="aik-del">حذف المفتاح</button>' : ''}
+          ${server && !own ? '<button class="aik-diag">فحص مفاتيح الخادم</button>' : ''}
+          <button class="ud-ok btn-gold aik-save">اختبر واحفظ</button>
+        </div>
+        <p class="aik-note">لا تُدخل مفتاحك على جهاز يستعمله غيرك.</p>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    const msg = overlay.querySelector('.aik-msg');
+    const input = overlay.querySelector('.aik-input');
+    overlay.querySelector('.ud-cancel').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    const del = overlay.querySelector('.aik-del');
+    if (del) del.onclick = () => { AIDirect.setKey(''); close(); toast('حُذف مفتاح Gemini من هذا الجهاز'); };
+    const diag = overlay.querySelector('.aik-diag');
+    if (diag) diag.onclick = () => { close(); checkAiKeys(); };
+    overlay.querySelector('.aik-save').onclick = async (e) => {
+      const btn = e.currentTarget;
+      const k = input.value.trim();
+      if (!/^[A-Za-z0-9_\-]{20,}$/.test(k)) { msg.textContent = 'الصق مفتاحاً صحيحاً (يبدأ عادةً بـ AIza)'; msg.className = 'aik-msg bad'; return; }
+      btn.disabled = true; msg.textContent = '⏳ جارٍ اختبار المفتاح…'; msg.className = 'aik-msg';
+      const r = await AIDirect.test(k);
+      btn.disabled = false;
+      if (!r.ok) { msg.textContent = '✗ ' + r.error; msg.className = 'aik-msg bad'; return; }
+      AIDirect.setKey(k);
+      close();
+      toast('✓ فُعّل المساعد الذكي بمفتاحك الخاص', 'gold');
+    };
+    setTimeout(() => input.focus(), 60);
+  }
+  // بوابة موحّدة: إن لم يتوفّر الذكاء الاصطناعي افتح نافذة إعداده بسبب واضح
+  function needAI(what) {
+    if (window.Cloud && Cloud.aiReady && Cloud.aiReady()) return false;
+    openAiKeyDialog(`${what} يحتاج مفتاح Gemini الخاص بك (مجاني).`);
+    return true;
+  }
+
   // فحص مفاتيح الذكاء المُحمّلة في دالة الخادم (للتأكد من تعدّدها وتمايزها)
   async function checkAiKeys() {
-    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
-      return toast('فعّل المزامنة وسجّل الدخول أولاً');
-    }
+    if (needAI('فحص المفاتيح')) return;
     toast('⏳ جارٍ الفحص…');
     try {
       const res = await Cloud.aiInvoke({ action: 'diag' });
@@ -3145,10 +3207,7 @@ create policy "midad_own_files" on storage.objects for all
 
   let libAiWired = false, libAiBusy = false;
   function openLibAI() {
-    if (!window.Cloud || !Cloud.aiReady || !Cloud.aiReady()) {
-      const cfg = window.Cloud && Cloud.isConfigured && Cloud.isConfigured();
-      return toast(cfg ? 'سجّل الدخول (زر السحابة) لاستخدام «اسأل مكتبتك»' : '«اسأل مكتبتك» يحتاج تفعيل المزامنة السحابية');
-    }
+    if (needAI('«اسأل مكتبتك»')) return;
     const modal = $('#libai-modal');
     modal.hidden = false;
     if (!libAiWired) {
@@ -3333,7 +3392,9 @@ create policy "midad_own_files" on storage.objects for all
   // كل مفاتيح الإعدادات المحلية (midad-*) لتُحفظ وتُستعاد ضمن النسخة الاحتياطية
   function collectLocalSettings() {
     const s = {};
-    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('midad') === 0) s[k] = localStorage.getItem(k); } } catch {}
+    // مفتاح Gemini الخاص سرّ يخصّ هذا الجهاز — لا يدخل ملف النسخة الاحتياطية
+    const SECRET = new Set(['midad-gemini-key']);
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('midad') === 0 && !SECRET.has(k)) s[k] = localStorage.getItem(k); } } catch {}
     return s;
   }
 
@@ -3603,6 +3664,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf };
+  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf, openAiKeyDialog, needAI };
 })();
 window.Library = Library;

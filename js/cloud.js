@@ -26,10 +26,31 @@ const Cloud = (() => {
     const c = window.MIDAD_CONFIG;
     return (c && c.url && c.anonKey) ? { url: c.url.trim().replace(/\/+$/, ''), anonKey: c.anonKey.trim() } : null;
   };
+  /* المشروع المضمّن في config.js مشروعُ صاحب التطبيق: لا يُستعمل للمزامنة إلا على أجهزة
+     صاحبه ومن يدعوهم — جهاز سبق تسجيل دخوله فيه (جلسة محفوظة)، أو من اختار صراحةً
+     «لدي حساب في مشروع التطبيق». الزوار يبدؤون محلياً، ولهم ربط مشروعهم الخاص. */
+  const BUILTIN_OPT = 'midad-use-builtin';
+  const refOf = (url) => ((String(url || '').match(/^https:\/\/([^.]+)\./) || [])[1] || '');
+  function builtinAllowed() {
+    const b = builtinCfg(); if (!b) return false;
+    try {
+      if (localStorage.getItem(BUILTIN_OPT) === '1') return true;
+      // جلسة سابقة على هذا الجهاز ⇒ جهاز صاحب التطبيق/مدعوّ؛ نثبّت ذلك كي لا ينقلب «زائراً»
+      // حين تنتهي الجلسة أو يسجّل خروجه (فيرى نموذج الدخول لمشروعه بدل شاشة الإعداد)
+      if (localStorage.getItem(`sb-${refOf(b.url)}-auth-token`)) { localStorage.setItem(BUILTIN_OPT, '1'); return true; }
+      return false;
+    } catch { return false; }
+  }
   const getCfg = () => {
     try { const ls = JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); if (ls && ls.url) return ls; } catch {}
-    return builtinCfg();
+    return builtinAllowed() ? builtinCfg() : null;
   };
+  // تسجيل الدخول بالمشروع المضمّن (صاحب التطبيق أو مدعوّ)
+  async function useBuiltin() {
+    try { localStorage.setItem(BUILTIN_OPT, '1'); } catch {}
+    ready = false; user = null;
+    await init();
+  }
   const isConfigured = () => !!getCfg();
   const hasBuiltin = () => !!builtinCfg();
   const isSignedIn = () => !!user;
@@ -95,6 +116,7 @@ const Cloud = (() => {
 
   function disconnect() {
     localStorage.removeItem(CFG_KEY);
+    try { localStorage.removeItem(BUILTIN_OPT); } catch {}
     if (sb && channel) sb.removeChannel(channel);
     sb = null; user = null; ready = false; channel = null; cfg = null;
     emitStatus();
@@ -650,40 +672,63 @@ const Cloud = (() => {
     getUserEmail: () => (user ? user.email : null),
     getLastSync: () => lastSyncAt,
     hasBuiltin,
-    aiReady: () => ready && !!user,
+    // المساعد متاح بمفتاح المستخدم الخاص، أو بحساب في مشروعٍ فيه دالة الذكاء
+    aiReady: () => !!(window.AIDirect && AIDirect.hasKey()) || (ready && !!user),
+    usingOwnAiKey: () => !!(window.AIDirect && AIDirect.hasKey()),
+    useBuiltin,
     aiInvoke,
-    fnReady: () => ready,
+    // الدوال العامة (شبكة الفكر/نرجس/الجلب) تعمل لكل الزوار عبر المشروع المضمّن
+    fnReady: () => !!fnBase(),
     invokeFn, invokeFnRaw,
   };
 
   /* ── نداء دالة طرفية عامة (JSON) — لا تتطلّب تسجيل دخول ── */
-  async function invokeFn(name, body) {
-    if (!ready) throw new Error('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام هذا المصدر');
-    const { data, error } = await sb.functions.invoke(name, { body });
-    if (error) {
-      let msg = error.message || 'تعذّر الاتصال بالخادم';
-      try { const ctx = await error.context.json(); if (ctx && ctx.error) msg = ctx.error; } catch {}
-      if (/not found|404|failed to send|failed to fetch|non-2xx/i.test(msg)) msg = `الدالة «${name}» غير منشورة بعد في مشروعك — انشرها ثم أعد المحاولة`;
-      throw new Error(msg);
-    }
-    if (data && data.error) throw new Error(data.error);
-    return data;
+  /* ── نداء الدوال الطرفية ──
+     الدوال العامة تُطلب من المشروع المضمّن (فتعمل للزائر بلا حساب). إن كان المستخدم مسجّلاً
+     في المشروع نفسه نرسل رمز جلسته (فيُعامَل صاحبَ حساب: إضافة من أي رابط، والمساعد). */
+  // دالة (لا const): هذا الجزء يقع بعد return الوحدة، فلا يُرفع إلا ما عُرّف بـ function
+  function fnBase() { return builtinCfg() || cfg || getCfg(); }
+  async function bearerFor(base) {
+    try {
+      if (sb && cfg && base && cfg.url === base.url) {
+        const { data } = await sb.auth.getSession();
+        if (data && data.session && data.session.access_token) return data.session.access_token;
+      }
+    } catch {}
+    return base.anonKey;
   }
-
-  /* ── نداء دالة طرفية وإرجاع الاستجابة الخام (للملفات الثنائية) ── */
-  async function invokeFnRaw(name, body) {
-    if (!cfg) throw new Error('فعّل المزامنة السحابية أولاً (زر ☁️)');
-    return fetch(`${cfg.url}/functions/v1/${name}`, {
+  async function callFn(name, body) {
+    const base = fnBase();
+    if (!base) throw new Error('هذا المصدر يحتاج خادم التطبيق، وهو غير مضبوط في هذه النسخة');
+    return fetch(`${base.url}/functions/v1/${name}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.anonKey}`, 'apikey': cfg.anonKey },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await bearerFor(base)}`, 'apikey': base.anonKey },
       body: JSON.stringify(body),
     });
   }
 
+  async function invokeFn(name, body) {
+    // الصوت الطبيعي وغيره من نداءات «ai»: بمفتاح المستخدم الخاص إن وُجد
+    if (name === 'ai' && window.AIDirect && AIDirect.hasKey()) return AIDirect.invoke(body);
+    let r;
+    try { r = await callFn(name, body); }
+    catch (e) { throw new Error(/fetch/i.test(String(e && e.message)) ? 'تعذّر الوصول إلى الخادم — تحقّق من الاتصال' : (e.message || String(e))); }
+    let data = null; try { data = await r.json(); } catch {}
+    if (!r.ok || (data && data.error)) {
+      let msg = (data && data.error) || `تعذّر الاتصال بالخادم (${r.status})`;
+      if (r.status === 404 && !(data && data.error)) msg = `الدالة «${name}» غير منشورة بعد في المشروع — انشرها ثم أعد المحاولة`;
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  /* ── نداء دالة طرفية وإرجاع الاستجابة الخام (للملفات الثنائية) ── */
+  async function invokeFnRaw(name, body) { return callFn(name, body); }
+
   /* ── نداء دالة الذكاء الطرفية ── */
   async function aiInvoke(body) {
-    if (!ready) throw new Error('المزامنة غير مفعّلة على هذا الجهاز');
-    if (!user) throw new Error('سجّل الدخول أولاً لاستخدام المساعد الذكي');
+    if (window.AIDirect && AIDirect.hasKey()) { const r = await AIDirect.invoke(body); return (r && r.text) || ''; }
+    if (!ready || !user) throw new Error('المساعد الذكي يحتاج مفتاح Gemini الخاص بك — من القائمة ⋮ ← «🤖 الذكاء الاصطناعي»');
     const { data, error } = await sb.functions.invoke('ai', { body });
     if (error) {
       let msg = error.message || 'تعذّر الاتصال بالمساعد';

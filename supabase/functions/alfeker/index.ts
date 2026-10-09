@@ -49,6 +49,30 @@ function parseCards(html: string) {
   return out;
 }
 
+// ── هوية المتصل: مستخدم مسجَّل في هذا المشروع؟ (والاختياري: ضمن قائمة البُرد المسموح بها) ──
+// المفتاح العام (anon) مكشوف في الموقع بطبيعته، فلا يكفي وحده دليلاً على هوية المتصل.
+async function callerUser(req: Request): Promise<{ id: string; email: string } | null> {
+  const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  const url = Deno.env.get("SUPABASE_URL"), anon = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!token || !url || !anon || token === anon) return null;
+  try {
+    const r = await fetch(`${url}/auth/v1/user`, { headers: { Authorization: `Bearer ${token}`, apikey: anon } });
+    if (!r.ok) return null;
+    const u = await r.json();
+    return u && u.id ? { id: String(u.id), email: String(u.email || "").toLowerCase() } : null;
+  } catch { return null; }
+}
+const allowedEmails = () => (Deno.env.get("ALLOWED_EMAILS") || "").split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// مواقع الكتب التي يخدمها الوسيط لأي زائر بلا حساب (كي لا يصير وسيطاً مفتوحاً لكل الإنترنت)
+const PUBLIC_HOSTS = ["alfeker.net", "mediafire.com", "drive.google.com", "docs.google.com", "googleusercontent.com",
+  "dropbox.com", "dropboxusercontent.com", "narjeslibrary.com", "ww-api.com", "ablibrary.net", "archive.org",
+  "wikisource.org", "inahj.org"];
+const isPublicHost = (u: string) => {
+  try { const h = new URL(u).hostname.toLowerCase(); return PUBLIC_HOSTS.some((d) => h === d || h.endsWith("." + d)); }
+  catch { return false; }
+};
+
 /* ── المستضيفات والمرايا ── */
 type Mirror = { host: string; url: string };
 
@@ -321,6 +345,10 @@ Deno.serve(async (req) => {
     if (action === "fetch") {
       const target = String(b.url || "").trim();
       if (!/^https?:\/\/.+/i.test(target)) return json({ error: "رابط غير صالح" }, 400);
+      // الزائر بلا حساب: مواقع الكتب المعروفة فقط؛ صاحب الحساب: أي رابط (الإضافة من رابط)
+      if (!isPublicHost(target) && !(await callerUser(req))) {
+        return json({ error: "هذا الموقع غير مدعوم عبر الخادم العام — نزّل الملف من متصفحك ثم أضِفه عبر «أضف كتاباً ← من ملف»", code: "host" }, 403);
+      }
       let dr: Response;
       try { dr = await fetch(target, { headers: { "User-Agent": UA, "Accept": "*/*", "Accept-Language": "ar,en;q=0.8" } }); }
       catch (e) { return json({ error: "تعذّر الوصول إلى الرابط: " + String((e as Error)?.message || e) }, 502); }
@@ -352,6 +380,11 @@ Deno.serve(async (req) => {
         if (!mirrors.length && fileUrl) mirrors = cleanMirrors([{ url: fileUrl }]);
       }
       if (!mirrors.length) return json({ error: "لا يوجد ملف قابل للتنزيل لهذا الكتاب" }, 404);
+      // الروابط «المباشرة» الواردة من العميل: لغير أصحاب الحسابات من مواقع الكتب المعروفة فقط
+      if (mirrors.some((m) => m.host === "direct" && !isPublicHost(m.url)) && !(await callerUser(req))) {
+        mirrors = mirrors.filter((m) => m.host !== "direct" || isPublicHost(m.url));
+        if (!mirrors.length) return json({ error: "هذا الرابط غير مدعوم عبر الخادم العام", code: "host" }, 403);
+      }
 
       let got: { res: Response; host: string };
       try { got = await fetchFromMirrors(mirrors); }
