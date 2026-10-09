@@ -707,7 +707,46 @@ const Cloud = (() => {
   /* ── تنزيل المحتوى/الملف عند الحاجة (كسول) ──
      يُرجع سبباً محدّداً حين لا يتوفّر الملف كي يعرض القارئ رسالة صادقة:
      'ok' | 'off' (لا مزامنة) | 'signedout' | 'offline' | 'missing' (لم يُرفع) | 'toobig' | 'error' */
-  let lastPayloadError = '';
+  let lastPayloadError = '', lastSize = 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const httpErr = (r) => Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
+
+  /* تنزيل مجزّأ: رابط موقّع + طلبات Range بقطع 2 م.ب، لكلٍّ منها محاولاتها الخاصة.
+     انقطاع عابر يعيد قطعة واحدة لا الملف كله، ويظهر التقدّم بالنسبة المئوية.
+     الرابط الموقّع لا يحتاج ترويسة Authorization، فلا طلب تمهيدي (preflight) يُعرقل. */
+  async function downloadChunked(id, quiet) {
+    const path = `${user.id}/${id}`;
+    const { data: sg, error: se } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
+    if (se) throw se; // «Object not found» ⇒ يعالجه المستدعي كملف غير مرفوع
+    const url = sg.signedUrl;
+    let size = 0;
+    try {
+      const { data } = await sb.storage.from(BUCKET).list(user.id, { search: id, limit: 10 });
+      const f = (data || []).find((x) => x.name === id);
+      size = (f && f.metadata && f.metadata.size) || 0;
+    } catch {}
+    lastSize = size;
+    if (!size) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw httpErr(r); return await r.blob(); }
+    const CH = 2 * 1024 * 1024, parts = [];
+    let got = 0;
+    while (got < size) {
+      const end = Math.min(size, got + CH) - 1;
+      let part = null, err = null;
+      for (let a = 0; a < 5 && !part; a++) {
+        try {
+          const r = await fetch(url, { headers: { Range: `bytes=${got}-${end}` }, cache: 'no-store' });
+          if (r.status === 200) { const whole = await r.blob(); if (whole.size === size) return whole; throw new Error('range ignored'); }
+          if (r.status !== 206) throw httpErr(r);
+          part = await r.blob();
+          if (!part.size) { part = null; throw new Error('empty chunk'); }
+        } catch (e) { err = e; if (e && (e.status === 400 || e.status === 404)) throw e; if (!navigator.onLine) break; await sleep(600 * (a + 1)); }
+      }
+      if (!part) throw err || new Error('chunk failed');
+      parts.push(part); got += part.size;
+      if (!quiet) setStatus('syncing', `جارٍ تنزيل الكتاب… ${Math.min(99, Math.round(got * 100 / size))}٪`);
+    }
+    return new Blob(parts, { type: 'application/pdf' });
+  }
   async function ensurePayload(id, opts = {}) {
     if (initDone) { try { await initDone; } catch {} }
     if (!ready) return 'off';
@@ -734,8 +773,15 @@ const Cloud = (() => {
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const { data, error } = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);
-        if (error) throw error;
+        // المحاولة الأولى بالتنزيل المجزّأ (يصمد أمام انقطاع الاتصال وبرامج اعتراض التنزيل)،
+        // ثم بطريقة المكتبة العادية احتياطاً
+        let data;
+        if (attempt === 0 || attempt === 2) data = await downloadChunked(id, quiet);
+        else {
+          const r = await sb.storage.from(BUCKET).download(`${user.id}/${id}`);
+          if (r.error) throw r.error;
+          data = r.data;
+        }
         if (!data || data.size === 0) throw Object.assign(new Error('empty file'), { status: 404 });
         await Store.updatePayload(id, data); // Blob
         if (b.cloudHasFile === false) await Store.updateBook(id, { cloudHasFile: true });
@@ -760,6 +806,7 @@ const Cloud = (() => {
     }
     console.error('download payload', lastErr);
     lastPayloadError = String((lastErr && (lastErr.message || lastErr.error)) || lastErr || '');
+    if (lastSize) lastPayloadError += ` · ${(lastSize / 1048576).toFixed(1)} م.ب`;
     if (!quiet) emitStatus();
     return navigator.onLine ? 'error' : 'offline';
   }
