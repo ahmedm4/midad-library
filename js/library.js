@@ -3256,7 +3256,7 @@ create policy "midad_own_files" on storage.objects for all
           <li>اضغط <b>Create API key</b> وانسخ المفتاح.</li>
           <li>الصقه هنا واضغط «اختبر واحفظ».</li>
         </ol>
-        <input type="password" class="aik-input" dir="ltr" placeholder="AIza…" autocomplete="off" aria-label="مفتاح Gemini" value="">
+        <input type="password" class="aik-input" dir="ltr" placeholder="AIza… أو AQ.…" autocomplete="off" aria-label="مفتاح Gemini" value="">
         <p class="aik-msg" role="status"></p>
         <div class="ud-actions">
           <button class="ud-cancel">إغلاق</button>
@@ -3279,7 +3279,8 @@ create policy "midad_own_files" on storage.objects for all
     overlay.querySelector('.aik-save').onclick = async (e) => {
       const btn = e.currentTarget;
       const k = input.value.trim();
-      if (!/^[A-Za-z0-9_\-]{20,}$/.test(k)) { msg.textContent = 'الصق مفتاحاً صحيحاً (يبدأ عادةً بـ AIza)'; msg.className = 'aik-msg bad'; return; }
+      // صيغتا مفاتيح Google: القديمة AIza… والجديدة AQ.… (فيها نقاط)
+      if (!/^[A-Za-z0-9_.\-]{20,}$/.test(k)) { msg.textContent = 'الصق المفتاح كما نسخته من Google AI Studio (يبدأ عادةً بـ AIza أو AQ.)'; msg.className = 'aik-msg bad'; return; }
       btn.disabled = true; msg.textContent = '⏳ جارٍ اختبار المفتاح…'; msg.className = 'aik-msg';
       const r = await AIDirect.test(k);
       btn.disabled = false;

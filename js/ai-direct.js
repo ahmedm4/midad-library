@@ -44,7 +44,7 @@ const AIDirect = (() => {
   // رسالة مفهومة لأخطاء Gemini الشائعة
   function friendly(status, msg) {
     if (status === 429 || /quota|exhausted|rate/i.test(msg)) return 'تجاوز مفتاحك حصّة الاستخدام المجانية مؤقتاً — حاول بعد قليل';
-    if (status === 400 && /api.?key|API_KEY_INVALID|not valid/i.test(msg)) return 'مفتاح Gemini غير صالح — راجعه في «🤖 الذكاء الاصطناعي»';
+    if (status === 401 || (status === 400 && /api.?key|API_KEY_INVALID|not valid/i.test(msg))) return 'مفتاح Gemini غير صالح — راجعه في «🤖 الذكاء الاصطناعي»';
     if (status === 403) return 'مفتاح Gemini لا يملك صلاحية — تأكّد أنه مفعّل لـ Generative Language API';
     return msg || 'تعذّر الاتصال بـ Gemini';
   }
@@ -52,8 +52,9 @@ const AIDirect = (() => {
   async function post(model, body) {
     const key = getKey();
     if (!key) throw new Error('أضِف مفتاح Gemini الخاص بك أولاً');
-    const res = await fetch(`${API}${model}:generateContent?key=${encodeURIComponent(key)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    // المفتاح في ترويسة لا في الرابط (لا يظهر في السجلات)؛ يقبل الصيغتين القديمة AIza… والجديدة AQ.…
+    const res = await fetch(`${API}${model}:generateContent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body),
     });
     let data = null; try { data = await res.json(); } catch {}
     return { res, data };
