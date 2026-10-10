@@ -206,6 +206,8 @@ const Library = (() => {
       $('#cloud-account').hidden = !signedIn;
       // عند وجود إعداد مضمّن في التطبيق، لا حاجة لرابط «تغيير المشروع»
       if (Cloud.hasBuiltin && Cloud.hasBuiltin()) $('#cloud-reconfig').hidden = true;
+      $('#cloud-google-wrap').hidden = signedIn || !googleOk;
+      $('#cloud-setup-intro').hidden = googleOk;
       if (signedIn) {
         $('#cloud-user-email').textContent = Cloud.getUserEmail() || '';
         const drive = Cloud.provider && Cloud.provider() === 'drive';
@@ -217,12 +219,16 @@ const Library = (() => {
 
     // زر «المزامنة بحساب Google» يظهر حين يكون مُفعّلاً في خادم التطبيق
     const gBtn = $('#cloud-google');
-    const showGoogle = async () => {
-      const ok = Cloud.googleAvailable ? await Cloud.googleAvailable() : false;
-      gBtn.hidden = !ok; $('#cloud-google-note').hidden = !ok;
+    showGoogle = async (fresh) => {
+      googleOk = Cloud.googleAvailable ? await Cloud.googleAvailable(fresh) : false;
+      gBtn.hidden = !googleOk; $('#cloud-google-note').hidden = !googleOk;
+      $('#cloud-google-wrap').hidden = Cloud.isSignedIn() || !googleOk;
+      $('#cloud-setup-intro').hidden = googleOk;
     };
     showGoogle();
     gBtn.onclick = () => googleSignIn(gBtn);
+    // من شاشة البريد/كلمة المرور: عُد إلى شاشة الخيارات (يُلغي ربط هذا الجهاز بمشروع التطبيق)
+    $('#cloud-back').onclick = () => { Cloud.disconnect(); showGoogle(true); };
     $('#cloud-report').onclick = () => { modal.hidden = true; openCloudReport(); };
 
     $('#cloud-connect').onclick = async () => {
@@ -265,7 +271,9 @@ const Library = (() => {
     finally { btn.textContent = orig; }
   }
 
-  function openCloudModal() { $('#cloud-modal').hidden = false; }
+  let googleOk = false, showGoogle = () => {};
+  // نعيد السؤال عند كل فتح ما دام غير مفعّل (يظهر الزر فور تفعيله في الخادم)
+  function openCloudModal() { $('#cloud-modal').hidden = false; if (!googleOk) showGoogle(true); }
 
   async function googleSignIn(btn) {
     if (btn) btn.disabled = true;
@@ -283,7 +291,7 @@ const Library = (() => {
     try { if (localStorage.getItem('midad-welcomed')) return; } catch { return; }
     if (!window.Cloud || Cloud.isConfigured()) { try { localStorage.setItem('midad-welcomed', '1'); } catch {} return; }
     if (document.querySelector('.ui-dialog') || !$('#reader').hidden) return setTimeout(maybeWelcome, 4000);
-    const google = Cloud.googleAvailable ? await Cloud.googleAvailable() : false;
+    const google = Cloud.googleAvailable ? await Cloud.googleAvailable(true) : false;
     const done = () => { try { localStorage.setItem('midad-welcomed', '1'); } catch {} overlay.remove(); };
     const overlay = document.createElement('div');
     overlay.className = 'ui-dialog';

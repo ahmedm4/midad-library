@@ -1240,3 +1240,6 @@ a.disc-import.disc-openfile { text-decoration: none; }
 .wl-box .wl-ai { font-size: 12.5px; color: var(--muted); margin: 4px 0 12px; line-height: 1.8; }
 :root[data-lib-theme="paper"] .cloud-google { box-shadow: 0 1px 4px rgba(0,0,0,.15); }
 :root[data-lib-theme="paper"] .cr-sum div, :root[data-lib-theme="paper"] .cr-actions button { background: rgba(0,0,0,.03); }
+
+.cloud-or { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; color: var(--muted); font-size: 12.5px; }
+.cloud-or::before, .cloud-or::after { content: ''; flex: 1; height: 1px; background: var(--card-line); }

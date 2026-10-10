@@ -169,7 +169,13 @@ const Cloud = (() => {
       return id;
     } catch { return ''; }
   }
-  async function googleAvailable() { return !!window.DriveClient && !!(await googleClientId()); }
+  async function googleAvailable(fresh) {
+    if (!window.DriveClient) return false;
+    // «غير مفعّل» لا يُعتمد من الذاكرة عند الطلب الصريح (تفعيل حديث في الخادم يظهر فوراً)
+    let id = await googleClientId();
+    if (!id && fresh) id = await googleClientId(true);
+    return !!id;
+  }
   async function signInGoogle() {
     const id = await googleClientId(true);
     if (!id) throw new Error('الدخول بحساب Google غير مُفعّل في هذه النسخة بعد');
