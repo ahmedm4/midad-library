@@ -655,7 +655,7 @@
   padding: 14px 16px 16px; box-shadow: 0 20px 50px rgba(0,0,0,.6); animation: pop .2s cubic-bezier(.2,1.4,.4,1); }
 .define-bubble .db-word { font-family: 'Amiri', serif; font-size: 18px; color: #ffe9bd; font-weight: 700;
   margin-bottom: 8px; padding-inline-end: 24px; }
-.define-bubble .db-body { font-size: 14px; line-height: 1.9; color: #e5deee; max-height: 40vh; overflow-y: auto; }
+.define-bubble .db-body { font-size: 14px; line-height: 1.9; color: #e5deee; max-height: min(60vh, 460px); overflow-y: auto; }
 .define-bubble .db-close { position: absolute; top: 10px; left: 12px; color: #9a92ad; font-size: 15px;
   width: 24px; height: 24px; border-radius: 7px; }
 .define-bubble .db-close:hover { background: rgba(255,255,255,.1); color: #fff; }
@@ -683,3 +683,36 @@
 .r-content figure.bk-img img { display: block; margin: 0 auto; width: auto; height: auto;
   max-width: 100%; max-height: calc(var(--page-h, 80vh) - 2.4em); border-radius: 3px; }
 #reader.mode-scroll .r-content figure.bk-img img { max-height: 85vh; }
+
+/* ═══════ بطاقة القاموس (كلمة مفردة) ═══════ */
+.hl-note-btn.hl-primary { background: rgba(217,169,79,.28); color: #ffe9bd; font-weight: 700; }
+.define-bubble .dw-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; padding-inline-end: 26px; }
+.define-bubble .dw-word { font-family: 'Amiri', serif; font-size: 25px; font-weight: 700; color: #ffe9bd; line-height: 1.5; }
+.define-bubble .dw-root { font-size: 12px; padding: 2px 9px; border-radius: 20px; background: rgba(217,169,79,.16);
+  border: 1px solid rgba(217,169,79,.35); color: #e9c887; letter-spacing: 1px; }
+.define-bubble .dw-type { font-size: 12px; color: #9a92ad; margin-bottom: 6px; }
+.define-bubble .dw-mean { margin: 4px 0 6px; }
+.define-bubble .dw-ctx { font-size: 13px; color: #cfc6e0; background: rgba(255,255,255,.04); border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+.define-bubble .dw-ctx b { color: #e9c887; font-weight: 600; }
+.define-bubble .dw-syn { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.define-bubble .dw-syn span { font-size: 12.5px; padding: 2px 10px; border-radius: 20px; background: rgba(255,255,255,.07); color: #e5deee; }
+.define-bubble .dw-save { margin-top: 10px; width: 100%; padding: 8px; border-radius: 10px; font-size: 13px;
+  color: #ffe9bd; border: 1px solid rgba(217,169,79,.35); background: rgba(217,169,79,.1); }
+.define-bubble .dw-save:hover { background: rgba(217,169,79,.2); }
+.define-bubble .dw-save:disabled { opacity: .7; }
+
+/* ═══════ شريط الجملة المقروءة (القراءة الصوتية لكتب PDF) ═══════ */
+.tts-caption { position: absolute; z-index: 90; inset-inline: 0; bottom: 74px; margin: 0 auto;
+  width: min(720px, calc(100% - 24px)); padding: 10px 14px 10px; border-radius: 16px;
+  background: rgba(20,15,34,.92); border: 1px solid rgba(217,169,79,.3); box-shadow: 0 14px 40px rgba(0,0,0,.5);
+  backdrop-filter: blur(8px); color: #cfc6e0; animation: pop .2s ease; }
+.tts-caption .tc-meta { display: flex; justify-content: space-between; font-size: 11.5px; color: #9a92ad; margin-bottom: 4px; }
+.tts-caption .tc-text { font-family: 'Amiri', serif; font-size: 17px; line-height: 1.85; max-height: 7.6em; overflow: hidden; }
+.tts-caption .tc-prev, .tts-caption .tc-next { opacity: .45; }
+.tts-caption .tc-now { background: rgba(217,169,79,.22); color: #fff4dc; border-radius: 5px; padding: 0 3px;
+  box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.tts-caption .tc-btns { display: flex; justify-content: center; gap: 8px; margin-top: 6px; }
+.tts-caption .tc-btns button { width: 36px; height: 32px; border-radius: 10px; color: #e5deee; background: rgba(255,255,255,.06); font-size: 14px; }
+.tts-caption .tc-btns button:hover { background: rgba(217,169,79,.22); }
+#reader.ui-hidden .tts-caption { bottom: 16px; }
+@media (max-width: 600px) { .tts-caption { bottom: 64px; } .tts-caption .tc-text { font-size: 15.5px; } }

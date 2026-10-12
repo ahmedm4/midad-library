@@ -396,7 +396,8 @@ const Reader = (() => {
   }
 
   function jumpTo(n) { // فهرس الصفحات (نصي: رقم صفحة، PDF: رقم صفحة 1-based)
-    if (pdfScrollActive()) { pdfScrollTo(Math.max(1, Math.min(n, pageCount))); }
+    // التمرير المتصل يحدّث pdfPage بعد انتهاء التمرير؛ نثبّته فوراً كي لا تعيد القراءة الصوتية الصفحة نفسها
+    if (pdfScrollActive()) { pdfPage = Math.max(1, Math.min(n, pageCount)); pdfScrollTo(pdfPage); }
     else if (isPdf) { pdfPage = Math.max(1, Math.min(n, pageCount)); showPdfPage(pdfPage, true); state.pct = pageCount > 1 ? (pdfPage - 1) / (pageCount - 1) : 1; afterNavigate(); }
     else if (settings.flip === 'scroll') { /* يُعالَج خارجياً */ }
     else setPage(n, false);
@@ -1037,7 +1038,8 @@ const Reader = (() => {
     const s = pdfSlots[Math.max(0, Math.min(pageNum, pageCount) - 1)];
     if (!s) return;
     const cont = $('#r-pdf-scroll');
-    cont.scrollTo({ top: s.el.offsetTop - 12, behavior: smooth ? 'smooth' : 'auto' });
+    // في الخلفية (شاشة مقفلة مع القراءة الصوتية) لا يتحرّك التمرير الناعم ⇒ قفزة فورية
+    cont.scrollTo({ top: s.el.offsetTop - 12, behavior: smooth && !document.hidden ? 'smooth' : 'auto' });
   }
 
   function updatePdfScrollPage() {
@@ -1273,7 +1275,7 @@ const Reader = (() => {
           close(); Library.ocrBook(bid);
         }
       } else {
-        Library.toast('هذا الكتاب صفحاته مصوّرة — فعّل المزامنة السحابية لاستخراج نصه (OCR)');
+        if (Library.needAI) Library.needAI('قراءة الكتب المصوّرة صوتياً (استخراج نصها أولاً)');
       }
       return;
     }
@@ -1299,12 +1301,93 @@ const Reader = (() => {
     if (ttsEngine === 'natural') speakNatural(); else speakNext();
   }
 
+  /* ── شريط الجملة المقروءة (للـPDF: الصفحة مرسومة صورةً فلا يمكن تظليل نصها في مكانه) ── */
+  let ttsSents = null; // {page, list:[جمل], i}
+  /* صفحة القراءة الصوتية مستقلّة عن pdfPage: في عرض الصفحتين يبقى pdfPage أولَ الصفحتين،
+     فلو قرأنا pdfPage لما تجاوزت القراءة الصفحة اليسرى أبداً. نتبع القارئ إن قلّب بنفسه. */
+  let ttsPage = 0, ttsTurnAt = 0;
+  // الصفحات الظاهرة الآن: صفحتان في العرض المزدوج وفي التقليب الواقعي الأفقي، وإلا صفحة واحدة
+  function visiblePdfPages() {
+    let two = pdfSpreadActive();
+    if (!two && pdfFlipBookActive() && pageFlip) { try { two = pageFlip.getOrientation() === 'landscape'; } catch {} }
+    return two ? [pdfPage, pdfPage + 1] : [pdfPage];
+  }
+  function readingPage() {
+    // بعد تقليب أمرت به القراءة نفسها، تتأخّر pdfPage حتى تنتهي حركة الورقة ⇒ لا تحسبه تقليباً يدوياً
+    const turning = Date.now() - ttsTurnAt < 2500;
+    if (!ttsPage || (!turning && !visiblePdfPages().includes(ttsPage))) ttsPage = pdfPage;
+    return ttsPage;
+  }
+  function gotoReadingPage(n) { ttsPage = n; if (!visiblePdfPages().includes(n)) { ttsTurnAt = Date.now(); jumpTo(n); } }
+  function splitSentences(text) {
+    const raw = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return [];
+    const parts = raw.split(/(?<=[.!؟?۔:؛])\s+/);
+    const out = []; let cur = '';
+    for (const p of parts) {
+      cur = cur ? cur + ' ' + p : p;
+      if (cur.length >= 40) { out.push(cur); cur = ''; } // ادمج الجمل القصيرة جداً مع تاليتها
+    }
+    if (cur) { if (out.length && cur.length < 25) out[out.length - 1] += ' ' + cur; else out.push(cur); }
+    // جملة طويلة بلا ترقيم (شائع في نص الـOCR) ⇒ قسّمها عند الفواصل أو كل ~220 حرفاً
+    return out.flatMap((x) => (x.length <= 260 ? [x] : x.split(/(?<=[،,])\s+/).reduce((a, w) => { const l = a[a.length - 1]; if (l && (l + ' ' + w).length <= 240) a[a.length - 1] = l + ' ' + w; else a.push(w); return a; }, [])));
+  }
+  function captionEl() {
+    let c = $('#tts-caption');
+    if (!c) {
+      c = document.createElement('div');
+      c.id = 'tts-caption'; c.className = 'tts-caption'; c.hidden = true;
+      c.setAttribute('role', 'status'); c.setAttribute('aria-live', 'off');
+      c.innerHTML = `<div class="tc-meta"><span class="tc-page"></span><span class="tc-prog"></span></div>
+        <div class="tc-text"><span class="tc-prev"></span> <mark class="tc-now"></mark> <span class="tc-next"></span></div>
+        <div class="tc-btns"><button class="tc-back" aria-label="الجملة السابقة">⏮</button><button class="tc-play" aria-label="إيقاف مؤقّت">⏸</button><button class="tc-fwd" aria-label="الجملة التالية">⏭</button><button class="tc-x" aria-label="إيقاف القراءة">✕</button></div>`;
+      $('#reader').appendChild(c);
+      c.querySelector('.tc-play').onclick = () => { if (ttsPaused) ttsResume(); else ttsPause(); syncCaptionBtn(); };
+      c.querySelector('.tc-x').onclick = () => ttsStop();
+      c.querySelector('.tc-back').onclick = () => ttsSentSkip(-1);
+      c.querySelector('.tc-fwd').onclick = () => ttsSentSkip(1);
+    }
+    return c;
+  }
+  function syncCaptionBtn() { const b = $('#tts-caption .tc-play'); if (b) { b.textContent = ttsPaused ? '▶' : '⏸'; b.setAttribute('aria-label', ttsPaused ? 'استئناف' : 'إيقاف مؤقّت'); } }
+  function showCaption(list, i, page) {
+    const c = captionEl();
+    c.querySelector('.tc-page').textContent = 'صفحة ' + page + (pageCount ? ' من ' + pageCount : '');
+    c.querySelector('.tc-prog').textContent = list.length > 1 ? (i + 1) + '/' + list.length : '';
+    const clip = (t, n, end) => (t.length > n ? (end ? '…' + t.slice(-n) : t.slice(0, n) + '…') : t);
+    c.querySelector('.tc-prev').textContent = i > 0 ? clip(list[i - 1], 90, true) : '';
+    c.querySelector('.tc-now').textContent = list[i] || '';
+    c.querySelector('.tc-next').textContent = list[i + 1] ? clip(list[i + 1], 90) : '';
+    c.hidden = false; syncCaptionBtn();
+  }
+  function hideCaption() { const c = $('#tts-caption'); if (c) c.hidden = true; ttsSents = null; }
+  // تخطّي جملة للأمام/للخلف (صوت الجهاز) أو مقطع (الصوت الطبيعي)
+  function ttsSentSkip(dir) {
+    if (!ttsOn || !isPdf || !ttsSents) return ttsSkip(dir);
+    const ni = ttsSents.i + dir, rp = ttsSents.page;
+    if (ni < 0) { if (rp > 1) { ttsSents = null; gotoReadingPage(rp - 1); } else ttsSents.i = 0; }
+    else if (ni >= ttsSents.list.length) { if (rp < pageCount) { ttsSents = null; gotoReadingPage(rp + 1); } else return ttsStop(true); }
+    else ttsSents.i = ni;
+    ttsPaused = false;
+    if (ttsEngine === 'natural') { if (ttsSents) ttsSents.jump = true; try { ttsAudio && ttsAudio.pause(); } catch {} if (ttsGapResolve) { const r = ttsGapResolve; ttsGapResolve = null; r(); } }
+    else { ttsSents.skipping = true; try { speechSynthesis.cancel(); } catch {} setTimeout(() => { if (ttsSents) ttsSents.skipping = false; speakNext(); }, 60); }
+  }
+  // جمل الصفحة الحالية (تُبنى مرة لكل صفحة؛ تتبع تقليب القارئ اليدوي)
+  async function pdfSentences() {
+    const rp = readingPage();
+    if (ttsSents && ttsSents.page === rp) return ttsSents;
+    const unit = await currentUnit(false);
+    ttsSents = { page: rp, list: splitSentences(unit && unit.text), i: 0 };
+    return ttsSents;
+  }
+
   // نصّ الوحدة الحالية (فقرة نصية أو صفحة PDF) + تمييزها وتمرير الصفحة إليها
   async function currentUnit(highlight = true) {
     if (isPdf) {
       let text = '';
-      try { const page = await pdfDoc.getPage(pdfPage); const tc = await page.getTextContent(); text = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim(); } catch {}
-      if (!text) text = ocrPageText(pdfPage);
+      const rp = readingPage();
+      try { const page = await pdfDoc.getPage(rp); const tc = await page.getTextContent(); text = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim(); } catch {}
+      if (!text) text = ocrPageText(rp);
       return { text, el: null };
     }
     if (ttsIdx >= ttsEls.length) return null;
@@ -1319,13 +1402,14 @@ const Reader = (() => {
 
   // انتقل للوحدة التالية؛ يعيد false عند النهاية
   function ttsAdvance() {
-    if (isPdf) { if (pdfPage >= pageCount) return false; jumpTo(pdfPage + 1); return true; }
+    if (isPdf) { const rp = readingPage(); if (rp >= pageCount) return false; gotoReadingPage(rp + 1); return true; }
     ttsIdx++; return ttsIdx < ttsEls.length;
   }
 
   /* ── محرّك صوت الجهاز (speechSynthesis) ── */
   async function speakNext() {
     if (!ttsOn || ttsPaused) return;
+    if (isPdf) return speakPdfSentence();
     const unit = await currentUnit();
     if (!unit) return ttsStop(true);
     if (!unit.text) { if (ttsAdvance()) return speakNext(); return ttsStop(true); }
@@ -1340,6 +1424,29 @@ const Reader = (() => {
       if (ttsAdvance()) speakNext(); else ttsStop(true);
     };
     u.onerror = () => { if (unit.el) unit.el.classList.remove('tts-now'); if (ttsOn) ttsStop(); };
+    speechSynthesis.speak(u);
+  }
+
+  async function speakPdfSentence() {
+    if (!ttsOn || ttsPaused) return;
+    const ss = await pdfSentences();
+    if (!ss.list.length || ss.i >= ss.list.length) { // صفحة بلا نص أو انتهت جملها
+      ttsSents = null;
+      if (ttsAdvance()) return speakPdfSentence();
+      return ttsStop(true);
+    }
+    showCaption(ss.list, ss.i, ss.page);
+    const u = new SpeechSynthesisUtterance(ss.list[ss.i]);
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.lang = v ? v.lang : 'ar-SA';
+    u.rate = (settings.ttsRate || 100) / 100;
+    u.onend = () => {
+      if (!ttsOn || ttsPaused || (ttsSents && ttsSents.skipping)) return;
+      if (ttsSents === ss) ss.i++;
+      speakPdfSentence();
+    };
+    u.onerror = (ev) => { if (ev && /interrupted|canceled/.test(ev.error || '')) return; if (ttsOn) ttsStop(); };
     speechSynthesis.speak(u);
   }
 
@@ -1383,6 +1490,7 @@ const Reader = (() => {
     });
   }
   async function speakNatural() {
+    if (isPdf) return speakNaturalPdf();
     while (ttsOn) {
       const unit = await currentUnit();
       if (!unit) { ttsStop(true); return; }
@@ -1410,6 +1518,30 @@ const Reader = (() => {
     }
   }
 
+  // كتب PDF بالصوت الطبيعي: جملة/جملتان لكل مقطع، فيتبع الشريط القراءة بدقّة
+  async function speakNaturalPdf() {
+    while (ttsOn) {
+      const ss = await pdfSentences();
+      if (!ss.list.length || ss.i >= ss.list.length) { ttsSents = null; if (!ttsAdvance()) { ttsStop(true); return; } continue; }
+      showCaption(ss.list, ss.i, ss.page);
+      let url;
+      try { url = await synthChunk(ss.list[ss.i]); }
+      catch (e) {
+        if (!ttsOn) return;
+        ttsEngine = 'device';
+        Library.toast('تعذّر الصوت الطبيعي — تحوّلت لصوت الجهاز' + (/(quota|429|حصة)/i.test(e.message || '') ? ' (تجاوز الحصّة)' : ''));
+        return speakNext();
+      }
+      if (!ttsOn) return;
+      // جلب مسبق للجملة التالية (أو أول جملة في الصفحة التالية لا نعرفها بعد)
+      if (ss.list[ss.i + 1]) synthChunk(ss.list[ss.i + 1]).catch(() => {});
+      await playUrl(url);
+      if (!ttsOn) return;
+      if (ttsSents === ss && !ss.jump) ss.i++;
+      if (ttsSents) ttsSents.jump = false;
+    }
+  }
+
   /* ── إيقاف مؤقّت/استئناف/تخطّي (يعملان مع المحرّكين وأزرار شاشة القفل) ── */
   function ttsPause() {
     if (!ttsOn || ttsPaused) return;
@@ -1417,6 +1549,7 @@ const Reader = (() => {
     if (ttsEngine === 'natural') { try { ttsAudio && ttsAudio.pause(); } catch {} }
     else { try { speechSynthesis.pause(); } catch {} }
     if ('mediaSession' in navigator) try { navigator.mediaSession.playbackState = 'paused'; } catch {}
+    syncCaptionBtn();
   }
   function ttsResume() {
     if (!ttsOn || !ttsPaused) return;
@@ -1424,11 +1557,14 @@ const Reader = (() => {
     if (ttsEngine === 'natural') { try { ttsAudio && ttsAudio.play(); } catch {} }
     else { try { speechSynthesis.resume(); } catch {} }
     if ('mediaSession' in navigator) try { navigator.mediaSession.playbackState = 'playing'; } catch {}
+    syncCaptionBtn();
+    // صوت الجهاز قد يتجاهل resume بعد إيقاف طويل (كروم) ⇒ أعد الجملة الحالية
+    if (ttsEngine !== 'natural' && isPdf) setTimeout(() => { if (ttsOn && !ttsPaused && !speechSynthesis.speaking) speakNext(); }, 400);
   }
   function ttsSkip(dir) {
     if (!ttsOn) return;
     if (contentEl) contentEl.querySelectorAll('.tts-now').forEach((e) => e.classList.remove('tts-now'));
-    if (isPdf) { const t = pdfPage + dir; if (t >= 1 && t <= pageCount) jumpTo(t); }
+    if (isPdf) { const t = readingPage() + dir; ttsSents = null; if (t >= 1 && t <= pageCount) gotoReadingPage(t); }
     else { ttsIdx = Math.max(0, Math.min(ttsIdx + dir, ttsEls.length - 1)); }
     ttsPaused = false;
     if (ttsEngine === 'natural') { try { ttsAudio && ttsAudio.pause(); } catch {} if (ttsGapResolve) { const r = ttsGapResolve; ttsGapResolve = null; r(); } }
@@ -1447,8 +1583,8 @@ const Reader = (() => {
       navigator.mediaSession.metadata = new MediaMetadata({ title: book.title || 'كتاب', artist: book.author || 'مِداد', album: 'مِداد' });
       navigator.mediaSession.setActionHandler('play', ttsResume);
       navigator.mediaSession.setActionHandler('pause', ttsPause);
-      navigator.mediaSession.setActionHandler('previoustrack', () => ttsSkip(-1));
-      navigator.mediaSession.setActionHandler('nexttrack', () => ttsSkip(1));
+      navigator.mediaSession.setActionHandler('previoustrack', () => (isPdf ? ttsSentSkip(-1) : ttsSkip(-1)));
+      navigator.mediaSession.setActionHandler('nexttrack', () => (isPdf ? ttsSentSkip(1) : ttsSkip(1)));
       try { navigator.mediaSession.setActionHandler('stop', () => ttsStop()); } catch {}
       navigator.mediaSession.playbackState = 'playing';
     } catch {}
@@ -1461,6 +1597,7 @@ const Reader = (() => {
     if (ttsGapResolve) { const r = ttsGapResolve; ttsGapResolve = null; r(); }
     clearTimeout(ttsSleepTid); ttsSleepTid = null;
     if (contentEl) contentEl.querySelectorAll('.tts-now').forEach((e) => e.classList.remove('tts-now'));
+    hideCaption(); ttsPage = 0;
     $('#r-btn-tts').classList.remove('on');
     if ('mediaSession' in navigator) try { navigator.mediaSession.playbackState = 'none'; ['play', 'pause', 'previoustrack', 'nexttrack', 'stop'].forEach((a) => navigator.mediaSession.setActionHandler(a, null)); } catch {}
     if (finished) Library.toast('انتهت القراءة الصوتية ✓');
@@ -1697,33 +1834,115 @@ const Reader = (() => {
   function hideDefineBubble() { $('#define-bubble').hidden = true; }
 
   // فقاعة ذكاء مشتركة (المعنى/الترجمة): تعرض العنوان وتنتظر نتيجة الاستدعاء
-  async function aiBubble(title, rect, invokeBody, notReadyMsg) {
-    if (Library.needAI && Library.needAI('هذه الميزة')) return;
+  async function aiBubble(title, rect, invokeBody, opts = {}) {
+    const cached = opts.cacheKey ? dictGet(opts.cacheKey) : null;
+    if (!cached && Library.needAI && Library.needAI('معنى الكلمات والترجمة')) return;
     const bubble = $('#define-bubble');
+    $('#db-word').hidden = false;
     $('#db-word').textContent = title.length > 60 ? title.slice(0, 60) + '…' : title;
     $('#db-body').innerHTML = '<span class="ai-typing"><i></i><i></i><i></i></span>';
     bubble.hidden = false;
-    const bw = 300;
-    if (rect) {
+    // ضع الفقاعة تحت التحديد أو فوقه، داخل الشاشة دائماً (يُعاد بعد وصول المحتوى لأن طوله يتغيّر)
+    const place = () => {
+      const bw = bubble.offsetWidth || 300, bh = bubble.offsetHeight || 160;
+      if (!rect) { bubble.style.left = Math.max(8, innerWidth / 2 - bw / 2) + 'px'; bubble.style.top = '80px'; return; }
       bubble.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - bw / 2, innerWidth - bw - 8)) + 'px';
-      bubble.style.top = (rect.bottom + 10 < innerHeight - 180 ? rect.bottom + 10 : Math.max(60, rect.top - 190)) + 'px';
-    } else { bubble.style.left = (innerWidth / 2 - bw / 2) + 'px'; bubble.style.top = '80px'; }
+      let top = rect.bottom + 10;
+      if (top + bh > innerHeight - 8) top = rect.top - bh - 10 >= 8 ? rect.top - bh - 10 : Math.max(8, innerHeight - bh - 8);
+      bubble.style.top = top + 'px';
+    };
+    place();
+    const show = (res) => { if (opts.render) opts.render(res, $('#db-body')); else $('#db-body').textContent = res || '—'; place(); };
+    if (cached) return show(cached);
+    const token = (aiBubble.tok = (aiBubble.tok || 0) + 1);
     try {
       const res = await Cloud.aiInvoke(invokeBody);
-      if (bubble.hidden) return;
-      $('#db-body').textContent = res || '—';
-    } catch (e) { $('#db-body').textContent = '⚠ ' + ((e && e.message) || 'تعذّر الحصول على النتيجة'); }
+      if (bubble.hidden || token !== aiBubble.tok) return;
+      if (opts.cacheKey && res) dictPut(opts.cacheKey, res);
+      show(res);
+    } catch (e) { if (token === aiBubble.tok) $('#db-body').textContent = '⚠ ' + ((e && e.message) || 'تعذّر الحصول على النتيجة'); }
+  }
+
+  /* ═══════ القاموس: الكلمة المفردة ⇒ بطاقة كاملة (تشكيل، جذر، معنى في السياق، مرادفات) ═══════
+     العبارة الأطول ⇒ معنى موجز كما كان. النتائج تُحفظ مؤقتاً (توفيراً لحصّة الذكاء). */
+  const DICT_KEY = 'midad-dict-cache';
+  let dictCache = null;
+  function dictGet(k) {
+    if (!dictCache) { try { dictCache = JSON.parse(localStorage.getItem(DICT_KEY) || '{}') || {}; } catch { dictCache = {}; } }
+    return dictCache[k] || null;
+  }
+  function dictPut(k, v) {
+    dictGet(k); dictCache[k] = v;
+    const keys = Object.keys(dictCache);
+    if (keys.length > 300) keys.slice(0, keys.length - 300).forEach((x) => delete dictCache[x]);
+    try { localStorage.setItem(DICT_KEY, JSON.stringify(dictCache)); } catch {}
+  }
+  // نظّف الكلمة من علامات الترقيم والتطويل (مع إبقاء الحركات)
+  const cleanWord = (t) => String(t || '').replace(/[\u0640]/g, '').replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, '').trim();
+  const isSingleWord = (t) => { const w = cleanWord(t); return !!w && !/\s/.test(w) && w.length <= 30; };
+  // الجملة المحيطة بالتحديد (تُعطي الذكاء سياق المعنى المقصود)
+  function selContext(word) {
+    try {
+      const sel = getSelection();
+      const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+      const host = node && (node.nodeType === 1 ? node : node.parentElement);
+      const block = host && host.closest ? (host.closest('p, h2, h3, li, blockquote, .pdf-textlayer') || host) : null;
+      let t = block ? block.textContent.replace(/\s+/g, ' ') : '';
+      const i = t.indexOf(word);
+      if (i >= 0) t = t.slice(Math.max(0, i - 160), i + word.length + 160);
+      return t.slice(0, 360);
+    } catch { return ''; }
   }
 
   function defineWord(text, rect) {
     if (!text) return;
-    const prompt = `عرّف بإيجاز شديد (جملة أو جملتين بالعربية الفصحى) معنى هذه الكلمة أو العبارة${book && book.title ? ` كما قد ترد في كتاب «${book.title}»` : ''}، ودون مقدمات: «${text}»`;
-    return aiBubble(text, rect, { action: 'define', text: prompt }, 'المعنى الفوري يحتاج تفعيل المزامنة السحابية');
+    if (!isSingleWord(text)) {
+      const prompt = `عرّف بإيجاز شديد (جملة أو جملتين بالعربية الفصحى) معنى هذه الكلمة أو العبارة${book && book.title ? ` كما قد ترد في كتاب «${book.title}»` : ''}، ودون مقدمات: «${text}»`;
+      return aiBubble(text, rect, { action: 'define', text: prompt });
+    }
+    const word = cleanWord(text);
+    const ctx = selContext(word);
+    const key = word + '|' + (book ? book.id : '');
+    const prompt = `أنت معجم عربي دقيق. حلّل الكلمة «${word}»${ctx ? ` كما وردت في هذا السياق: «${ctx}»` : ''}${book && book.title ? ` من كتاب «${book.title}»` : ''}.
+أعِد JSON فقط دون أي نص آخر، بهذه الحقول:
+{"word":"الكلمة مضبوطة بالشكل التام كما يقتضيها السياق","root":"الجذر بحروف منفصلة مثل: ك ت ب (أو \"\" للكلمات الأعجمية والأسماء)","type":"نوعها باختصار: اسم/فعل ماضٍ/مصدر/جمع تكسير… مع المفرد أو الجمع إن أفاد","meaning":"معناها المعجمي في جملة أو جملتين","context":"معناها المقصود في هذا السياق تحديداً، إن اختلف عن العام (وإلا \"\")","synonyms":["مرادف","مرادف"]}`;
+    return aiBubble(word, rect, { action: 'define', text: prompt }, {
+      cacheKey: key,
+      render: (res, body) => renderDict(word, res, body),
+    });
+  }
+
+  function renderDict(word, res, body) {
+    let d = null;
+    try { const m = String(res).match(/\{[\s\S]*\}/); d = m ? JSON.parse(m[0]) : null; } catch {}
+    if (!d || !d.meaning) { body.textContent = res || '—'; return; }
+    const syn = (Array.isArray(d.synonyms) ? d.synonyms : []).filter(Boolean).slice(0, 5);
+    $('#db-word').hidden = true; // الكلمة المشكولة في رأس البطاقة تغني عن العنوان
+    body.innerHTML = `
+      <div class="dw-head"><span class="dw-word">${esc(d.word || word)}</span>${d.root ? `<span class="dw-root" title="الجذر">${esc(d.root)}</span>` : ''}</div>
+      ${d.type ? `<div class="dw-type">${esc(d.type)}</div>` : ''}
+      <p class="dw-mean">${esc(d.meaning)}</p>
+      ${d.context ? `<p class="dw-ctx"><b>في هذا السياق:</b> ${esc(d.context)}</p>` : ''}
+      ${syn.length ? `<div class="dw-syn">${syn.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : ''}
+      <button class="dw-save">🃏 احفظها في بطاقات المراجعة</button>`;
+    const save = body.querySelector('.dw-save');
+    save.onclick = async () => {
+      try {
+        const existing = (await Store.getDeck(book.id)) || { cards: [] };
+        const q = d.word || word;
+        if ((existing.cards || []).some((c) => c.q === q)) { save.textContent = '✓ موجودة في بطاقاتك'; save.disabled = true; return; }
+        const now = Date.now();
+        const a = d.meaning + (d.root ? ` (الجذر: ${d.root})` : '') + (syn.length ? ` — مرادفات: ${syn.join('، ')}` : '');
+        await Store.saveDeck(book.id, [...(existing.cards || []), { id: 'fc' + now + Math.random().toString(36).slice(2, 6), q, a, box: 1, due: now, mt: now }]);
+        if (window.Cloud) Cloud.pushDeck(book.id);
+        save.textContent = '✓ حُفظت للمراجعة'; save.disabled = true;
+      } catch { Library.toast('تعذّر الحفظ'); }
+    };
   }
 
   function translateSel(text, rect) {
     if (!text) return;
-    return aiBubble('🌐 الترجمة', rect, { action: 'translate', text, question: 'الإنجليزية' }, 'الترجمة تحتاج تفعيل المزامنة السحابية');
+    return aiBubble('🌐 الترجمة', rect, { action: 'translate', text, question: 'الإنجليزية' });
   }
 
   /* ═══════ القراءة التلقائية (تمرير/تقليب بلا يدين) ═══════ */
@@ -2110,6 +2329,15 @@ const Reader = (() => {
     pop.hidden = false;
     $('#hl-del-btn').hidden = !existing;
     $('#hl-note-btn').textContent = existing ? '📝 تعديل الملاحظة' : '📝 تظليل + ملاحظة';
+    { // تحديد كلمة واحدة ⇒ زر «معنى» في المقدّمة وبارز (القاموس أرجح ما يريده القارئ)
+      const db = $('#hl-define-btn'); let t = '';
+      try { t = String(getSelection() || ''); } catch {}
+      const one = !existing && isSingleWord(t);
+      db.classList.toggle('hl-primary', one);
+      db.textContent = one ? '📖 معنى «' + cleanWord(t).slice(0, 14) + '»' : '📖 معنى';
+      if (one && db.previousElementSibling !== pop.querySelector('.hl-colors')) pop.querySelector('.hl-colors').after(db);
+      else if (!one && db.previousElementSibling !== $('#hl-note-btn')) $('#hl-note-btn').after(db);
+    }
     const w = pop.offsetWidth || 300, h = pop.offsetHeight || 100;
     pop.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, innerWidth - w - 8)) + 'px';
     // فوق التحديد مع فسحة كافية حتى لا يحجبه؛ فإن لم يتّسع فوقه فأسفله
@@ -2680,6 +2908,20 @@ const Reader = (() => {
 
     // إظهار الواجهة عند الحركة
     $('#reader').addEventListener('pointermove', () => { if (isOpen) showUI(); }, { passive: true });
+
+    // نقر مزدوج على كلمة (في النص أو طبقة نص الـPDF) ⇒ معناها مباشرة
+    $('#r-stage').addEventListener('dblclick', (e) => {
+      if (!isOpen || drawMode || settings.dblDefine === false) return;
+      if (e.target.closest && e.target.closest('button, .r-nav, .r-ribbon, #r-draw')) return;
+      setTimeout(() => {
+        const sel = getSelection();
+        const t = sel ? String(sel) : '';
+        if (!isSingleWord(t)) return;
+        const rect = sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+        hideHlPopup();
+        defineWord(t, rect);
+      }, 30);
+    });
 
     // مناطق النقر على الورقة + التحديد + السحب بالفأرة للتقليب
     let downX = null;
