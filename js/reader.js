@@ -1241,6 +1241,11 @@ const Reader = (() => {
   function pickVoice() {
     const vs = speechSynthesis.getVoices().filter((v) => /^ar/i.test(v.lang));
     if (!vs.length) return null;
+    // صوت اختاره القارئ (يُطابَق بالمعرّف ثم بالاسم، فقد يتغيّر المعرّف بين الأجهزة)
+    if (settings.ttsDeviceVoice) {
+      const chosen = vs.find((v) => v.voiceURI === settings.ttsDeviceVoice) || vs.find((v) => v.name === settings.ttsDeviceVoice);
+      if (chosen) return chosen;
+    }
     const score = (v) => (/(natural|online|neural|premium|enhanced)/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 2 : 0) + (v.localService ? 0 : 1);
     return vs.slice().sort((a, b) => score(b) - score(a))[0];
   }
@@ -1263,6 +1268,70 @@ const Reader = (() => {
     const ps = ocrFull.pageStarts;
     const a = ps[n - 1] ?? 0, b = ps[n] ?? ocrFull.text.length;
     return ocrFull.text.slice(a, b).replace(/\s+/g, ' ').trim();
+  }
+
+  // المحرّك المختار في الإعدادات (الطبيعي افتراضياً)؛ يُستعمل فعلاً متى توفّر الذكاء، وإلا صوت الجهاز
+  const engineSetting = () => settings.ttsEngine || 'natural';
+  const aiOk = () => !!(window.Cloud && Cloud.aiReady && Cloud.aiReady());
+
+  /* ── قائمة أصوات الجهاز العربية + التجربة ── */
+  const AR_REGION = { SA: 'السعودية', EG: 'مصر', AE: 'الإمارات', JO: 'الأردن', KW: 'الكويت', LB: 'لبنان', MA: 'المغرب', QA: 'قطر',
+    SY: 'سوريا', TN: 'تونس', IQ: 'العراق', DZ: 'الجزائر', BH: 'البحرين', LY: 'ليبيا', OM: 'عُمان', YE: 'اليمن', '001': 'فصحى' };
+  function deviceVoiceLabel(v) {
+    const reg = AR_REGION[(v.lang.split(/[-_]/)[1] || '').toUpperCase()] || '';
+    const natural = /(natural|online|neural|premium|enhanced)/i.test(v.name);
+    const name = v.name.replace(/^(Microsoft|Google|Apple)\s+/i, '').replace(/\s*\((Natural|Online)[^)]*\)/gi, '').replace(/\s*-\s*Arabic.*$/i, '').replace(/\s+Online/i, '').trim();
+    return `${name}${reg ? ' — ' + reg : ''}${natural ? ' ✨' : ''}`;
+  }
+  function fillDeviceVoices() {
+    const sel = $('#set-ttsdevice'); if (!sel || !('speechSynthesis' in window)) return;
+    const vs = speechSynthesis.getVoices().filter((v) => /^ar/i.test(v.lang))
+      .sort((a, b) => (/(natural|online|neural)/i.test(b.name) ? 1 : 0) - (/(natural|online|neural)/i.test(a.name) ? 1 : 0) || a.lang.localeCompare(b.lang));
+    sel.innerHTML = '<option value="">تلقائي (أفضل صوت عربي)</option>' + vs.map((v) => `<option value="${esc(v.voiceURI)}">${esc(deviceVoiceLabel(v))}</option>`).join('');
+    const cur = settings.ttsDeviceVoice || '';
+    sel.value = vs.some((v) => v.voiceURI === cur) ? cur : (vs.find((v) => v.name === cur) || {}).voiceURI || '';
+    const hint = $('#tts-device-hint');
+    if (hint) {
+      const nat = vs.filter((v) => /(natural|online|neural)/i.test(v.name)).length;
+      hint.textContent = !vs.length ? 'لا توجد أصوات عربية مثبّتة على هذا الجهاز — جرّب «صوت طبيعي»، أو أضف اللغة العربية للنطق من إعدادات النظام.'
+        : `على هذا الجهاز ${vs.length} ${vs.length > 2 && vs.length < 11 ? 'أصوات' : 'صوت'} عربي${nat ? `، منها ${nat} طبيعي ✨` : ''}.` + (nat ? '' : ' متصفح Edge يوفّر أصواتاً عربية طبيعية مجاناً (سعودية، مصرية، إماراتية…).');
+    }
+  }
+  if ('speechSynthesis' in window) { try { speechSynthesis.addEventListener('voiceschanged', fillDeviceVoices); } catch {} }
+  const TTS_SAMPLE = 'مرحباً بك. هذا صوت القراءة في مِداد: الكتاب هو الجليس الذي لا يطريك، والصديق الذي لا يقليك.';
+  function tryDeviceVoice() {
+    if (!('speechSynthesis' in window)) return Library.toast('صوت الجهاز غير مدعوم في هذا المتصفح');
+    if (ttsOn) ttsStop();
+    try { speechSynthesis.cancel(); } catch {}
+    const u = new SpeechSynthesisUtterance(TTS_SAMPLE);
+    const v = pickVoice(); if (v) u.voice = v;
+    u.lang = v ? v.lang : 'ar-SA';
+    u.rate = (settings.ttsRate || 100) / 100;
+    speechSynthesis.speak(u);
+  }
+  async function tryNaturalVoice(btn) {
+    if (Library.needAI && Library.needAI('الصوت الطبيعي')) return;
+    if (ttsOn) ttsStop();
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+    try {
+      const url = await synthChunk(TTS_SAMPLE);
+      if (!ttsAudio) ttsAudio = new Audio();
+      ttsAudio.onended = null; ttsAudio.src = url;
+      ttsAudio.playbackRate = Math.max(0.5, Math.min(2, (settings.ttsRate || 100) / 100));
+      await ttsAudio.play();
+    } catch (e) { Library.toast('تعذّرت تجربة الصوت: ' + ((e && e.message) || '')); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+  }
+  function syncVoiceRows() {
+    const nat = engineSetting() === 'natural', ai = aiOk();
+    const vl = $('#tts-voice-label'); if (vl) vl.hidden = !nat;
+    // الطبيعي مختار بلا مفتاح ⇒ صوت الجهاز هو ما يُقرأ فعلاً، فاعرض قائمته أيضاً مع تنبيه واضح
+    const dl = $('#tts-device-label'); if (dl) dl.hidden = nat && ai;
+    let warn = $('#tts-nat-warn');
+    if (vl && !warn) { warn = document.createElement('p'); warn.id = 'tts-nat-warn'; warn.className = 'fld-hint tts-warn'; vl.appendChild(warn); }
+    if (warn) { warn.hidden = !(nat && !ai); warn.innerHTML = 'يحتاج مفتاح Gemini — <button type="button" class="tts-link">أضِفه</button>. حتى ذلك يُقرأ بصوت الجهاز أدناه.'; const l = warn.querySelector('.tts-link'); if (l) l.onclick = () => Library.openAiKeyDialog && Library.openAiKeyDialog(); }
+    if (!(nat && ai)) fillDeviceVoices();
   }
 
   async function ttsToggle() {
@@ -1291,7 +1360,7 @@ const Reader = (() => {
       if (ttsIdx < 0) ttsIdx = 0;
     }
     // اختر المحرّك: طبيعي (سحابي) إن طُلب وكان متاحاً، وإلا صوت الجهاز
-    const wantNatural = settings.ttsEngine === 'natural' && window.Cloud && Cloud.aiReady && Cloud.aiReady();
+    const wantNatural = engineSetting() === 'natural' && window.Cloud && Cloud.aiReady && Cloud.aiReady();
     ttsEngine = wantNatural ? 'natural' : 'device';
     ttsOn = true; ttsPaused = false;
     $('#r-btn-tts').classList.add('on');
@@ -1468,7 +1537,8 @@ const Reader = (() => {
     if (ttsCache.has(text)) return ttsCache.get(text);
     if (ttsInflight.has(text)) return ttsInflight.get(text);
     const pr = (async () => {
-      const data = await Cloud.invokeFn('ai', { action: 'tts', text, voice: settings.ttsVoice || 'Kore' });
+      const voice = settings.ttsVoice || 'Kore';
+    const data = await Cloud.invokeFn('ai', { action: 'tts', text, voice });
       if (!data || !data.audio) throw new Error('لم يصل صوت');
       const url = 'data:' + (data.mime || 'audio/wav') + ';base64,' + data.audio;
       ttsCache.set(text, url); if (ttsCache.size > 40) ttsCache.delete(ttsCache.keys().next().value);
@@ -2014,11 +2084,14 @@ const Reader = (() => {
       b.onclick = () => {
         settings.ttsEngine = b.dataset.engine; Store.saveSettings(settings);
         er.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
-        const vl = $('#tts-voice-label'); if (vl) vl.hidden = settings.ttsEngine !== 'natural';
+        syncVoiceRows();
         if (settings.ttsEngine === 'natural' && !(window.Cloud && Cloud.aiReady && Cloud.aiReady())) Library.needAI && Library.needAI('الصوت الطبيعي');
       };
     }); }
-    { const sv = $('#set-ttsvoice'); if (sv) sv.onchange = (e) => { settings.ttsVoice = e.target.value; ttsCache.clear(); Store.saveSettings(settings); }; }
+    { const sv = $('#set-ttsvoice'); if (sv) sv.onchange = (e) => { settings.ttsVoice = e.target.value; ttsCache.clear(); Store.saveSettings(settings); tryNaturalVoice($('#tts-try-natural')); }; }
+    { const dv = $('#set-ttsdevice'); if (dv) dv.onchange = (e) => { settings.ttsDeviceVoice = e.target.value; Store.saveSettings(settings); tryDeviceVoice(); }; }
+    { const tn = $('#tts-try-natural'); if (tn) tn.onclick = () => tryNaturalVoice(tn); }
+    { const td = $('#tts-try-device'); if (td) td.onclick = tryDeviceVoice; }
     { const ss = $('#set-ttssleep'); if (ss) ss.onchange = (e) => { settings.ttsSleep = +e.target.value; Store.saveSettings(settings); if (ttsOn) startSleepTimer(); }; }
 
     $('#spread-row').querySelectorAll('button').forEach((b) => {
@@ -2162,10 +2235,10 @@ const Reader = (() => {
     { const er = $('#enhance-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b.dataset.enhance === '1') === (settings.enhanceScan !== false))); }
     $('#set-ttsrate').value = settings.ttsRate || 100;
     $('#set-autospeed').value = settings.autoSpeed || 50;
-    { const er = $('#tts-engine-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.engine === (settings.ttsEngine || 'natural'))); }
+    { const er = $('#tts-engine-row'); if (er) er.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.engine === engineSetting())); }
     { const sv = $('#set-ttsvoice'); if (sv) sv.value = settings.ttsVoice || 'Kore'; }
     { const ss = $('#set-ttssleep'); if (ss) ss.value = String(settings.ttsSleep || 0); }
-    { const vl = $('#tts-voice-label'); if (vl) vl.hidden = (settings.ttsEngine || 'natural') !== 'natural'; }
+    syncVoiceRows();
     $('#set-brightness').value = settings.brightness;
     $('#set-warmth').value = settings.warmth;
     $('#set-fontsize').value = settings.fontSize;

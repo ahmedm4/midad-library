@@ -431,16 +431,49 @@
         <button data-engine="natural" class="active">صوت طبيعي</button>
         <button data-engine="device">صوت الجهاز</button>
       </div>
-      <p class="fld-hint" style="margin-top:6px;line-height:1.7">«صوت طبيعي» ينطق بصوت بشري واقعي عبر خادمك (يتطلب تفعيل المزامنة السحابية)؛ «صوت الجهاز» يعمل بلا إنترنت لكنه آليّ.</p>
-      <label id="tts-voice-label">نبرة الصوت الطبيعي
-        <select id="set-ttsvoice">
-          <option value="Kore">هادئة (Kore)</option>
-          <option value="Puck">حيوية (Puck)</option>
-          <option value="Charon">رصينة (Charon)</option>
-          <option value="Aoede">دافئة (Aoede)</option>
-          <option value="Fenrir">جهورية (Fenrir)</option>
-        </select>
-      </label>
+      <p class="fld-hint" style="margin-top:6px;line-height:1.7">«صوت طبيعي» صوت بشري واقعي من Gemini (يتطلب مفتاح الذكاء الاصطناعي)؛ «صوت الجهاز» من أصوات جهازك ويعمل بلا إنترنت.</p>
+      <div class="tts-voice-row" id="tts-voice-label">
+        <label for="set-ttsvoice">الصوت الطبيعي</label>
+        <div class="tvr-ctl">
+          <select id="set-ttsvoice">
+          <optgroup label="أصوات نسائية">
+            <option value="Kore">هادئة واثقة (Kore)</option>
+            <option value="Aoede">دافئة منسابة (Aoede)</option>
+            <option value="Zephyr">مشرقة (Zephyr)</option>
+            <option value="Leda">شابّة (Leda)</option>
+            <option value="Despina">ناعمة (Despina)</option>
+            <option value="Achernar">رقيقة (Achernar)</option>
+            <option value="Sulafat">حنونة (Sulafat)</option>
+            <option value="Vindemiatrix">لطيفة (Vindemiatrix)</option>
+            <option value="Gacrux">ناضجة (Gacrux)</option>
+            <option value="Erinome">واضحة (Erinome)</option>
+          </optgroup>
+          <optgroup label="أصوات رجالية">
+            <option value="Charon">رصينة (Charon)</option>
+            <option value="Puck">حيوية (Puck)</option>
+            <option value="Fenrir">جهورية (Fenrir)</option>
+            <option value="Orus">حازمة (Orus)</option>
+            <option value="Iapetus">واضحة (Iapetus)</option>
+            <option value="Algieba">سلسة (Algieba)</option>
+            <option value="Rasalgethi">إخبارية (Rasalgethi)</option>
+            <option value="Sadaltager">متمكّنة (Sadaltager)</option>
+            <option value="Schedar">متّزنة (Schedar)</option>
+            <option value="Algenib">خشنة عميقة (Algenib)</option>
+            <option value="Achird">ودودة (Achird)</option>
+            <option value="Enceladus">هامسة (Enceladus)</option>
+          </optgroup>
+          </select>
+          <button type="button" class="tts-try" id="tts-try-natural" aria-label="جرّب الصوت الطبيعي المختار">▶ تجربة</button>
+        </div>
+      </div>
+      <div class="tts-voice-row" id="tts-device-label">
+        <label for="set-ttsdevice">صوت الجهاز</label>
+        <div class="tvr-ctl">
+          <select id="set-ttsdevice"><option value="">تلقائي (أفضل صوت عربي)</option></select>
+          <button type="button" class="tts-try" id="tts-try-device" aria-label="جرّب صوت الجهاز المختار">▶ تجربة</button>
+        </div>
+        <p class="fld-hint" id="tts-device-hint"></p>
+      </div>
       <label>سرعة القراءة <input type="range" id="set-ttsrate" min="60" max="140" value="100"></label>
       <label>مؤقّت النوم
         <select id="set-ttssleep">
