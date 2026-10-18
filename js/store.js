@@ -93,20 +93,34 @@ const Store = (() => {
 
   /* ── إعدادات القارئ (عامة) ── */
   const SETTINGS_KEY = 'midad-settings';
+  // الجوال (لمس + شاشة ضيّقة): التمرير المتصل أنسب للقراءة بإصبع واحد؛ الحاسب واللوحي: التقليب الورقي
+  const isPhone = (() => {
+    try { return matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600; } catch { return false; }
+  })();
   const DEFAULT_SETTINGS = {
     theme: 'sepia', customPaper: null,
     brightness: 100, warmth: 0, bg: 'dusk',
     font: "'Noto Naskh Arabic', serif", fontSize: 20, lineHeight: 190, width: 680,
-    flip: 'flip', spread: false, realFlip: true, ttsRate: 100, paperFx: 'none', autoSpeed: 50, enhanceScan: true, focusMode: false,
+    flip: isPhone ? 'scroll' : 'flip', spread: false, realFlip: true, ttsRate: 100, paperFx: 'none', autoSpeed: 50, enhanceScan: true, focusMode: false,
     pdfFit: 'page', ocrProvider: 'gemini', ttsEngine: 'natural', ttsVoice: 'Kore', ttsSleep: 0, keepAwake: true,
   };
   function getSettings() {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
     catch { return { ...DEFAULT_SETTINGS }; }
   }
+  // ترحيل لمرة واحدة: الجوالات التي حُفظ فيها «تقليب ورقي» افتراضياً (قبل أن يصبح الافتراضي فيها
+  // «تمرير متصل») تنتقل إليه. ما يختاره القارئ بعد ذلك يبقى كما هو.
+  try {
+    if (isPhone && !localStorage.getItem('midad-nav-phone-default')) {
+      const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+      if (raw && raw.flip && raw.flip !== 'scroll') { raw.flip = 'scroll'; localStorage.setItem(SETTINGS_KEY, JSON.stringify(raw)); }
+      localStorage.setItem('midad-nav-phone-default', '1');
+    }
+  } catch {}
   /* مزامنة الإعدادات بين الأجهزة: تُزامَن التفضيلات فقط، أما ما يتبع الشاشة والمكان
-     (حجم الخط، عرض النص، الصفحتان المتقابلتان، السطوع) فيبقى لكل جهاز. */
-  const SYNC_SETTING_KEYS = ['theme', 'customPaper', 'warmth', 'bg', 'font', 'lineHeight', 'flip', 'realFlip',
+     (حجم الخط، عرض النص، الصفحتان المتقابلتان، السطوع، وأسلوب التنقل: تقليب على الحاسب
+     وتمرير على الجوال) فيبقى لكل جهاز. */
+  const SYNC_SETTING_KEYS = ['theme', 'customPaper', 'warmth', 'bg', 'font', 'lineHeight',
     'ttsRate', 'paperFx', 'autoSpeed', 'enhanceScan', 'focusMode', 'pdfFit', 'ocrProvider', 'ttsEngine', 'ttsVoice', 'ttsSleep', 'keepAwake'];
   const SETTINGS_AT_KEY = 'midad-settings-at', LIBTHEME_KEY = 'midad-lib-theme';
   const syncedOf = (s) => { const o = {}; for (const k of SYNC_SETTING_KEYS) if (s && s[k] !== undefined) o[k] = s[k]; return o; };
