@@ -732,3 +732,23 @@
 .tts-voice-row .fld-hint { margin-top: 6px; }
 .tts-warn { color: #e0a33a !important; }
 .tts-link { color: #ffe9bd; text-decoration: underline; font-size: inherit; padding: 0; }
+
+/* ═══════ الحوافّ الآمنة (آيفون: النتوء/Dynamic Island وشريط الشاشة الرئيسية؛ والوضع الأفقي) ═══════
+   الصفحة ممدودة تحت شريط الحالة (viewport-fit=cover)، فتُزاح الأدوات عنه كي تبقى ظاهرة وقابلة للمس. */
+.r-top { padding-top: max(14px, env(safe-area-inset-top)); padding-inline: max(22px, env(safe-area-inset-right)) max(22px, env(safe-area-inset-left)); }
+.r-bottom { padding-bottom: max(16px, env(safe-area-inset-bottom)); padding-inline: max(30px, env(safe-area-inset-right)) max(30px, env(safe-area-inset-left)); }
+.r-drawer { padding-top: max(26px, calc(env(safe-area-inset-top) + 12px)); padding-bottom: max(26px, env(safe-area-inset-bottom)); }
+.zoom-pill { bottom: calc(18px + env(safe-area-inset-bottom)); }
+.tts-caption { bottom: calc(74px + env(safe-area-inset-bottom)); }
+#reader.ui-hidden .tts-caption { bottom: calc(16px + env(safe-area-inset-bottom)); }
+.r-pdf-scroll { padding-top: max(22px, env(safe-area-inset-top)); padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+@media (max-width: 760px) {
+  .r-top { padding: max(10px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 10px max(8px, env(safe-area-inset-left)); }
+  .r-bottom { padding: 10px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .zoom-pill { bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .r-top .icon-btn { width: 40px; height: 40px; } /* هدف لمس مريح (≈ ٤٤ نقطة مع الهامش) */
+}
+@media (max-width: 600px) { .tts-caption { bottom: calc(64px + env(safe-area-inset-bottom)); } }
+/* اللمس: لا وميض رمادي عند النقر، ولا قائمة «حفظ الصورة» عند الضغط المطوّل على صفحة الـPDF */
+#reader { -webkit-tap-highlight-color: transparent; }
+#reader canvas, #reader .pf-img { -webkit-touch-callout: none; }

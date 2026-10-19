@@ -1244,3 +1244,15 @@ a.disc-import.disc-openfile { text-decoration: none; }
 
 .cloud-or { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; color: var(--muted); font-size: 12.5px; }
 .cloud-or::before, .cloud-or::after { content: ''; flex: 1; height: 1px; background: var(--card-line); }
+
+/* ═══════ الجوال: حوافّ آمنة، ارتفاع الشاشة الحقيقي، وحقول لا تُكبّر الصفحة ═══════ */
+.topbar { padding-top: max(26px, calc(env(safe-area-inset-top) + 10px)); padding-inline: max(44px, env(safe-area-inset-right)) max(44px, env(safe-area-inset-left)); }
+@media (max-width: 760px) { .topbar { padding-inline: max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-left)); } }
+.modal-backdrop { padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.modal { max-height: 92vh; max-height: 92dvh; } /* dvh: يحسب شريط عنوان Safari الذي يظهر ويختفي */
+.ui-dialog { padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.ui-dialog .ud-box { max-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; }
+#toast-wrap { bottom: calc(28px + env(safe-area-inset-bottom)); }
+/* آيفون يكبّر الصفحة تلقائياً عند الكتابة في حقل خطّه أصغر من 16px — ويبقى مكبَّراً */
+@media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em); } }
+body { -webkit-tap-highlight-color: transparent; }

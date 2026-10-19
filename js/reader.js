@@ -64,6 +64,8 @@ const Reader = (() => {
     $('#reader').hidden = false;
     document.body.style.overflow = 'hidden';
     isOpen = true;
+    // إيماءة الرجوع (أندرويد) والسحب من الحافّة (آيفون) وزر «رجوع» في المتصفح: تُغلق الكتاب
+    try { if (!(history.state && history.state.midadReader)) history.pushState({ midadReader: true }, ''); } catch {}
     startWakeLock(); // إبقاء الشاشة مضاءة أثناء القراءة
 
     const reader = $('#reader');
@@ -153,12 +155,15 @@ const Reader = (() => {
     renderDrawerPanes();
     updateHUD();
     startTimers();
-    showUI();
+    // عند الفتح: تظهر الأدوات لحظةً ليعرف القارئ مكانها، ثم تتنحّى (أياً كانت وسيلة الإدخال)
+    $('#reader').classList.remove('ui-hidden'); resetUiTimer();
   }
 
-  async function close() {
+  async function close(fromHistory) {
     if (!isOpen) return;
     isOpen = false;
+    // أُغلق بزرّ التطبيق ⇒ أزِل مدخل السجلّ الذي أضفناه عند الفتح (كي لا يحتاج «رجوع» ضغطتين)
+    if (fromHistory !== true) { try { if (history.state && history.state.midadReader) history.back(); } catch {} }
     await persist(true);
     clearInterval(tickTimer); clearTimeout(uiTimer); clearTimeout(saveTimer);
     stopWakeLock();
@@ -2825,9 +2830,37 @@ const Reader = (() => {
     resetUiTimer();
   }
 
-  function showUI() {
+  /* أدوات القراءة (أسلوب Apple Books وPlay Books):
+     • لمس منتصف الصفحة يُظهرها/يخفيها — في كل الأوضاع، النص والـPDF، المقلَّب والمتصل.
+     • تقليب الصفحة باللمس أو السحب، أو التمرير للأمام، يخفيها (القراءة أولاً).
+     • التمرير للخلف قليلاً يعيدها (كما في متصفحات الجوال)، وكذلك بلوغ أول الكتاب أو آخره.
+     • باللمس: تبقى ظاهرة حتى يخفيها القارئ (لا مؤقّت يسحبها من تحت إصبعه).
+       بالفأرة: تظهر بالحركة وتختفي بعد سكون قصير. */
+  let lastPointerType = 'mouse';
+  function showUI(sticky) {
     $('#reader').classList.remove('ui-hidden');
-    resetUiTimer();
+    if (sticky || lastPointerType !== 'mouse') clearTimeout(uiTimer);
+    else resetUiTimer();
+  }
+  function hideUI() {
+    if (!isOpen) return;
+    const busy = document.querySelector('.r-drawer.open') || !$('#r-search').hidden || !$('#hl-popup').hidden || drawMode;
+    if (busy) return;
+    clearTimeout(uiTimer);
+    $('#reader').classList.add('ui-hidden');
+  }
+  function toggleUI() { if ($('#reader').classList.contains('ui-hidden')) showUI(); else hideUI(); }
+  // التمرير: للأمام يخفي، وللخلف (~٥٠ بكسل متتالية) يُظهر؛ الحافّتان تُظهران
+  let scrollLastTop = 0, scrollUpAcc = 0;
+  function onReadScroll(el) {
+    if (!isOpen || autoOn) return;
+    const top = el.scrollTop, d = top - scrollLastTop;
+    scrollLastTop = top;
+    if (Math.abs(d) < 2) return;
+    const atEdge = top < 24 || top + el.clientHeight >= el.scrollHeight - 24;
+    if (atEdge) { scrollUpAcc = 0; showUI(true); return; }
+    if (d > 0) { scrollUpAcc = 0; if (top > 60 && !$('#reader').classList.contains('ui-hidden')) hideUI(); }
+    else { scrollUpAcc -= d; if (scrollUpAcc > 50) { scrollUpAcc = 0; showUI(true); } }
   }
   function resetUiTimer() {
     clearTimeout(uiTimer);
@@ -2859,7 +2892,19 @@ const Reader = (() => {
   function wire() {
     contentEl = $('#r-content');
     viewportEl = $('#r-viewport');
-    $('#r-back').onclick = close;
+    $('#r-back').onclick = () => close();
+    window.addEventListener('popstate', () => {
+      if (!isOpen) return;
+      // الرجوع يغلق أولاً ما فوق الصفحة (درج/بحث/مساعد/تحديد)، ثم الكتاب نفسه
+      const layer = document.querySelector('.r-drawer.open') || !$('#r-search').hidden || ($('#ai-modal') && !$('#ai-modal').hidden) || !$('#hl-popup').hidden || !$('#define-bubble').hidden;
+      if (layer) {
+        closeDrawers(); $('#r-search').hidden = true; hideHlPopup(); hideDefineBubble();
+        if ($('#ai-modal')) { $('#ai-modal').hidden = true; const ab = $('#r-btn-ai'); if (ab) ab.classList.remove('on'); }
+        try { history.pushState({ midadReader: true }, ''); } catch {}
+        return;
+      }
+      close(true);
+    });
     $('#r-next').onclick = () => { next(); bump(); };
     $('#r-prev').onclick = () => { prev(); bump(); };
     $('#r-btn-settings').onclick = () => toggleDrawer('#settings-drawer');
@@ -2957,7 +3002,7 @@ const Reader = (() => {
         if (e.key === 'Escape') { $('#r-search').hidden = true; e.target.blur(); }
         return;
       }
-      bump(); showUI();
+      bump(); lastPointerType = 'mouse'; showUI();
       switch (e.key) {
         case 'ArrowLeft': case 'PageDown': case ' ': e.preventDefault(); next(); break;
         case 'ArrowRight': case 'PageUp': e.preventDefault(); prev(); break;
@@ -2979,8 +3024,11 @@ const Reader = (() => {
       }
     });
 
-    // إظهار الواجهة عند الحركة
-    $('#reader').addEventListener('pointermove', () => { if (isOpen) showUI(); }, { passive: true });
+    // إظهار الواجهة بحركة الفأرة فقط (حركة الإصبع سحبٌ للقراءة، لا طلبٌ للأدوات)
+    $('#reader').addEventListener('pointerdown', (e) => { lastPointerType = e.pointerType || 'mouse'; }, { passive: true, capture: true });
+    $('#reader').addEventListener('pointermove', (e) => { if (isOpen && e.pointerType === 'mouse') { lastPointerType = 'mouse'; showUI(); } }, { passive: true });
+    viewportEl.addEventListener('scroll', () => { if (settings.flip === 'scroll' && !isPdf) onReadScroll(viewportEl); }, { passive: true });
+    $('#r-pdf-scroll').addEventListener('scroll', (e) => onReadScroll(e.currentTarget), { passive: true });
 
     // نقر مزدوج على كلمة (في النص أو طبقة نص الـPDF) ⇒ معناها مباشرة
     $('#r-stage').addEventListener('dblclick', (e) => {
@@ -2997,10 +3045,10 @@ const Reader = (() => {
     });
 
     // مناطق النقر على الورقة + التحديد + السحب بالفأرة للتقليب
-    let downX = null;
+    let downX = null, downY = null;
     $('#r-stage').addEventListener('pointerdown', (e) => {
       if (drawMode && e.target.id === 'r-draw') { downX = null; return; }
-      downX = e.clientX;
+      downX = e.clientX; downY = e.clientY;
     });
     $('#r-stage').addEventListener('pointerup', (e) => {
       if (!isOpen) return;
@@ -3008,7 +3056,8 @@ const Reader = (() => {
       // أي لمسة توقف القراءة التلقائية
       if (autoOn) { stopAuto(); showUI(); downX = null; return; }
       const dx = downX != null ? e.clientX - downX : 0;
-      downX = null;
+      const dy = downY != null ? e.clientY - downY : 0;
+      downX = null; downY = null;
       setTimeout(() => {
         const sel = getSelection();
         if (sel && !sel.isCollapsed) { if (isPdf) onPdfSelection(); else onTextSelection(); return; }
@@ -3032,18 +3081,20 @@ const Reader = (() => {
             return;
           }
         }
-        if (e.target.closest('.r-nav, .r-ribbon, button, #r-draw, #r-pdf-scroll')) return;
-        const paged = settings.flip !== 'scroll';
+        if (e.target.closest('.r-nav, .r-ribbon, button, #r-draw, .tts-caption, #zoom-pill')) return;
+        // صفحات الـPDF المتصلة تُعدّ تمريراً حتى لو اختير «تقليب» (تكبير/وضع متصل)
+        const paged = settings.flip !== 'scroll' && !e.target.closest('#r-pdf-scroll');
         // سحب أفقي = تقليب (سحب لليمين يقدّم الصفحة كما في الكتاب العربي)
-        if (paged && Math.abs(dx) > 60) { if (dx > 0) next(); else prev(); return; }
-        if (Math.abs(dx) > 12) return; // سحب قصير — لا شيء
-        // مناطق التقليب بالنقر
+        if (paged && Math.abs(dx) > 60) { if (dx > 0) next(); else prev(); hideUI(); return; }
+        if (Math.abs(dx) > 12 || Math.abs(dy) > 12) return; // سحب أو تمرير — ليس لمسة
+        // التمرير المتصل: أي لمسة على الصفحة تُظهر الأدوات أو تخفيها
+        if (!paged) { toggleUI(); return; }
+        // المقلَّب: الحافّتان تقلّبان (والأدوات تختفي)، والمنتصف يُظهرها/يخفيها
         const stage = $('#r-stage').getBoundingClientRect();
         const x = (e.clientX - stage.left) / stage.width;
-        if (!paged) return;
-        if (x < 0.22) next();
-        else if (x > 0.78) prev();
-        else { $('#reader').classList.toggle('ui-hidden'); }
+        if (x < 0.22) { next(); hideUI(); }
+        else if (x > 0.78) { prev(); hideUI(); }
+        else toggleUI();
       }, 10);
     });
 
@@ -3231,6 +3282,7 @@ const Reader = (() => {
       if ((sel && !sel.isCollapsed) || drawMode || (isPdf && pdfZoom > 1.01)) return;
       if (Math.abs(dx) > 60 && settings.flip !== 'scroll') {
         if (dx > 0) next(); else prev(); // سحب لليمين = التالية (RTL)
+        hideUI();
       }
     }, { passive: true });
 
