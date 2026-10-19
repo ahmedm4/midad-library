@@ -1,11 +1,14 @@
 /* ═══════ مِداد — التشغيل ═══════ */
-const APP_VERSION = 'v119'; // يُحدَّث مع كل إصدار
+const APP_VERSION = 'v120'; // يُحدَّث مع كل إصدار
 
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
   { const v = document.getElementById('app-ver'); if (v) v.textContent = APP_VERSION; }
 
   await Store.init();
+  // تخزين دائم: يمنع المتصفح من مسح الكتب عند ضيق المساحة — وSafari على الآيفون يمسح بيانات
+  // المواقع غير المثبّتة بعد أيام من عدم الاستعمال ما لم يُمنح هذا الإذن
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then((ok) => { if (!ok) navigator.storage.persist().catch(() => {}); }); } catch {}
   await seedGuide();
   // المكتبة يجب أن تظهر دائماً حتى لو فشل ربط القارئ (مثلاً عند عدم تطابق نسخ الملفات)
   try { Reader.wire(); } catch (e) { console.error('reader wire', e); }

@@ -20,27 +20,49 @@ const Store = (() => {
   }
 
   const os = (name, mode = 'readonly') => db.transaction(name, mode).objectStore(name);
-  const p = (req) => new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+  const FULL_MSG = 'مساحة التخزين على هذا الجهاز ممتلئة — أفرغ مساحة من «☁️ ← 📊 حالة السحابة ← أفرغ مساحة» أو احذف كتباً لا تحتاجها، ثم أعد المحاولة';
+  const isFull = (e) => !!e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || ''));
+  const p = (req) => new Promise((res, rej) => {
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(isFull(req.error) ? Object.assign(new Error(FULL_MSG), { name: 'QuotaExceededError' }) : req.error);
+  });
 
-  /* ── الكتب ── */
+  /* ── الكتب ──
+     نسخة في الذاكرة من قائمة الكتب: قراءة كل الكتب بأغلفتها (عشرات الميغابايتات في مكتبة كبيرة)
+     كانت تتكرّر مع كل تحديث للمكتبة (بعد كل مزامنة وعند إغلاق كل كتاب). تُحدَّث مع كل كتابة،
+     وتُبطَل إن عدّلت نافذة أخرى للتطبيق قاعدة البيانات. يُعاد للمستدعي نسخٌ سطحية كي لا يعدّل الأصل. */
+  let booksCache = null; // Map(id → كتاب)
+  const clone = (b) => (b ? { ...b } : b);
+  let bc = null; try { bc = new BroadcastChannel('midad-store'); bc.onmessage = () => { booksCache = null; }; } catch {}
+  const changed = () => { try { bc && bc.postMessage('books'); } catch {} };
+  async function loadBooks() {
+    if (!booksCache) booksCache = new Map((await p(os('books').getAll())).map((b) => [b.id, b]));
+    return booksCache;
+  }
   async function addBook(meta, payload) {
     meta.id = meta.id || (crypto.randomUUID ? crypto.randomUUID() : 'b' + Date.now() + Math.random().toString(36).slice(2));
     meta.addedAt = meta.addedAt || Date.now();
     await p(os('books', 'readwrite').put(meta));
+    if (booksCache) booksCache.set(meta.id, { ...meta });
+    changed();
     if (payload != null) await p(os('files', 'readwrite').put(payload, meta.id));
     return meta.id;
   }
-  const getBooks = () => p(os('books').getAll());
-  const getBook = (id) => p(os('books').get(id));
+  const getBooks = async () => [...(await loadBooks()).values()].map(clone);
+  const getBook = async (id) => clone((await loadBooks()).get(id));
   async function updateBook(id, patch) {
-    const b = await getBook(id);
+    const b = await p(os('books').get(id));
     if (!b) return;
     Object.assign(b, patch);
     await p(os('books', 'readwrite').put(b));
+    if (booksCache) booksCache.set(id, { ...b });
+    changed();
     return b;
   }
   async function deleteBook(id) {
+    if (booksCache) booksCache.delete(id);
     await p(os('books', 'readwrite').delete(id));
+    changed();
     await p(os('files', 'readwrite').delete(id));
     try { await deleteAssets(id); } catch {}
     await p(os('states', 'readwrite').delete(id));
@@ -64,6 +86,8 @@ const Store = (() => {
     });
   }
   const updatePayload = (id, payload) => p(os('files', 'readwrite').put(payload, id));
+  // حذف ملف الكتاب من هذا الجهاز فقط (يبقى الكتاب وبياناته، ويُنزَّل الملف من السحابة عند فتحه)
+  const deletePayload = (id) => p(os('files', 'readwrite').delete(id));
   const getFulltext = (id) => p(os('fulltext').get(id));
   const saveFulltext = (id, text) => p(os('fulltext', 'readwrite').put(text, id));
 
@@ -217,7 +241,7 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, putAsset, getAssets, deleteAssets, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
+  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, deletePayload, putAsset, getAssets, deleteAssets, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
     deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal,
     markSettingsChanged, getSettingsAt, getSyncedSettings, adoptSyncedSettings };
 })();

@@ -180,6 +180,7 @@ const Library = (() => {
     wireCloud();
     await refresh();
     setTimeout(maybeWelcome, 1200);
+    setTimeout(checkStorage, 6000);
   }
 
   /* ─── واجهة المزامنة السحابية ─── */
@@ -275,6 +276,21 @@ const Library = (() => {
   // نعيد السؤال عند كل فتح ما دام غير مفعّل (يظهر الزر فور تفعيله في الخادم)
   function openCloudModal() { $('#cloud-modal').hidden = false; if (!googleOk) showGoogle(true); }
 
+  /* ─── مساحة الجهاز: تنبيه قبل الامتلاء (لا بعده) ─── */
+  async function checkStorage(force) {
+    try {
+      if (!navigator.storage || !navigator.storage.estimate) return;
+      const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+      if (!quota || usage / quota < 0.85) return;
+      const day = new Date().toDateString();
+      if (!force && localStorage.getItem('midad-storage-warned') === day) return;
+      localStorage.setItem('midad-storage-warned', day);
+      const cloud = window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn();
+      toast(`مساحة التخزين على هذا الجهاز توشك على الامتلاء (${Math.round(usage * 100 / quota)}٪) — ` +
+        (cloud ? 'افتح ☁️ ← «📊 حالة السحابة» ← «أفرغ مساحة»' : 'احذف كتباً لا تحتاجها، أو فعّل المزامنة لتُحفظ في السحابة'));
+    } catch {}
+  }
+
   async function googleSignIn(btn) {
     if (btn) btn.disabled = true;
     try {
@@ -356,6 +372,14 @@ const Library = (() => {
       const n = (f) => bk.filter(f).length;
       const pending = bk.filter((b) => b.cloud === 'pending');
       const notLocal = bk.filter((b) => !b.local && (b.cloud === 'ok' || b.cloud === 'text'));
+      // يمكن إفراغها: ملفات PDF على الجهاز ومحفوظة في السحابة، غير مثبّتة، ومنتهية أو مهجورة ٩٠ يوماً
+      const now = Date.now(), OLD = 90 * 864e5;
+      const freeable = bk.filter((b) => {
+        if (!b.local || b.type !== 'pdf' || b.cloud !== 'ok' || b.pinned) return false;
+        const st = states[b.id] || {}; const bookRec = books.find((x) => x.id === b.id) || {};
+        return st.finished || (st.lastRead ? now - st.lastRead > OLD : now - (bookRec.addedAt || now) > OLD);
+      });
+      const freeBytes = freeable.reduce((t, b) => t + (b.localSize || 0), 0);
       const dlBytes = notLocal.reduce((t, b) => t + (b.cloudSize || 0), 0);
       const issues = (b) => b.cloud === 'pending' || b.cloud === 'missing' || b.cloud === 'toobig';
       const shown = bk.filter(filter === 'issues' ? issues : filter === 'local' ? (b) => b.local : filter === 'remote' ? (b) => !b.local : () => true);
@@ -375,6 +399,7 @@ const Library = (() => {
         <div class="cr-actions">
           ${pending.length ? `<button class="gold" data-a="up">⬆️ ارفع الآن ما لم يُرفع (${pending.length})</button>` : ''}
           ${notLocal.length ? `<button data-a="down">⬇️ نزّل الكل لهذا الجهاز (${notLocal.length}${dlBytes ? ' · ' + fmtBytes(dlBytes) : ''})</button>` : ''}
+          ${freeable.length ? `<button data-a="free" title="ملفات الكتب المنتهية أو التي لم تُفتح منذ ٩٠ يوماً — تبقى في السحابة وتُنزَّل تلقائياً عند فتحها">🧹 أفرغ ${fmtBytes(freeBytes)} من هذا الجهاز (${freeable.length})</button>` : ''}
         </div>
         <label class="cr-toggle"><input type="checkbox" data-a="all" ${rep.offline.all ? 'checked' : ''}> أبقِ كل الكتب متاحة دون اتصال على هذا الجهاز (تُنزَّل تدريجياً في الخلفية)</label>
         <div class="cr-filter" role="tablist">
@@ -402,6 +427,15 @@ const Library = (() => {
         const r = await Cloud.downloadBooks(notLocal.map((b) => b.id), (d, t) => setMsg(`⏳ جارٍ التنزيل… ${d}/${t}`));
         toast(r.failed ? `نُزّل ${r.done} وتعذّر ${r.failed}` : `✓ نُزّلت ${r.done} كتب — متاحة دون اتصال`, r.failed ? '' : 'gold');
       });
+      const free = body.querySelector('[data-a="free"]');
+      if (free) free.onclick = async () => {
+        const ok = await uiConfirm(`سيُحذف من هذا الجهاز ملف ${freeable.length} كتاب (${fmtBytes(freeBytes)}) — المنتهية أو التي لم تُفتح منذ ٩٠ يوماً. تبقى الكتب في مكتبتك بتقدّمك وتظليلاتك، وملفاتها في السحابة، وتُنزَّل تلقائياً متى فتحتها.`, { title: 'إفراغ مساحة؟', okText: 'أفرغ', icon: '🧹' });
+        if (!ok) return;
+        run(async () => {
+          for (const b of freeable) { try { await Store.deletePayload(b.id); } catch {} }
+          toast(`✓ أُفرغ ${fmtBytes(freeBytes)} من هذا الجهاز`, 'gold');
+        });
+      };
       body.querySelector('[data-a="all"]').onchange = (e) => {
         Cloud.setOffline({ all: e.target.checked });
         toast(e.target.checked ? 'ستُنزَّل كل الكتب تدريجياً في الخلفية' : 'تُنزَّل الكتب عند فتحها فقط');
@@ -1750,7 +1784,7 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   function coverHTML(b, extraClass = '') {
-    if (b.cover) return `<img class="${extraClass}" src="${b.cover}" alt="">`;
+    if (b.cover) return `<img class="${extraClass}" src="${b.cover}" alt="" loading="lazy" decoding="async">`;
     const pal = COVER_PALETTES[hashCode(b.id) % COVER_PALETTES.length];
     const orn = ORNAMENTS[hashCode(b.title) % ORNAMENTS.length];
     return `
