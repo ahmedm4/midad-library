@@ -2776,7 +2776,11 @@ const Reader = (() => {
     if (window.Cloud) Cloud.pushState(book.id);
   }
 
-  function bump() { lastActivity = Date.now(); if (isOpen && !wakeLock) syncWakeLock(); }
+  function bump() {
+    lastActivity = Date.now();
+    if (isOpen && !wakeLock && !(wakeVideo && !wakeVideo.paused)) syncWakeLock();
+    else if (isOpen && wakeApiFailed && 'wakeLock' in navigator && !wakeLock) { wakeApiFailed = ''; syncWakeLock(); } // لمسة حديثة: جرّب القياسي ثانيةً
+  }
 
   /* ═══════ إبقاء الشاشة مضاءة أثناء القراءة (Screen Wake Lock) ═══════
      القراءة لا تلمس الشاشة كثيراً فيطفئها الجهاز. نطلب قفل الشاشة ما دام الكتاب مفتوحاً،
@@ -2786,24 +2790,72 @@ const Reader = (() => {
   let wakeLock = null, wakeReq = null, wakeTimer = null;
   const wakeWanted = () => isOpen && settings && settings.keepAwake !== false && !document.hidden
     && (ttsOn || autoOn || Date.now() - lastActivity < AWAKE_IDLE_MS);
-  async function syncWakeLock() {
-    if (!('wakeLock' in navigator)) return; // متصفح لا يدعمه: يبقى سلوك الجهاز المعتاد
-    if (wakeWanted()) {
-      // طلبٌ واحد فقط في كل مرة: لمسة واحدة تطلق حدثَي نشاط، ولولا هذا لاجتمع قفلان
-      // ويبقى أحدهما معلّقاً بعد إغلاق الكتاب فلا تنطفئ الشاشة
-      if (wakeLock || wakeReq) return;
-      wakeReq = navigator.wakeLock.request('screen');
-      try {
-        const l = await wakeReq;
-        wakeLock = l;
-        l.addEventListener('release', () => { if (wakeLock === l) wakeLock = null; });
-        if (!wakeWanted()) syncWakeLock(); // تغيّر الحال أثناء الطلب (أُغلق الكتاب مثلاً) ⇒ اتركه
-      } catch { wakeLock = null; } // قد يُرفض (توفير الطاقة/البطارية المنخفضة) — لا ضرر
-      finally { wakeReq = null; }
-    } else if (wakeLock) {
-      const l = wakeLock; wakeLock = null;
-      try { await l.release(); } catch {}
+  /* بديل حيث لا تعمل واجهة القفل: فيديو صامت صغير جداً يُشغَّل مكرّراً (طريقة NoSleep.js).
+     الجهاز لا يطفئ الشاشة أثناء تشغيل فيديو. نلجأ إليه حين:
+     • لا يدعم المتصفح الواجهة (متصفحات واتساب/تيليجرام/فيسبوك الداخلية، نسخ قديمة)؛
+     • يرفض النظام الطلب؛
+     • آيفون مثبّتاً على الشاشة الرئيسية: قبل iOS 18.4 يُمنح القفل فيه ولا يعمل فعلاً. */
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const iosStandalone = isIOS && (navigator.standalone === true || matchMedia('(display-mode: standalone)').matches);
+  let wakeVideo = null, wakeApiFailed = '', wakeStatus = 'off';
+  function wakeVideoEl() {
+    if (wakeVideo) return wakeVideo;
+    const v = document.createElement('video');
+    v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('muted', '');
+    v.muted = true; v.loop = true; v.preload = 'auto'; v.setAttribute('aria-hidden', 'true'); v.tabIndex = -1;
+    // مرئي بحجم بكسل واحد تقريباً: بعض المتصفحات لا تشغّل الفيديو المخفي تماماً
+    v.style.cssText = 'position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1';
+    for (const [src, type] of [['vendor/awake.mp4', 'video/mp4'], ['vendor/awake.webm', 'video/webm']]) {
+      const s = document.createElement('source'); s.src = src; s.type = type; v.appendChild(s);
     }
+    document.body.appendChild(v);
+    wakeVideo = v;
+    return v;
+  }
+  const needVideo = () => !('wakeLock' in navigator) || !!wakeApiFailed || iosStandalone;
+  async function playWakeVideo() {
+    const v = wakeVideoEl();
+    if (!v.paused) return true;
+    try { await v.play(); return true; } catch { return false; } // قد يحتاج لمسة: نعيد المحاولة مع اللمسة التالية
+  }
+  function setWakeStatus() {
+    const api = !!wakeLock, vid = !!(wakeVideo && !wakeVideo.paused);
+    wakeStatus = !wakeWanted() ? (settings && settings.keepAwake === false ? 'off' : 'idle') : (api || vid) ? (api ? 'api' : 'video') : 'failed';
+    const el = $('#awake-status');
+    if (el) el.textContent = {
+      off: 'الشاشة تتبع إعداد الجهاز.',
+      idle: 'متوقّف الآن (لا كتاب مفتوح أو خمول طويل).',
+      api: '✓ تعمل — الشاشة لن تنطفئ أثناء القراءة.',
+      video: !('wakeLock' in navigator) ? '✓ تعمل بطريقة بديلة (متصفحك لا يدعم الطريقة المعتادة).'
+        : wakeApiFailed ? '✓ تعمل بطريقة بديلة (رفض النظام الطريقة المعتادة).' : '✓ تعمل — الشاشة لن تنطفئ أثناء القراءة.',
+      failed: '⚠ لم يسمح الجهاز بإبقاء الشاشة مضاءة' + (wakeApiFailed ? ` (${wakeApiFailed})` : '') + ' — المس الصفحة مرة، وأوقف «توفير الطاقة» إن كان مفعّلاً.',
+    }[wakeStatus];
+  }
+  async function syncWakeLock() {
+    if (wakeWanted()) {
+      // ١) الواجهة القياسية — طلبٌ واحد فقط في كل مرة: لمسة واحدة تطلق حدثَي نشاط، ولولا هذا
+      //    لاجتمع قفلان ويبقى أحدهما معلّقاً بعد إغلاق الكتاب فلا تنطفئ الشاشة
+      if ('wakeLock' in navigator && !wakeLock && !wakeReq) {
+        wakeReq = navigator.wakeLock.request('screen');
+        try {
+          const l = await wakeReq;
+          wakeLock = l; wakeApiFailed = '';
+          l.addEventListener('release', () => { if (wakeLock === l) { wakeLock = null; setWakeStatus(); } });
+          if (!wakeWanted()) return syncWakeLock(); // تغيّر الحال أثناء الطلب (أُغلق الكتاب مثلاً) ⇒ اتركه
+        } catch (e) {
+          wakeLock = null;
+          // يُرفض أحياناً بلا لمسة حديثة أو مع توفير الطاقة ⇒ البديل الآن، وإعادة المحاولة مع اللمسة التالية
+          wakeApiFailed = (e && e.name === 'NotAllowedError') ? 'رفضه النظام' : ((e && e.message) || 'خطأ').slice(0, 60);
+        } finally { wakeReq = null; }
+      }
+      // ٢) البديل (فيديو صامت) حيث لا يكفي القفل
+      if (needVideo()) await playWakeVideo();
+      else if (wakeVideo && !wakeVideo.paused) wakeVideo.pause();
+    } else {
+      if (wakeLock) { const l = wakeLock; wakeLock = null; try { await l.release(); } catch {} }
+      if (wakeVideo && !wakeVideo.paused) wakeVideo.pause();
+    }
+    setWakeStatus();
   }
   function startWakeLock() {
     syncWakeLock();
@@ -2853,7 +2905,9 @@ const Reader = (() => {
   // التمرير: للأمام يخفي، وللخلف (~٥٠ بكسل متتالية) يُظهر؛ الحافّتان تُظهران
   let scrollLastTop = 0, scrollUpAcc = 0;
   function onReadScroll(el) {
-    if (!isOpen || autoOn) return;
+    if (!isOpen) return;
+    lastActivity = Date.now(); // القراءة بالتمرير نشاطٌ يُبقي الشاشة مضاءة
+    if (autoOn) return;
     const top = el.scrollTop, d = top - scrollLastTop;
     scrollLastTop = top;
     if (Math.abs(d) < 2) return;
@@ -2880,6 +2934,7 @@ const Reader = (() => {
       $('#reader').classList.add('drawer-open');
       // درج الإعدادات: خلفية شفّافة كي تُعايِن تأثير الألوان والخطوط على الكتاب مباشرةً
       $('#reader').classList.toggle('settings-open', id === '#settings-drawer');
+      if (id === '#settings-drawer') setWakeStatus();
       showUI();
     }
   }
@@ -3025,7 +3080,7 @@ const Reader = (() => {
     });
 
     // إظهار الواجهة بحركة الفأرة فقط (حركة الإصبع سحبٌ للقراءة، لا طلبٌ للأدوات)
-    $('#reader').addEventListener('pointerdown', (e) => { lastPointerType = e.pointerType || 'mouse'; }, { passive: true, capture: true });
+    $('#reader').addEventListener('pointerdown', (e) => { lastPointerType = e.pointerType || 'mouse'; if (isOpen) bump(); }, { passive: true, capture: true });
     $('#reader').addEventListener('pointermove', (e) => { if (isOpen && e.pointerType === 'mouse') { lastPointerType = 'mouse'; showUI(); } }, { passive: true });
     viewportEl.addEventListener('scroll', () => { if (settings.flip === 'scroll' && !isPdf) onReadScroll(viewportEl); }, { passive: true });
     $('#r-pdf-scroll').addEventListener('scroll', (e) => onReadScroll(e.currentTarget), { passive: true });
