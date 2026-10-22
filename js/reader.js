@@ -3003,7 +3003,7 @@ const Reader = (() => {
 
     // حفظ فوري عند إخفاء الصفحة أو إغلاقها (حماية البيانات)
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && isOpen) persist();
+      if (document.hidden && isOpen) { persist(); syncWakeLock(); } // خرج من التطبيق ⇒ أوقف الفيديو البديل فوراً (لا يستهلك البطارية في الخلفية)
       if (!document.hidden && isOpen) { bump(); syncWakeLock(); } // المتصفح ألغى القفل عند الخروج
     });
     window.addEventListener('pagehide', () => { if (isOpen) persist(); });
