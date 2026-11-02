@@ -1256,3 +1256,20 @@ a.disc-import.disc-openfile { text-decoration: none; }
 /* آيفون يكبّر الصفحة تلقائياً عند الكتابة في حقل خطّه أصغر من 16px — ويبقى مكبَّراً */
 @media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em); } }
 body { -webkit-tap-highlight-color: transparent; }
+
+/* ── دليل التثبيت على الآيفون ── */
+.ios-box { text-align: center; }
+.ios-box .ios-icon { border-radius: 15px; box-shadow: 0 8px 24px rgba(0,0,0,.45); margin-bottom: 10px; }
+.ios-box p { margin-bottom: 12px !important; }
+.ios-box .ios-warn { color: #e0a33a !important; font-size: 13.5px !important; }
+.ios-box .ios-warn svg { vertical-align: middle; }
+.ios-steps { list-style: none; text-align: right; padding: 0; margin: 0 0 18px; counter-reset: s; }
+.ios-steps li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 8px; border-radius: 13px;
+  background: rgba(255,255,255,.04); border: 1px solid var(--card-line); font-size: 14px; color: var(--cream); line-height: 1.7; }
+.ios-steps .ios-ic { flex: none; width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,132,255,.14); color: #4ea1ff; font-weight: 700; }
+/* نافذة التحديث: رقم الإصدار */
+.update-banner .ub-ver { display: block; font-size: 11px; opacity: .7; direction: ltr; }
+/* تصدير الملاحظات: أزرار تلتفّ على الشاشات الضيّقة */
+.ne-box .exp-row { flex-wrap: wrap; }
+.ne-box .exp-seg { flex-wrap: wrap; }

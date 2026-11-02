@@ -1936,31 +1936,167 @@ create policy "midad_own_files" on storage.objects for all
     setTimeout(() => input.focus(), 60);
   }
 
-  async function exportNotes(id) {
-    const b = books.find((x) => x.id === id);
-    const st = await Store.getState(id);
-    const items = [...(st.highlights || []), ...(st.pdfHighlights || []), ...(st.pageNotes || [])];
-    if (!items.length) return toast('لا توجد ملاحظات لهذا الكتاب بعد');
-    let out = `ملاحظاتي على «${b.title}»${b.author ? ' — ' + b.author : ''}\n`;
-    out += '─'.repeat(40) + '\n\n';
-    for (const h of st.highlights || []) {
-      out += `«${h.text.trim()}»\n`;
-      if (h.note) out += `📝 ${h.note}\n`;
+  /* ─── تصدير الملاحظات والتظليلات ───
+     لكتاب واحد أو لكل الكتب، بصيغة Word أو PDF أو نص أو Markdown. الكتب النصية مرتّبة حسب
+     الفصول (أقرب عنوان يسبق موضع التظليل في النص)، وكتب PDF حسب الصفحات، والملاحظة تحت تظليلها. */
+  const HL_NAMES = { '#f6d743': 'أصفر', '#8ce99a': 'أخضر', '#74c0fc': 'أزرق', '#faa2c1': 'وردي' };
+  async function collectNotes(ids) {
+    const out = [];
+    for (const id of ids) {
+      const b = books.find((x) => x.id === id) || (await Store.getBook(id));
+      if (!b) continue;
+      const st = await Store.getState(id);
+      const items = [];
+      if ((st.highlights || []).length) {
+        // موضع كل تظليل في النص ⇒ الترتيب والفصل
+        let text = ''; try { const t = await Store.getPayload(id); text = typeof t === 'string' ? t : ''; } catch {}
+        const norm = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+        const heads = []; // [موضع، عنوان]
+        if (text) { const re = /^#{1,3}\s+(.+)$/gm; let m; while ((m = re.exec(text))) heads.push([m.index, norm(m[1])]); }
+        const flat = norm(text);
+        for (const h of st.highlights) {
+          const probe = norm(h.text).slice(0, 40);
+          let pos = probe ? text.indexOf(probe) : -1;
+          if (pos < 0 && probe) { const fi = flat.indexOf(probe); if (fi >= 0) pos = Math.round(fi * (text.length / Math.max(1, flat.length))); }
+          let chapter = '';
+          for (const [hp, ht] of heads) { if (pos >= 0 && hp <= pos) chapter = ht; else if (hp > pos) break; }
+          items.push({ kind: 'hl', text: h.text || '', note: h.note || '', color: h.color, at: h.at || 0, order: pos >= 0 ? pos : 1e12 + (h.at || 0), chapter });
+        }
+      }
+      for (const h of st.pdfHighlights || []) items.push({ kind: 'hl', text: h.text || '', note: h.note || '', color: h.color, at: h.at || 0, page: h.page, order: (h.page || 0) * 1e6 + (h.at || 0) / 1e7, chapter: '' });
+      for (const n of st.pageNotes || []) items.push({ kind: 'note', text: '', note: n.note || '', at: n.at || 0, page: (n.page || 0) + 1, order: ((n.page || 0) + 1) * 1e6 + 5e5, chapter: '' });
+      if (!items.length) continue;
+      items.sort((a, c) => a.order - c.order);
+      out.push({ book: b, items });
+    }
+    return out;
+  }
+  function notesToHTML(groups, opts) {
+    const date = new Date().toLocaleDateString('ar', { year: 'numeric', month: 'long', day: 'numeric' });
+    const title = groups.length === 1 ? `ملاحظاتي على «${groups[0].book.title}»` : 'ملاحظاتي وتظليلاتي';
+    let body = `<h1 class="doc-title">${esc(title)}</h1><p class="doc-meta">${groups.length > 1 ? `${groups.length} كتاباً · ` : ''}${groups.reduce((n, g) => n + g.items.length, 0)} عنصراً · ${date}</p>`;
+    for (const g of groups) {
+      if (groups.length > 1 || g.book.author) body += `<h2 class="bk">${esc(g.book.title)}${g.book.author ? `<span class="au"> — ${esc(g.book.author)}</span>` : ''}</h2>`;
+      let curCh = null;
+      for (const it of g.items) {
+        if (opts.chapters && it.chapter && it.chapter !== curCh) { curCh = it.chapter; body += `<h3 class="ch">${esc(it.chapter)}</h3>`; }
+        const page = it.page ? `<span class="pg">ص ${it.page}</span>` : '';
+        const when = opts.dates && it.at ? `<span class="dt">${new Date(it.at).toLocaleDateString('ar')}</span>` : '';
+        if (it.kind === 'hl') {
+          body += `<div class="it"><blockquote style="border-inline-start-color:${esc(it.color || '#d9a94f')}">${esc(it.text.trim())}</blockquote>` +
+            (it.note ? `<p class="nt">📝 ${esc(it.note)}</p>` : '') + (page || when ? `<p class="mt">${page}${when}</p>` : '') + `</div>`;
+        } else {
+          body += `<div class="it"><p class="nt">📝 ${esc(it.note)}</p><p class="mt">${page}${when}</p></div>`;
+        }
+      }
+    }
+    const css = `body{font-family:'Noto Naskh Arabic','Amiri','Traditional Arabic','Arial',serif;direction:rtl;text-align:right;color:#2a2233;line-height:1.9;margin:28px 34px;font-size:13pt}
+      .doc-title{font-family:'Amiri','Traditional Arabic',serif;font-size:22pt;margin:0 0 2px;color:#5b3d0f}
+      .doc-meta{color:#7a7085;font-size:10.5pt;margin:0 0 18px}
+      h2.bk{font-family:'Amiri','Traditional Arabic',serif;font-size:17pt;color:#3d2a5c;border-bottom:1.5px solid #d9a94f;padding-bottom:4px;margin:26px 0 10px;page-break-after:avoid}
+      h2.bk .au{font-size:12pt;color:#7a7085;font-weight:normal}
+      h3.ch{font-size:13.5pt;color:#8a6420;margin:18px 0 6px;page-break-after:avoid}
+      .it{margin:0 0 12px;page-break-inside:avoid}
+      blockquote{margin:0;padding:4px 12px;border-right:4px solid #d9a94f;border-inline-start:4px solid #d9a94f;background:#faf6ee;font-size:13pt}
+      .nt{margin:4px 14px 0 0;color:#3d2a5c}
+      .mt{margin:2px 14px 0 0;font-size:9.5pt;color:#9a92ad}
+      .pg{margin-inline-end:10px}
+      @page{margin:18mm 16mm}`;
+    return { title, css, body };
+  }
+  function notesToText(groups, md) {
+    let out = '';
+    for (const g of groups) {
+      out += md ? `# ${g.book.title}${g.book.author ? ' — ' + g.book.author : ''}\n\n` : `${g.book.title}${g.book.author ? ' — ' + g.book.author : ''}\n${'─'.repeat(40)}\n\n`;
+      let curCh = null;
+      for (const it of g.items) {
+        if (it.chapter && it.chapter !== curCh) { curCh = it.chapter; out += md ? `## ${it.chapter}\n\n` : `【${it.chapter}】\n\n`; }
+        const page = it.page ? (md ? ` *(ص ${it.page})*` : ` [ص ${it.page}]`) : '';
+        if (it.kind === 'hl') out += (md ? `> ${it.text.trim().replace(/\n+/g, ' ')}${page}\n` : `«${it.text.trim()}»${page}\n`) + (it.note ? `${md ? '\n' : ''}📝 ${it.note}\n` : '') + '\n';
+        else out += `📝 ${it.note}${page}\n\n`;
+      }
       out += '\n';
     }
-    for (const h of (st.pdfHighlights || []).slice().sort((a, b) => a.page - b.page)) {
-      out += `«${h.text.trim()}» [صفحة ${h.page}]\n`;
-      if (h.note) out += `📝 ${h.note}\n`;
-      out += '\n';
+    return out.trim() + '\n';
+  }
+  // تنزيل أو مشاركة ملف (المشاركة الأصلية على الجوال حين تتوفّر)
+  async function deliverFile(blob, name) {
+    const file = new File([blob], name, { type: blob.type });
+    if (matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
     }
-    for (const n of st.pageNotes || []) out += `[صفحة ${n.page + 1}] 📝 ${n.note}\n\n`;
-    const blob = new Blob(['﻿' + out], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `ملاحظات - ${b.title}.txt`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast('صُدّرت الملاحظات 📄', 'gold');
+    a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  }
+
+  async function exportNotes(id) {
+    // كتب لها ملاحظات (لخيار «كل الكتب»)
+    const withNotes = [];
+    for (const b of books) { const st = states[b.id] || {}; if ((st.highlights || []).length || (st.pdfHighlights || []).length || (st.pageNotes || []).length) withNotes.push(b.id); }
+    if (id && !withNotes.includes(id)) return toast('لا توجد ملاحظات أو تظليلات لهذا الكتاب بعد');
+    if (!withNotes.length) return toast('لا توجد ملاحظات أو تظليلات في مكتبتك بعد');
+    const one = id ? books.find((x) => x.id === id) : null;
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `
+      <div class="ud-box exp-box ne-box" role="dialog" aria-modal="true" aria-labelledby="ne-title">
+        <div class="ud-icon">📝</div>
+        <h3 id="ne-title">تصدير الملاحظات والتظليلات</h3>
+        <div class="exp-row"><label>النطاق</label>
+          <div class="exp-seg" data-k="scope">
+            ${one ? `<button data-v="one" class="on">«${esc(one.title.slice(0, 22))}${one.title.length > 22 ? '…' : ''}»</button>` : ''}
+            <button data-v="all" class="${one ? '' : 'on'}">كل الكتب (${withNotes.length})</button>
+          </div></div>
+        <div class="exp-row"><label>الصيغة</label>
+          <div class="exp-seg ne-fmt" data-k="fmt">
+            <button data-v="doc" class="on">📄 Word</button><button data-v="pdf">🖨 PDF</button><button data-v="txt">نص</button><button data-v="md">Markdown</button>
+          </div></div>
+        <label class="exp-check"><input type="checkbox" id="ne-ch" checked><span>رتّبها حسب الفصول (للكتب النصية)</span></label>
+        <label class="exp-check"><input type="checkbox" id="ne-dt"><span>اذكر تاريخ كل تظليل</span></label>
+        <div class="ud-actions"><button class="ud-cancel">إلغاء</button><button class="ud-ok btn-gold">⬇️ تصدير</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelectorAll('.exp-seg').forEach((seg) => seg.querySelectorAll('button').forEach((btn) =>
+      (btn.onclick = () => seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === btn)))));
+    const close = () => overlay.remove();
+    overlay.querySelector('.ud-cancel').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    overlay.querySelector('.ud-ok').onclick = async () => {
+      const seg = (k) => overlay.querySelector(`.exp-seg[data-k="${k}"] button.on`).dataset.v;
+      const scope = seg('scope'), fmt = seg('fmt');
+      const opts = { chapters: overlay.querySelector('#ne-ch').checked, dates: overlay.querySelector('#ne-dt').checked };
+      // نافذة الطباعة تُفتح فوراً مع النقرة (المتصفحات تحجب النوافذ المفتوحة بعد انتظار)
+      const w = fmt === 'pdf' ? window.open('', '_blank') : null;
+      if (fmt === 'pdf' && !w) return toast('اسمح بالنوافذ المنبثقة لتصدير PDF ثم أعد المحاولة');
+      close();
+      const groups = await collectNotes(scope === 'one' ? [id] : withNotes);
+      if (!groups.length) { if (w) w.close(); return toast('لا توجد ملاحظات للتصدير'); }
+      const base = groups.length === 1 ? `ملاحظات - ${groups[0].book.title}` : 'ملاحظاتي - مِداد';
+      const safe = base.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 80);
+      if (fmt === 'txt' || fmt === 'md') {
+        const text = notesToText(groups, fmt === 'md');
+        await deliverFile(new Blob(['﻿' + text], { type: fmt === 'md' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8' }), `${safe}.${fmt}`);
+      } else {
+        const { title, css, body } = notesToHTML(groups, opts);
+        if (fmt === 'doc') {
+          // Word يفتح HTML بامتداد .doc مباشرة مع حفظ الاتجاه والخطوط
+          const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40" dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${css}</style></head><body dir="rtl">${body}</body></html>`;
+          await deliverFile(new Blob(['﻿' + html], { type: 'application/msword' }), `${safe}.doc`);
+        } else {
+          w.document.open();
+          w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title>
+            <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap">
+            <style>${css}</style></head><body>${body}
+            <script>(function(){function go(){setTimeout(function(){window.focus();window.print();},350);}if(document.fonts&&document.fonts.ready){document.fonts.ready.then(go);}else window.onload=go;})();<\/script></body></html>`);
+          w.document.close();
+          toast('افتحت معاينة الطباعة — اختر «حفظ كـ PDF» 🖨', 'gold');
+          return;
+        }
+      }
+      toast(`صُدّرت ${groups.reduce((n, g) => n + g.items.length, 0)} ملاحظة وتظليلاً 📄`, 'gold');
+    };
   }
 
   /* ─── نافذة خيارات تصدير PDF ─── */
@@ -3238,6 +3374,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="stats">📊 إحصائيات قراءتك</button>
         <button data-act="theme">🎨 سمة المكتبة</button>
         <button data-act="keys">🤖 الذكاء الاصطناعي</button>
+        <button data-act="notes">📝 تصدير ملاحظاتي</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
         <button data-act="restore">📥 استيراد نسخة احتياطية</button>`;
       document.body.appendChild(menu);
@@ -3252,6 +3389,7 @@ create policy "midad_own_files" on storage.objects for all
         else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();
         else if (act === 'keys') openAiKeyDialog();
+        else if (act === 'notes') exportNotes(null);
         else if (act === 'backup') exportBackup();
         else if (act === 'restore') $('#import-input').click();
       };

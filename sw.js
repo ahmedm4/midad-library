@@ -1,5 +1,5 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v122';
+const VERSION = 'midad-v123';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',
@@ -44,7 +44,7 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     e.respondWith((async () => {
       try {
-        const net = await fetch(req);
+        const net = await fetch(req, { cache: 'no-cache' });
         const c = await caches.open(VERSION); c.put('index.html', net.clone()); return net;
       } catch { return (await caches.match('index.html')) || (await caches.match('./')); }
     })());
@@ -56,7 +56,9 @@ self.addEventListener('fetch', (e) => {
   if (sameOrigin) {
     e.respondWith((async () => {
       try {
-        const net = await fetch(req);
+        // no-cache: يتحقّق من الخادم كل مرة (ردّ 304 خفيف إن لم يتغيّر) — بدونه قد يقدّم المتصفح
+        // نسخة قديمة من ذاكرته لعشر دقائق بعد النشر، فيحتاج المستخدم لإعادة التحميل مرتين
+        const net = await fetch(req, { cache: 'no-cache' });
         if (net && net.ok) { const c = await caches.open(VERSION); c.put(req, net.clone()); }
         return net;
       } catch {

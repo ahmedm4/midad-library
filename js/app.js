@@ -1,5 +1,5 @@
 /* ═══════ مِداد — التشغيل ═══════ */
-const APP_VERSION = 'v122'; // يُحدَّث مع كل إصدار
+const APP_VERSION = 'v123'; // يُحدَّث مع كل إصدار
 
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
@@ -14,6 +14,20 @@ const APP_VERSION = 'v122'; // يُحدَّث مع كل إصدار
   try { Reader.wire(); } catch (e) { console.error('reader wire', e); }
   try { await Library.init(); } catch (e) { console.error('library init', e); }
   try { if (window.Cloud) Cloud.init(); } catch (e) { console.error('cloud init', e); }
+  // اختصارات أيقونة التطبيق (ضغطة مطوّلة على الأيقونة): واصل القراءة / استكشف / أضف كتاباً
+  try {
+    const act = new URLSearchParams(location.search).get('open');
+    if (act) {
+      history.replaceState(history.state, '', location.pathname); // لا يتكرّر الإجراء عند إعادة التحميل
+      if (act === 'continue') {
+        const [bs, sts] = await Promise.all([Store.getBooks(), Store.getAllStates()]);
+        const byId = new Map(bs.map((b) => [b.id, b]));
+        const last = sts.filter((s) => s.lastRead && byId.has(s.bookId)).sort((a, b) => (!!a.finished - !!b.finished) || b.lastRead - a.lastRead)[0];
+        if (last) Library.openBook(last.bookId); else if (window.Library) Library.toast('لم تبدأ قراءة أي كتاب بعد');
+      } else if (act === 'discover' && window.Discover) Discover.open();
+      else if (act === 'add') { const b = document.getElementById('btn-add'); if (b) b.click(); }
+    }
+  } catch (e) { console.warn('shortcut', e); }
   try { if (window.A11y) A11y.init(); } catch (e) { console.error('a11y init', e); }
 
   // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت) مع تحديث مُتحكَّم فيه
@@ -37,8 +51,9 @@ const APP_VERSION = 'v122'; // يُحدَّث مع كل إصدار
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           if (reloaded) return; reloaded = true; location.reload();
         });
-        // افحص وجود تحديث عند العودة للتطبيق
+        // افحص وجود تحديث عند العودة للتطبيق، وكل نصف ساعة ما دام مفتوحاً
         document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+        setInterval(() => { if (!document.hidden) reg.update().catch(() => {}); }, 30 * 60 * 1000);
       } catch {}
     });
   }
@@ -48,10 +63,21 @@ const APP_VERSION = 'v122'; // يُحدَّث مع كل إصدار
     const bar = document.createElement('div');
     bar.id = 'update-banner';
     bar.className = 'update-banner';
-    bar.innerHTML = '<span>✨ تحديث جديد للتطبيق جاهز</span><button class="ub-go">تحديث الآن</button><button class="ub-x" title="لاحقاً">✕</button>';
-    bar.querySelector('.ub-go').onclick = () => { bar.classList.add('going'); worker.postMessage({ type: 'SKIP_WAITING' }); };
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = '<span class="ub-txt">✨ إصدار جديد من مِداد جاهز<small class="ub-ver"></small></span><button class="ub-go">حدّث الآن</button><button class="ub-x" title="لاحقاً" aria-label="لاحقاً">✕</button>';
+    bar.querySelector('.ub-go').onclick = async () => {
+      bar.classList.add('going'); bar.querySelector('.ub-go').textContent = 'جارٍ التحديث…';
+      // احفظ موضع القراءة قبل إعادة التحميل
+      try { if (window.Reader && Reader.isOpen && Reader.isOpen()) await Reader.close(); } catch {}
+      worker.postMessage({ type: 'SKIP_WAITING' });
+    };
     bar.querySelector('.ub-x').onclick = () => bar.remove();
     document.body.appendChild(bar);
+    // رقم الإصدار الجديد (من الملف على الخادم مباشرةً)
+    fetch('js/app.js', { cache: 'no-store' }).then((r) => r.text()).then((t) => {
+      const v = (t.match(/APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
+      if (v && v !== APP_VERSION) bar.querySelector('.ub-ver').textContent = ` (${APP_VERSION} ← ${v})`;
+    }).catch(() => {});
   }
 
   // زر التثبيت بنقرة واحدة (يظهر عندما يسمح المتصفح)
@@ -72,6 +98,54 @@ const APP_VERSION = 'v122'; // يُحدَّث مع كل إصدار
     }
   });
   window.addEventListener('appinstalled', () => { const b = installBtn(); if (b) b.hidden = true; });
+
+  /* ── التثبيت على الآيفون: Safari لا يعرض زرّ تثبيت، فنشرح الخطوتين بالصور ──
+     التطبيق المثبّت يفتح بملء الشاشة، ولا يمسح Safari بياناته (الكتب) بعد أيام من عدم الاستعمال. */
+  const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  if (isIOSDevice && !isStandalone) {
+    const b = installBtn();
+    if (b) { b.hidden = false; b.onclick = () => showIOSInstall(); }
+    // مرة واحدة تلقائياً: في الزيارة الثانية فما بعد، بعد أن يستقرّ المستخدم (لا فوق شاشة الترحيب)
+    try {
+      const visits = +(localStorage.getItem('midad-visits') || 0) + 1;
+      localStorage.setItem('midad-visits', String(visits));
+      if (visits >= 2 && !localStorage.getItem('midad-ios-install-shown')) {
+        setTimeout(() => {
+          if (document.querySelector('.ui-dialog') || !document.getElementById('reader').hidden) return;
+          localStorage.setItem('midad-ios-install-shown', '1');
+          showIOSInstall();
+        }, 15000);
+      }
+    } catch {}
+  }
+  function showIOSInstall() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const ua = navigator.userAgent;
+    const inApp = /FBAN|FBAV|Instagram|Line\/|WhatsApp|Telegram|Snapchat|; wv\)/i.test(ua) || (!/Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS/i.test(ua));
+    const chrome = /CriOS|EdgiOS|FxiOS/i.test(ua);
+    const shareIcon = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M7.5 7.5 12 3l4.5 4.5M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>';
+    const addIcon = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+    const o = document.createElement('div');
+    o.className = 'ui-dialog';
+    o.innerHTML = `<div class="ud-box ios-box" role="dialog" aria-modal="true" aria-labelledby="ios-t">
+      <img class="ios-icon" src="apple-touch-icon.png" alt="" width="64" height="64">
+      <h3 id="ios-t">ثبّت مِداد على شاشتك الرئيسية</h3>
+      <p>يفتح كتطبيق بملء الشاشة، وتبقى كتبك محفوظة على جهازك دائماً.</p>
+      ${inApp ? `<p class="ios-warn">أنت تتصفّح من داخل تطبيق آخر. افتح الرابط في <b>Safari</b> أولاً: اضغط ⋯ أو ${shareIcon} ثم «فتح في Safari».</p>` : ''}
+      <ol class="ios-steps">
+        <li><span class="ios-ic">${shareIcon}</span><span>اضغط زر <b>المشاركة</b> ${chrome ? 'في شريط العنوان أعلى الشاشة' : 'في الشريط أسفل Safari'}</span></li>
+        <li><span class="ios-ic">${addIcon}</span><span>اختر <b>«إضافة إلى الشاشة الرئيسية»</b> (مرّر القائمة للأسفل إن لم تظهر)</span></li>
+        <li><span class="ios-ic">✓</span><span>اضغط <b>«إضافة»</b> — ثم افتح مِداد من أيقونته</span></li>
+      </ol>
+      <div class="ud-actions"><button class="ud-ok btn-gold">فهمت</button></div>
+    </div>`;
+    document.body.appendChild(o);
+    const close = () => o.remove();
+    o.querySelector('.ud-ok').onclick = close;
+    o.onclick = (e) => { if (e.target === o) close(); };
+  }
+  window.showIOSInstall = showIOSInstall;
 
   // ── كشف انقطاع/عودة الشبكة (رسائل واضحة + إعادة مزامنة تلقائية) ──
   const netToast = (msg, kind) => { if (window.Library) Library.toast(msg, kind); };

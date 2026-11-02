@@ -3348,6 +3348,6 @@ const Reader = (() => {
     }, { passive: true });
   }
 
-  return { open, close, wire, previewHTML: buildHTML, mdToHtml };
+  return { open, close, wire, previewHTML: buildHTML, mdToHtml, isOpen: () => isOpen };
 })();
 window.Reader = Reader;
