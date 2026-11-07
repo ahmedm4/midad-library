@@ -90,6 +90,23 @@ const Discover = (() => {
   let curReq = 0, loaded = false, source = 'archive';
   let moreFn = null; // دالة «عرض المزيد» للمصدر الحالي (تعيد دفعة بطاقات إضافية أو لا شيء)
 
+  /* أقسام «شبكة الفكر» تُقرأ من الموقع (كل الأقسام والفرعية بأعداد كتبها) وتُحفظ يوماً؛
+     القائمة الثابتة ALFEKER_CATS احتياطٌ إن تعذّر جلبها. */
+  let afSections = null;
+  try { const c = JSON.parse(localStorage.getItem('midad-af-sections') || 'null'); if (c && Date.now() - c.at < 864e5 && c.list && c.list.length) afSections = c.list; } catch {}
+  async function ensureAfSections() {
+    if (afSections) return afSections;
+    try {
+      const d = await Cloud.invokeFn('alfeker', { action: 'sections' });
+      if (d && d.sections && d.sections.length) {
+        afSections = d.sections;
+        try { localStorage.setItem('midad-af-sections', JSON.stringify({ at: Date.now(), list: afSections })); } catch {}
+      }
+    } catch {}
+    return afSections;
+  }
+  const fmtCount = (n) => (n ? Number(n).toLocaleString('ar') : '');
+
   function ensureUI() {
     if (modal) return;
     modal = document.createElement('div');
@@ -138,6 +155,9 @@ const Discover = (() => {
   }
 
   function renderChips() {
+    chipsEl.classList.remove('af');
+    { const sc = chipsEl.nextElementSibling; if (sc && sc.classList.contains('disc-subchips')) { sc.hidden = true; sc.innerHTML = ''; } }
+    if (source === 'alfeker' && afSections) return renderAfChips();
     const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : (source === 'narjes' ? NARJES_CATS : CATS)));
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
     chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
@@ -145,6 +165,32 @@ const Discover = (() => {
       ch.classList.add('on'); input.value = '';
       source === 'alfeker' ? search('', null, ch.dataset.catid) : search('', ch.dataset.q);
     });
+  }
+
+  // شرائح أقسام شبكة الفكر: الرئيسية، وصفّ للفرعية عند اختيار قسم له فروع
+  function renderAfChips(activePath) {
+    const chip = (sec, cls = 'disc-chip') => `<button class="${cls}" data-section="${esc(sec.path)}">${esc(sec.label)}${sec.count ? ` <small class="dc-n">${fmtCount(sec.count)}</small>` : ''}</button>`;
+    chipsEl.classList.add('af');
+    chipsEl.innerHTML = afSections.map((sec) => chip(sec)).join('');
+    let subEl2 = chipsEl.nextElementSibling;
+    if (!subEl2 || !subEl2.classList.contains('disc-subchips')) { subEl2 = document.createElement('div'); subEl2.className = 'disc-subchips'; chipsEl.after(subEl2); }
+    subEl2.hidden = true; subEl2.innerHTML = '';
+    const pick = (path, parent) => {
+      input.value = '';
+      chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.toggle('on', x.dataset.section === (parent || path)));
+      subEl2.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.section === path));
+      search('', null, null, path);
+    };
+    chipsEl.querySelectorAll('.disc-chip').forEach((ch) => (ch.onclick = () => {
+      const sec = afSections.find((x) => x.path === ch.dataset.section);
+      if (sec && sec.subs && sec.subs.length) {
+        subEl2.hidden = false;
+        subEl2.innerHTML = chip({ label: 'كل كتب القسم', path: sec.path, count: sec.count }, 'disc-subchip on') + sec.subs.map((x) => chip(x, 'disc-subchip')).join('');
+        subEl2.querySelectorAll('button').forEach((b) => (b.onclick = () => pick(b.dataset.section, sec.path)));
+      } else { subEl2.hidden = true; subEl2.innerHTML = ''; }
+      pick(ch.dataset.section, ch.dataset.section);
+    }));
+    if (activePath) { const a = chipsEl.querySelector(`.disc-chip[data-section="${CSS.escape(activePath)}"]`); if (a) a.classList.add('on'); }
   }
 
   function switchSource(src) {
@@ -156,7 +202,14 @@ const Discover = (() => {
     renderChips();
     const first = chipsEl.querySelector('.disc-chip');
     if (first) first.classList.add('on');
-    if (source === 'alfeker') search('', null, ALFEKER_CATS[0].catid);
+    if (source === 'alfeker') {
+      if (afSections) { const s0 = afSections[0]; renderAfChips(s0.path); search('', null, null, s0.path); }
+      else {
+        search('', null, ALFEKER_CATS[0].catid);
+        // اجلب أقسام الموقع ثم أعد رسم الشرائح (المرة الأولى فقط)
+        ensureAfSections().then((list) => { if (list && source === 'alfeker' && !input.value.trim()) { renderAfChips(list[0].path); search('', null, null, list[0].path); } });
+      }
+    }
     else if (source === 'wikisource') search('', WIKISOURCE_CATS[0].q);
     else if (source === 'ablibrary') { chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on')); search('', ''); } // تصفّح الكل افتراضياً
     else if (source === 'narjes') search('', NARJES_CATS[0].q);
@@ -173,7 +226,7 @@ const Discover = (() => {
   function close() { if (modal) { modal.hidden = true; document.body.style.overflow = ''; } }
   const status = (html) => { statusEl.innerHTML = html || ''; statusEl.hidden = !html; };
 
-  async function search(q, catQ, catid) {
+  async function search(q, catQ, catid, section) {
     const my = ++curReq;
     closeSheet();
     moreFn = null;
@@ -184,10 +237,25 @@ const Discover = (() => {
       if (source === 'alfeker') {
         if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) status('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «شبكة الفكر».'); return; }
         const term = (q || '').trim();
-        const data = await Cloud.invokeFn('alfeker', term ? { action: 'list', q: term } : { action: 'list', catid: catid || '65' });
+        const req = term ? { action: 'list', q: term } : (section ? { action: 'list', section } : { action: 'list', catid: catid || '65' });
+        const data = await Cloud.invokeFn('alfeker', req);
         if (my !== curReq) return;
         // استخدم الغلاف الكامل بدل المصغّرة المنخفضة الدقة (…/.thumb/… → …/…)
-        cards = (data.books || []).map((b) => ({ source: 'alfeker', id: b.id, title: b.title, author: b.author, cover: (b.cover || '').replace('/.thumb/', '/'), meta: b.views ? ('👁 ' + fmtNum(b.views)) : '' }));
+        const mapAf = (b) => ({ source: 'alfeker', id: b.id, title: b.title, author: b.author, cover: (b.cover || '').replace('/.thumb/', '/'), meta: b.views ? ('👁 ' + fmtNum(b.views)) : '' });
+        const seen = new Set();
+        const fresh = (list) => (list || []).filter((b) => !seen.has(b.id) && seen.add(b.id)).map(mapAf);
+        cards = fresh(data.books);
+        if (data.total && !term) status(''); // (العدد يظهر أسفل الشبكة مع «عرض المزيد»)
+        // صفحات القسم التالية (٢٤ كتاباً لكل صفحة في الموقع)
+        if (data.hasMore) {
+          let page = data.page || 1;
+          moreFn = async () => {
+            page++;
+            const d = await Cloud.invokeFn('alfeker', { ...req, page });
+            if (!d.hasMore) moreFn = null;
+            return fresh(d.books);
+          };
+        }
       } else if (source === 'wikisource') {
         const term = (q || catQ || '').trim() || 'كتاب';
         const url = `${WS_API}?action=query&list=search&srsearch=${encodeURIComponent(term)}&srnamespace=0&srlimit=150&format=json&origin=*`;
@@ -618,14 +686,28 @@ const Discover = (() => {
   // ينزّل جزءاً عبر الوسيط (يجرّب كل مراياه بالترتيب) ويضيفه للمكتبة
   async function addAlfekerPart(ds, meta, part, idx) {
     if (!window.Library || !Library.addRemoteBook) throw new Error('المكتبة غير جاهزة');
-    const r = await Cloud.invokeFnRaw('alfeker', { action: 'file', id: ds.id, part: idx, mirrors: part.mirrors || [] });
-    const ct = r.headers.get('content-type') || '';
-    if (!r.ok || /application\/json/i.test(ct)) {
-      let msg = 'تعذّر تنزيل الملف';
-      try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
-      throw new Error(msg);
+    // المحاولة الأولى بكل المرايا (يختار الخادم الأنسب)؛ إن انقطع الاتصال («Failed to fetch»)
+    // نعيد المحاولة بكل مرآة وحدها — انقطاع الشبكة في منتصف ملف كبير شائع على الجوال
+    const mirrors = part.mirrors || [];
+    const attempts = [mirrors, ...mirrors.map((m) => [m])];
+    let blob = null, lastErr = null;
+    for (const ms of attempts) {
+      try {
+        const r = await Cloud.invokeFnRaw('alfeker', { action: 'file', id: ds.id, part: idx, mirrors: ms });
+        const ct = r.headers.get('content-type') || '';
+        if (!r.ok || /application\/json/i.test(ct)) {
+          let msg = 'تعذّر تنزيل الملف';
+          try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
+          throw Object.assign(new Error(msg), { server: true });
+        }
+        blob = await r.blob();
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (e && e.server && ms === mirrors) throw e; // ردّ صريح من الخادم بأن كل المرايا فشلت ⇒ لا فائدة من التكرار
+      }
     }
-    const blob = await r.blob();
+    if (!blob) throw new Error(lastErr && !lastErr.server ? 'انقطع الاتصال أثناء التنزيل — تحقّق من الشبكة ثم اضغط «أعِد المحاولة»' : ((lastErr && lastErr.message) || 'تعذّر تنزيل الملف'));
     return Library.addRemoteBook({
       blob, name: meta.title, kind: 'pdf',
       title: meta.title, author: meta.author, category: meta.category || 'أخرى', cover: meta.cover || '',

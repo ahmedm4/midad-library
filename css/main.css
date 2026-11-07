@@ -1273,3 +1273,20 @@ body { -webkit-tap-highlight-color: transparent; }
 /* تصدير الملاحظات: أزرار تلتفّ على الشاشات الضيّقة */
 .ne-box .exp-row { flex-wrap: wrap; }
 .ne-box .exp-seg { flex-wrap: wrap; }
+/* أقسام شبكة الفكر: عدد الكتب وصفّ الأقسام الفرعية */
+.disc-chip .dc-n, .disc-subchip .dc-n { font-size: 11px; opacity: .65; font-weight: 400; margin-inline-start: 2px; }
+.disc-subchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 22px 6px; padding: 8px 10px;
+  border-radius: 14px; background: rgba(255,255,255,.03); border: 1px dashed var(--card-line); }
+.disc-subchips[hidden] { display: none; }
+.disc-subchip { padding: 5px 12px; border-radius: 999px; font-size: 12.5px; font-family: inherit; cursor: pointer;
+  color: var(--muted); background: transparent; border: 1px solid var(--card-line); }
+.disc-subchip:hover { color: var(--cream); }
+.disc-subchip.on { background: rgba(217,169,79,.14); border-color: rgba(217,169,79,.55); color: var(--gold-soft); font-weight: 700; }
+/* الجوال: الأقسام الكثيرة في صفّ واحد يُمرَّر أفقياً (لا تحجب الكتب)، والفرعية كذلك */
+@media (max-width: 640px) {
+  .disc-chips.af, .disc-subchips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .disc-chips.af::-webkit-scrollbar, .disc-subchips::-webkit-scrollbar { display: none; }
+  .disc-chips.af .disc-chip, .disc-subchips .disc-subchip { flex: none; white-space: nowrap; }
+  .disc-chips.af { padding-bottom: 8px; }
+  .disc-chips.af, .disc-subchips { flex-shrink: 0; } /* عمود النافذة المرن يقلّص العنصر القابل للتمرير حتى يقصّ أزراره */
+}

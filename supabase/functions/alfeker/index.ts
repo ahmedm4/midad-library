@@ -21,6 +21,7 @@ const json = (obj: unknown, status = 200) =>
 
 const stripTags = (s: string) => (s || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 const decode = (s: string) => (s || "")
+  .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(+d)).replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
   .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
 
 async function getHtml(url: string): Promise<string> {
@@ -265,6 +266,37 @@ function parseDetail(html: string, id: string) {
   };
 }
 
+/* ── أقسام الموقع: من القائمة الجانبية (تتبع الموقع إن أضاف أقساماً) ── */
+type Section = { label: string; path: string; count: number; subs?: Section[] };
+const sectionPath = (href: string) => {
+  const m = href.match(/^https?:\/\/(?:www\.)?alfeker\.net\/(section\/[^?#"]+)$/i);
+  return m ? (m[1].endsWith("/") ? m[1] : m[1] + "/") : "";
+};
+function parseSections(html: string): Section[] {
+  const start = html.indexOf("hk-sidebar__nav");
+  if (start < 0) return [];
+  let end = html.indexOf("wp-block-social-links", start);
+  if (end < 0) end = start + 120000;
+  const seg = html.slice(start, end);
+  const out: Section[] = [];
+  let parent: Section | null = null;
+  for (const chunk of seg.split("<li ").slice(1)) {
+    const cls = (chunk.match(/class="([^"]*)"/) || [])[1] || "";
+    const label = decode(stripTags((chunk.match(/wp-block-navigation-item__label">([\s\S]*?)<\/span>/) || [])[1] || ""));
+    const count = +latinDigits((chunk.match(/fk-sec-count[^>]*>([^<]*)</) || [])[1] || "").replace(/\D/g, "") || 0;
+    const path = sectionPath(decode((chunk.match(/href="([^"]+)"/) || [])[1] || ""));
+    if (!label) continue;
+    if (/\bfk-sub-all\b/.test(cls)) { if (parent && !parent.path) parent.path = path; continue; } // «كل كتب القسم» ⇒ رابط القسم الأب
+    if (/\bfk-subsec-\d+/.test(cls)) { if (parent && path) (parent.subs ||= []).push({ label, path, count }); continue; }
+    // قسم رئيسي برابط مباشر؛ أما الرئيسي ذو القائمة الفرعية فبلا رابط (يأتي من «كل كتب القسم») فيُعامَل أباً أدناه
+    if (/\bfk-sec-\d+/.test(cls) && path) { parent = null; out.push({ label, path, count }); continue; }
+    // قسم أب بقائمة فرعية (بلا رابط مباشر؛ يأتي رابطه من «كل كتب القسم»)
+    parent = { label, path, count, subs: [] };
+    out.push(parent);
+  }
+  return out.filter((x) => x.path);
+}
+
 /* ── التنزيل ── */
 // الاستجابة ملفّ (لا صفحة HTML)؟ — لا نستهلك الجسم هنا
 const isFileResponse = (r: Response) => r.ok && !/text\/html/i.test(r.headers.get("content-type") || "");
@@ -403,19 +435,40 @@ Deno.serve(async (req) => {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "list");
 
+    if (action === "sections") {
+      return json({ sections: parseSections(await getHtml(`${BASE}/sections/`)) });
+    }
+
     if (action === "list") {
       const q = String(b.q || "").trim();
       const catid = String(b.catid || "").trim();
-      // روابط الأقسام القديمة (library.php?catid=…) ما زالت تحوّل إلى أقسام الموقع الجديد
-      const url = q
-        ? `${BASE}/?s=${encodeURIComponent(q)}&post_type=book`
-        : `${BASE}/library.php?catid=${encodeURIComponent(catid || "65")}`;
-      const html = await getHtml(url);
-      return json({ books: parseCards(html) });
+      const page = Math.max(1, Math.min(500, Math.floor(+b.page || 1)));
+      const section = String(b.section || "").trim();
+      const validSection = /^section\/[-%\w\/]+\/$/.test(section) ? section : "";
+      let url: string;
+      // البحث في الموقع صفحة واحدة بكل النتائج (لا ترقيم) ⇒ لا صفحات بعدها
+      if (q) { if (page > 1) return json({ books: [], page, hasMore: false }); url = `${BASE}/?s=${encodeURIComponent(q)}&post_type=book`; }
+      // الأقسام تُرقَّم بـ ?pg=N (وليس /page/N/ الذي يعيد الصفحة الأولى)
+      else if (validSection) url = `${BASE}/${validSection}${page > 1 ? `?pg=${page}` : ""}`;
+      // روابط الأقسام القديمة (library.php?catid=…) ما زالت تحوّل إلى أقسام الموقع الجديد (للنسخ السابقة من التطبيق)
+      else url = `${BASE}/library.php?catid=${encodeURIComponent(catid || "65")}`;
+      let html: string;
+      try { html = await getHtml(url); }
+      catch (e) { if (page > 1 && /404/.test(String((e as Error).message))) return json({ books: [], hasMore: false }); throw e; }
+      const books = parseCards(html);
+      const total = +latinDigits((html.match(/hwza-log-count[\s\S]{0,400}?([٠-٩\d][٠-٩\d,٬]*)\s*كتاب/) || [])[1] || "").replace(/\D/g, "") || 0;
+      // المزيد = في شريط الصفحات رابطٌ إلى الصفحة التالية
+      const hasMore = !!validSection && books.length > 0 && html.includes(`pg=${page + 1}"`);
+      return json({ books, page, hasMore, total });
     }
 
     if (action === "detail") {
       const id = String(b.id || "").trim();
+      if (/^\d+$/.test(id)) {
+        let html = "";
+        try { html = await getHtml(`${BASE}/b/${id}/`); } catch { /* ← الرابط القديم احتياطاً */ }
+        if (html) return json(parseDetail(html, id));
+      }
       if (!id) return json({ error: "معرّف الكتاب مفقود" }, 400);
       const html = await getHtml(`${BASE}/library.php?id=${encodeURIComponent(id)}`);
       return json(parseDetail(html, id));
@@ -451,7 +504,7 @@ Deno.serve(async (req) => {
         // (التي ترسل رابطاً واحداً) من سلسلة التجربة أيضاً
         if (id) {
           try {
-            const d = parseDetail(await getHtml(`${BASE}/library.php?id=${encodeURIComponent(id)}`), id);
+            const d = parseDetail(await getHtml(/^\d+$/.test(id) ? `${BASE}/b/${id}/` : `${BASE}/library.php?id=${encodeURIComponent(id)}`), id);
             const byUrl = fileUrl ? d.parts.find((p) => p.mirrors.some((m) => m.url === fileUrl)) : undefined;
             const idx = Math.max(0, Math.min(+b.part || 0, d.parts.length - 1));
             mirrors = (byUrl || d.parts[idx])?.mirrors || [];
