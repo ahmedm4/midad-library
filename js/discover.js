@@ -118,22 +118,28 @@ const Discover = (() => {
           <div class="disc-title"><span class="disc-logo">🧭</span>
             <div><h2>استكشف</h2><p class="disc-sub">${SOURCES.archive.sub}</p></div>
           </div>
+          <div class="disc-sources" role="tablist" aria-label="المصادر">
+            <button class="disc-src on" data-src="archive">🌐 ${SOURCES.archive.name}</button>
+            <button class="disc-src" data-src="wikisource">📜 ${SOURCES.wikisource.name}</button>
+            <button class="disc-src" data-src="ablibrary">📚 ${SOURCES.ablibrary.name}</button>
+            <button class="disc-src" data-src="narjes">📕 ${SOURCES.narjes.name}</button>
+            <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
+          </div>
           <button class="disc-x" title="إغلاق">✕</button>
         </div>
-        <div class="disc-sources">
-          <button class="disc-src on" data-src="archive">🌐 ${SOURCES.archive.name}</button>
-          <button class="disc-src" data-src="wikisource">📜 ${SOURCES.wikisource.name}</button>
-          <button class="disc-src" data-src="ablibrary">📚 ${SOURCES.ablibrary.name}</button>
-          <button class="disc-src" data-src="narjes">📕 ${SOURCES.narjes.name}</button>
-          <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
+        <div class="disc-body">
+          <aside class="disc-side" aria-label="الأقسام">
+            <div class="disc-chips" id="disc-chips"></div>
+          </aside>
+          <div class="disc-main">
+            <div class="disc-search">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+              <input type="search" class="disc-input" placeholder="ابحث بعنوان كتاب أو اسم مؤلف…" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="disc-status" id="disc-status"></div>
+            <div class="disc-grid" id="disc-grid"></div>
+          </div>
         </div>
-        <div class="disc-search">
-          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
-          <input type="search" class="disc-input" placeholder="ابحث بعنوان كتاب أو اسم مؤلف…" autocomplete="off" spellcheck="false">
-        </div>
-        <div class="disc-chips" id="disc-chips"></div>
-        <div class="disc-status" id="disc-status"></div>
-        <div class="disc-grid" id="disc-grid"></div>
         <div class="disc-sheet" id="disc-sheet" hidden></div>
       </div>`;
     document.body.appendChild(modal);
@@ -156,7 +162,7 @@ const Discover = (() => {
 
   function renderChips() {
     chipsEl.classList.remove('af');
-    { const sc = chipsEl.nextElementSibling; if (sc && sc.classList.contains('disc-subchips')) { sc.hidden = true; sc.innerHTML = ''; } }
+    { const sc = modal.querySelector('.disc-subchips'); if (sc) { sc.hidden = true; sc.innerHTML = ''; } }
     if (source === 'alfeker' && afSections) return renderAfChips();
     const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : (source === 'narjes' ? NARJES_CATS : CATS)));
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
@@ -167,13 +173,15 @@ const Discover = (() => {
     });
   }
 
+  const sideLayout = () => matchMedia('(min-width: 900px)').matches;
   // شرائح أقسام شبكة الفكر: الرئيسية، وصفّ للفرعية عند اختيار قسم له فروع
   function renderAfChips(activePath) {
     const chip = (sec, cls = 'disc-chip') => `<button class="${cls}" data-section="${esc(sec.path)}">${esc(sec.label)}${sec.count ? ` <small class="dc-n">${fmtCount(sec.count)}</small>` : ''}</button>`;
     chipsEl.classList.add('af');
     chipsEl.innerHTML = afSections.map((sec) => chip(sec)).join('');
-    let subEl2 = chipsEl.nextElementSibling;
-    if (!subEl2 || !subEl2.classList.contains('disc-subchips')) { subEl2 = document.createElement('div'); subEl2.className = 'disc-subchips'; chipsEl.after(subEl2); }
+    let subEl2 = modal.querySelector('.disc-subchips');
+    if (!subEl2) { subEl2 = document.createElement('div'); subEl2.className = 'disc-subchips'; }
+    chipsEl.after(subEl2);
     subEl2.hidden = true; subEl2.innerHTML = '';
     const pick = (path, parent) => {
       input.value = '';
@@ -185,6 +193,8 @@ const Discover = (() => {
       const sec = afSections.find((x) => x.path === ch.dataset.section);
       if (sec && sec.subs && sec.subs.length) {
         subEl2.hidden = false;
+        // الحاسب (عمود جانبي): الفروع تحت أبيها؛ الجوال (صفّ أفقي): صفّ مستقلّ أسفل الأقسام
+        if (sideLayout()) ch.after(subEl2); else chipsEl.after(subEl2);
         subEl2.innerHTML = chip({ label: 'كل كتب القسم', path: sec.path, count: sec.count }, 'disc-subchip on') + sec.subs.map((x) => chip(x, 'disc-subchip')).join('');
         subEl2.querySelectorAll('button').forEach((b) => (b.onclick = () => pick(b.dataset.section, sec.path)));
       } else { subEl2.hidden = true; subEl2.innerHTML = ''; }
@@ -567,7 +577,7 @@ const Discover = (() => {
             <h3>${esc(title)}</h3>
             ${author ? `<p class="dd-author">${esc(author)}</p>` : ''}
             <p class="dd-desc">${d.category ? 'القسم: ' + esc(d.category) + '<br>' : ''}${d.pages ? 'عدد الصفحات: ' + esc(d.pages) : ''}</p>
-            <a class="dd-link" href="https://alfeker.net/library.php?id=${encodeURIComponent(ds.id)}" target="_blank" rel="noopener">↗ صفحة الكتاب في شبكة الفكر</a>
+            <a class="dd-link" href="https://alfeker.net/b/${encodeURIComponent(ds.id)}/" target="_blank" rel="noopener">↗ صفحة الكتاب في شبكة الفكر</a>
           </div>
         </div>
         <div class="disc-formats">
@@ -576,6 +586,7 @@ const Discover = (() => {
             <button class="disc-import af-one"${have.has(title) ? ' disabled' : ''}>
               <span class="di-label">${have.has(title) ? '✓ في مكتبتك' : '📕 أضِف إلى مكتبتي (PDF)'}<em>يُنزَّل عبر خادمك · ${esc(hostsOf(parts[0]))}</em></span>
             </button>
+            ${parts[0].read ? `<button class="disc-read af-read" data-i="0">📖 تصفّح الكتاب قبل إضافته</button>` : ''}
             <a class="disc-alt" href="${esc(manualOf(parts[0]))}" target="_blank" rel="noopener">أو نزّله يدوياً من متصفحك ↗</a>` : ''}
           ${multi ? `
             <p class="af-parts-head">📚 هذا الكتاب من <b>${countText(parts.length)}</b></p>
@@ -587,6 +598,7 @@ const Discover = (() => {
               return `<div class="af-part${done ? ' done' : ''}" data-i="${i}">
                 <span class="afp-name">${esc(p.short)}</span>
                 <span class="afp-size">${esc(p.size || '')}</span>
+                ${p.read ? `<button class="afp-read af-read" data-i="${i}" title="تصفّح هذا الجزء دون تنزيله" aria-label="تصفّح ${esc(p.short)}">📖</button>` : '<span></span>'}
                 <button class="afp-add"${done ? ' disabled' : ''}>${done ? '✓ في مكتبتك' : 'أضِف'}</button>
                 <a class="afp-manual" href="${esc(manualOf(p))}" target="_blank" rel="noopener" title="تنزيل يدوي من متصفحك">↗</a>
               </div>`;
@@ -594,6 +606,14 @@ const Discover = (() => {
         </div>
       </div>`;
     sheet.querySelector('.disc-back').onclick = closeSheet;
+    // «تصفّح الكتاب»: عارض Google Drive داخل التطبيق، مع زرّ الإضافة للمكتبة
+    sheet.querySelectorAll('.af-read').forEach((b) => (b.onclick = () => {
+      const i = +b.dataset.i, p = parts[i];
+      openReadPreview(p.read, partTitle(p), () => {
+        const add = multi ? sheet.querySelectorAll('.af-part .afp-add')[i] : sheet.querySelector('.af-one');
+        if (add && !add.disabled) add.click();
+      });
+    }));
     const seriesKey = String(base).replace(/ـ/g, '').replace(/\s+/g, ' ').trim();
     const info = (p) => ({
       title: partTitle(p), author, cover, category: d.category, shelves: multi ? [base] : undefined,
@@ -683,6 +703,32 @@ const Discover = (() => {
     fmts.prepend(rn);
   }
 
+  /* عارض «تصفّح الكتاب»: صفحة Google Drive المضمَّنة (‎/preview) فوق نافذة الاستكشاف — تقرأ
+     الكتاب قبل أن تقرّر إضافته، دون تنزيله. زرّ «أضِف» يكمل التنزيل المعتاد إلى المكتبة. */
+  function openReadPreview(url, title, onAdd) {
+    document.querySelectorAll('.disc-reader').forEach((x) => x.remove());
+    const v = document.createElement('div');
+    v.className = 'disc-reader';
+    v.setAttribute('role', 'dialog'); v.setAttribute('aria-label', 'تصفّح: ' + title);
+    v.innerHTML = `<div class="drd-bar">
+        <button class="drd-x" title="رجوع" aria-label="إغلاق العارض">→</button>
+        <b class="drd-title">${esc(title)}</b>
+        <a class="drd-open" href="${esc(url)}" target="_blank" rel="noopener" title="افتحه في نافذة جديدة">↗</a>
+        ${onAdd ? '<button class="drd-add btn-gold">📕 أضِف إلى مكتبتي</button>' : ''}
+      </div>
+      <div class="drd-frame"><div class="drd-wait"><div class="disc-spin big"></div><p>جارٍ فتح الكتاب…</p></div>
+        <iframe src="${esc(url)}" title="${esc(title)}" allow="autoplay" referrerpolicy="no-referrer"></iframe></div>`;
+    modal.querySelector('.disc-modal').appendChild(v);
+    const fr = v.querySelector('iframe');
+    fr.onload = () => { const w = v.querySelector('.drd-wait'); if (w) w.remove(); };
+    const close = () => v.remove();
+    v.querySelector('.drd-x').onclick = close;
+    const add = v.querySelector('.drd-add');
+    if (add) add.onclick = () => { close(); onAdd(); };
+    const onKey = (e) => { if (e.key === 'Escape' && document.body.contains(v)) { e.stopPropagation(); close(); document.removeEventListener('keydown', onKey, true); } };
+    document.addEventListener('keydown', onKey, true);
+  }
+
   // ينزّل جزءاً عبر الوسيط (يجرّب كل مراياه بالترتيب) ويضيفه للمكتبة
   async function addAlfekerPart(ds, meta, part, idx) {
     if (!window.Library || !Library.addRemoteBook) throw new Error('المكتبة غير جاهزة');
@@ -729,7 +775,7 @@ const Discover = (() => {
             <h3>${esc(title)}</h3>
             ${author ? `<p class="dd-author">${esc(author)}</p>` : ''}
             <p class="dd-desc">${d.category ? 'القسم: ' + esc(d.category) + '<br>' : ''}${d.pages ? 'عدد الصفحات: ' + esc(d.pages) : ''}</p>
-            <a class="dd-link" href="https://alfeker.net/library.php?id=${encodeURIComponent(ds.id)}" target="_blank" rel="noopener">↗ صفحة الكتاب في شبكة الفكر</a>
+            <a class="dd-link" href="https://alfeker.net/b/${encodeURIComponent(ds.id)}/" target="_blank" rel="noopener">↗ صفحة الكتاب في شبكة الفكر</a>
           </div>
         </div>
         <div class="disc-formats">

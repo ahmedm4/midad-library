@@ -124,7 +124,7 @@ function mirrorRank(m: Mirror): number {
 const sortMirrors = (ms: Mirror[]) => [...ms].sort((a, b) => mirrorRank(a) - mirrorRank(b));
 
 /* ── أجزاء الكتاب: كل قائمة تحميل بعد عنوانها مباشرةً (article > nav > ul.bookinfo) ── */
-type Part = { n: number; label: string; short: string; size: string; mirrors: Mirror[] };
+type Part = { n: number; label: string; short: string; size: string; mirrors: Mirror[]; read?: string };
 
 function parseParts(html: string): Part[] {
   type Item = { label: string; size: string; url: string; host: string };
@@ -153,11 +153,14 @@ function parseParts(html: string): Part[] {
   }
   // الموقع الجديد: كل ملف (جزء) سطرٌ واحد فيه كل روابطه — Drive (أساسي/بديل) ورابط الموقع (MediaFire)
   if (!lists.length) {
+    const reads: string[] = [];
     for (const f of html.matchAll(/<li class="fk-file">([\s\S]*?)<\/li>/g)) {
       const body = f[1];
       const label = decode(stripTags((body.match(/class="fk-file-name"[^>]*>([\s\S]*?)<\/span>/) || [])[1] || ""));
       const size = sizeOf((body.match(/<small>([\s\S]*?)<\/small>/) || [])[1] || "");
       const urls = [...body.matchAll(/(?:href|data-fk-read)="(https?:\/\/[^"]+)"/g)].map((x) => decode(x[1]));
+      // زرّ «تصفّح الكتاب» في الموقع: عارض Google Drive المضمَّن (/preview) — يُعرض دون تنزيل
+      const readAttr = decode((body.match(/data-fk-read="(https?:\/\/[^"]+)"/) || [])[1] || "");
       const items: Item[] = [];
       const seenDrive = new Set<string>();
       for (const url of urls) {
@@ -166,14 +169,19 @@ function parseParts(html: string): Part[] {
         if (host === "drive") { const id = driveIdOf(url); if (!id || seenDrive.has(id)) continue; seenDrive.add(id); }
         if (!items.some((x) => x.url === url)) items.push({ label, size, url, host });
       }
-      if (items.length) lists.push(items.map((x) => x)); // سطر = جزء
+      if (items.length) { lists.push(items.map((x) => x)); reads.push(readAttr); } // سطر = جزء
     }
     if (lists.length) {
       // هنا كل «قائمة» جزءٌ واحد بمراياه؛ نحوّلها إلى أجزاء مباشرةً
       const designatorNew = (label: string) => (label.match(/(?:الجزء|ج)\s*[-:]?\s*0*(\d{1,3})(?!\d)/) || [])[1];
       return lists.map((items, i) => {
         const d = designatorNew(items[0].label);
-        return { n: i + 1, label: items[0].label, short: lists.length > 1 ? `الجزء ${d || i + 1}` : "الكتاب كاملاً", size: items[0].size, mirrors: sortMirrors(items.map((x) => ({ host: x.host, url: x.url }))) };
+        // رابط العرض: من زرّ «تصفّح» إن وُجد، وإلا نبنيه من رابط Drive (‎/file/d/ID/preview)
+        const drive = items.find((x) => x.host === "drive");
+        const did = drive ? driveIdOf(drive.url) : "";
+        const rk = drive ? resourceKeyOf(drive.url) : "";
+        const read = reads[i] || (did ? `https://drive.google.com/file/d/${did}/preview${rk ? `?resourcekey=${rk}` : ""}` : "");
+        return { n: i + 1, label: items[0].label, short: lists.length > 1 ? `الجزء ${d || i + 1}` : "الكتاب كاملاً", size: items[0].size, mirrors: sortMirrors(items.map((x) => ({ host: x.host, url: x.url }))), read };
       });
     }
     return [];
