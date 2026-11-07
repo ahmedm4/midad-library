@@ -74,6 +74,9 @@ const Cloud = (() => {
     if (!isConfigured()) return setStatus('off', 'المزامنة غير مفعّلة');
     if (!ready) return setStatus('connecting', 'جارٍ الاتصال…');
     if (!user) return setStatus('signedout', 'سجّل الدخول للمزامنة');
+    if (profile && profile.status === 'pending') return setStatus('pending', 'حسابك بانتظار موافقة المسؤول');
+    if (profile && profile.status === 'blocked') return setStatus('blocked', 'تم إيقاف هذا الحساب');
+    if (profile && !can('sync')) return setStatus('off', 'المزامنة غير مفعّلة لحسابك');
     // بلا شبكة: القراءة تعمل محلياً والتغييرات تُرفع تلقائياً عند عودة الاتصال
     if (!navigator.onLine) return setStatus('offline', 'بلا اتصال — سيُرفع ما جدّ عند عودة الشبكة');
     setStatus('synced', syncedMsg());
@@ -81,6 +84,70 @@ const Cloud = (() => {
   // حدّث المؤشّر فور تغيّر حالة الشبكة
   window.addEventListener('online', emitStatus);
   window.addEventListener('offline', emitStatus);
+
+  /* ── لوحة التحكم: حالة الحساب وإمكانياته، وإعدادات الموقع العامة ──
+     للحسابات في مشروع التطبيق فقط (midad_profiles). المشاريع الخاصة وحسابات Google: لا ملفّ هنا. */
+  let profile = null;          // {status, role, features} أو null (غير معروف/غير منطبق ⇒ بلا قيود)
+  let siteCfg = null;          // إعدادات الموقع (midad_config.app)
+  try { const c = JSON.parse(localStorage.getItem('midad-site-cfg') || 'null'); if (c && c.v) siteCfg = c.v; } catch {}
+  const usesBuiltinProject = () => !!(sb && !sb.isDrive && cfg && builtinCfg() && cfg.url === builtinCfg().url);
+  async function loadProfile() {
+    profile = null;
+    if (!user || !usesBuiltinProject()) return null;
+    try {
+      const { data, error } = await sb.from('midad_profiles').select('status, role, features').eq('id', user.id).limit(1);
+      if (!error && data && data[0]) profile = data[0];
+      else if (!error) profile = { status: 'pending', role: 'user', features: {} }; // لا ملفّ بعد (تسجيل جديد يُنشأ ملفّه آلياً)
+    } catch {}
+    emitStatus();
+    return profile;
+  }
+  // يملك المستخدم إمكانيةً؟ (مقبول + غير معطّلة له + مفعّلة افتراضياً في إعدادات الموقع)
+  function can(feature) {
+    if (!profile) return true;
+    if (profile.role === 'admin') return true;
+    if (profile.status !== 'approved') return false;
+    const f = profile.features || {};
+    if (typeof f[feature] === 'boolean') return f[feature];
+    const d = (siteCfg && siteCfg.defaults) || {};
+    return d[feature] !== false;
+  }
+  const accountOk = () => !profile || (profile.status === 'approved' && can('sync'));
+  async function afterSignIn() {
+    await loadProfile();
+    if (!accountOk()) return; // بانتظار الموافقة/موقوف/المزامنة معطّلة ⇒ لا مزامنة (والخادم يمنعها أيضاً)
+    subscribe(); syncAll();
+    // آخر ظهور: مرة يومياً على الأكثر
+    try {
+      const k = 'midad-touch-' + user.id, today = new Date().toDateString();
+      if (usesBuiltinProject() && localStorage.getItem(k) !== today) { localStorage.setItem(k, today); sb.rpc('midad_touch').then(() => {}, () => {}); }
+    } catch {}
+  }
+  // إعدادات الموقع العامة: تُقرأ للجميع (حتى الزائر) بالمفتاح العام، وتُحفظ ١٠ دقائق
+  async function loadSiteConfig(force) {
+    const b = builtinCfg();
+    if (!b) return siteCfg;
+    try {
+      const c = JSON.parse(localStorage.getItem('midad-site-cfg') || 'null');
+      if (!force && c && Date.now() - c.at < 10 * 60e3) { siteCfg = c.v; return siteCfg; }
+    } catch {}
+    try {
+      const r = await fetch(`${b.url}/rest/v1/midad_config?key=eq.app&select=value`, { headers: { apikey: b.anonKey, Authorization: `Bearer ${b.anonKey}` } });
+      if (r.ok) {
+        const rows = await r.json();
+        siteCfg = (rows && rows[0] && rows[0].value) || {};
+        try { localStorage.setItem('midad-site-cfg', JSON.stringify({ at: Date.now(), v: siteCfg })); } catch {}
+        window.dispatchEvent(new Event('midad-site-config'));
+      }
+    } catch {}
+    return siteCfg;
+  }
+  async function adminCall(action, body = {}) {
+    const r = await callFn('admin', { action, ...body });
+    let d = null; try { d = await r.json(); } catch {}
+    if (!r.ok || !d || d.error) throw new Error((d && d.error) || `admin ${r.status}`);
+    return d;
+  }
 
   /* ── تهيئة ── */
   let initDone = null; // وعد التهيئة: فتح كتاب فور بدء التطبيق ينتظره بدل أن يفشل
@@ -101,13 +168,14 @@ const Cloud = (() => {
         const was = user && user.id;
         user = session ? session.user : null;
         emitStatus();
-        if (user && user.id !== was) { subscribe(); syncAll(); }
+        if (user && user.id !== was) afterSignIn();
+        if (!user) { profile = null; }
         if (!user && channel) { sb.removeChannel(channel); channel = null; }
         // أُلغي إذن Google (من حساب المستخدم) ⇒ عُد لشاشة الاختيار بدل نموذج البريد/كلمة المرور
         if (!user && sb && sb.isDrive) { try { localStorage.removeItem(MODE_KEY); } catch {} ready = false; sb = null; emitStatus(); }
       });
       emitStatus();
-      if (user) { subscribe(); syncAll(); }
+      if (user) afterSignIn();
       startAutoSync();
     } catch (e) {
       console.error('cloud init', e);
@@ -143,7 +211,9 @@ const Cloud = (() => {
   async function signUp(email, password) {
     if (!ready) throw new Error('لم تُضبط المزامنة بعد');
     const { data, error } = await sb.auth.signUp({ email: email.trim(), password });
-    if (error) throw new Error(translateAuthError(error.message));
+    if (error) throw new Error(/database error saving new user|التسجيل مغلق/i.test(error.message) ? 'التسجيل مغلق حالياً — تواصل مع مسؤول التطبيق' : translateAuthError(error.message));
+    const reg = (siteCfg && siteCfg.registration) || 'approval';
+    if (usesBuiltinProject() && reg === 'approval') return data.session ? 'pending' : 'confirm-pending';
     if (!data.session) return 'confirm'; // يحتاج تأكيد بريد
     return 'ok';
   }
@@ -204,6 +274,7 @@ const Cloud = (() => {
   // quiet: مزامنة خلفية دورية — بلا مؤشّر «جارٍ المزامنة» ولا إعادة رسم إن لم يتغيّر شيء
   async function syncAll(opts = {}) {
     if (!ready || !user || syncing) return;
+    if (!accountOk()) return;
     const quiet = !!opts.quiet;
     if (quiet && !navigator.onLine) return;
     syncing = true;
@@ -1034,6 +1105,9 @@ const Cloud = (() => {
     signIn, signUp, signOut, syncAll, onStatus,
     pushBook, pushMeta, pushState, ensureAssets, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
     lastPayloadError: () => lastPayloadError,
+    // لوحة التحكم
+    getProfile: () => profile, isAdmin: () => !!(profile && profile.role === 'admin'), can, refreshProfile: async () => { await loadProfile(); if (accountOk() && user) { subscribe(); syncAll(); } return profile; },
+    siteConfig: () => siteCfg || {}, loadSiteConfig, adminCall,
     // Google Drive + حالة السحابة + دون اتصال
     googleAvailable, signInGoogle, provider: () => (sb && sb.isDrive ? 'drive' : (isConfigured() ? 'supabase' : 'none')),
     storageReport, uploadPending, downloadBooks, offlinePrefs, setOffline,

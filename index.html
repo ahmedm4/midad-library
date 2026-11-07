@@ -697,10 +697,17 @@
           <span id="cloud-sync-info">مكتبتك متزامنة مع كل أجهزتك</span>
         </div>
       </div>
-      <div class="cloud-acc-btns">
+      <div class="cloud-gate" id="cloud-gate" hidden role="status">
+        <div class="cg-ic" id="cloud-gate-ic">⏳</div>
+        <div><b id="cloud-gate-title">حسابك بانتظار موافقة المسؤول</b>
+          <p id="cloud-gate-text">ستعمل المزامنة تلقائياً فور الموافقة. يمكنك استعمال التطبيق على هذا الجهاز كالمعتاد في الأثناء.</p></div>
+        <button class="btn-ghost" id="cloud-gate-check">↻ تحقّق الآن</button>
+      </div>
+      <div class="cloud-acc-btns" id="cloud-acc-btns">
         <button class="btn-ghost" id="cloud-syncnow">🔄 مزامنة الآن</button>
         <button class="btn-ghost" id="cloud-report">📊 حالة السحابة</button>
       </div>
+      <a class="btn-gold cloud-admin-link" id="cloud-admin-link" href="admin.html" hidden>🛡 لوحة التحكم <i class="menu-badge" id="cloud-admin-badge" hidden></i></a>
       <button class="cloud-link" id="cloud-signout">تسجيل الخروج من هذا الجهاز</button>
     </div>
   </div>

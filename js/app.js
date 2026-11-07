@@ -1,5 +1,5 @@
 /* ═══════ مِداد — التشغيل ═══════ */
-const APP_VERSION = 'v126'; // يُحدَّث مع كل إصدار
+const APP_VERSION = 'v127'; // يُحدَّث مع كل إصدار
 
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
@@ -14,6 +14,8 @@ const APP_VERSION = 'v126'; // يُحدَّث مع كل إصدار
   try { Reader.wire(); } catch (e) { console.error('reader wire', e); }
   try { await Library.init(); } catch (e) { console.error('library init', e); }
   try { if (window.Cloud) Cloud.init(); } catch (e) { console.error('cloud init', e); }
+  // إعدادات الموقع من لوحة التحكم (الإعلان، المصادر المفعّلة، التسجيل…) — للجميع، تُحدَّث كل ١٠ دقائق
+  try { if (window.Cloud && Cloud.loadSiteConfig) { Cloud.loadSiteConfig(); setInterval(() => Cloud.loadSiteConfig(), 10 * 60e3); } } catch {}
   // اختصارات أيقونة التطبيق (ضغطة مطوّلة على الأيقونة): واصل القراءة / استكشف / أضف كتاباً
   try {
     const act = new URLSearchParams(location.search).get('open');

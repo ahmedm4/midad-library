@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0e0b16">
+<title>لوحة التحكم — مِداد</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=Aref+Ruqaa:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+  <!-- شاشة الدخول / عدم الصلاحية -->
+  <section class="ad-gate" id="gate" hidden>
+    <div class="ad-gate-box">
+      <img src="icon-192.png" alt="" width="64" height="64">
+      <h1>لوحة تحكم مِداد</h1>
+      <p id="gate-msg">سجّل الدخول بحساب المسؤول.</p>
+      <form id="login-form" autocomplete="on">
+        <label>البريد الإلكتروني<input type="email" id="login-email" dir="ltr" autocomplete="username" required></label>
+        <label>كلمة المرور<input type="password" id="login-pass" dir="ltr" autocomplete="current-password" required></label>
+        <button class="ad-btn gold" type="submit" id="login-btn">دخول</button>
+      </form>
+      <div class="ad-gate-actions" id="gate-actions" hidden>
+        <button class="ad-btn" id="gate-signout">تسجيل الخروج</button>
+      </div>
+      <a class="ad-link" href="./">↩ العودة إلى التطبيق</a>
+    </div>
+  </section>
+
+  <!-- اللوحة -->
+  <div class="ad-app" id="app" hidden>
+    <aside class="ad-side">
+      <div class="ad-brand"><img src="icon-96.png" alt="" width="34" height="34"><div><b>مِداد</b><span>لوحة التحكم</span></div></div>
+      <nav class="ad-nav" id="nav" aria-label="أقسام اللوحة">
+        <button data-view="overview" class="on"><span>📊</span>نظرة عامة</button>
+        <button data-view="pending"><span>⏳</span>طلبات الانتظار <i class="ad-badge" id="badge-pending" hidden></i></button>
+        <button data-view="users"><span>👥</span>المستخدمون</button>
+        <button data-view="features"><span>🧩</span>الإمكانيات</button>
+        <button data-view="settings"><span>⚙️</span>إعدادات الموقع</button>
+        <button data-view="announce"><span>📢</span>الإعلان</button>
+        <button data-view="audit"><span>📜</span>السجلّ</button>
+      </nav>
+      <div class="ad-side-foot">
+        <span class="ad-me" id="me-email"></span>
+        <a class="ad-btn small" href="./">↩ إلى التطبيق</a>
+        <button class="ad-btn small" id="signout">خروج</button>
+      </div>
+    </aside>
+    <main class="ad-main" id="main" tabindex="-1">
+      <header class="ad-head">
+        <h2 id="view-title">نظرة عامة</h2>
+        <button class="ad-btn small" id="refresh" title="تحديث البيانات">↻ تحديث</button>
+      </header>
+      <div id="view"></div>
+    </main>
+  </div>
+
+  <div class="ad-toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/admin.js" type="module"></script>
+</body>
+</html>

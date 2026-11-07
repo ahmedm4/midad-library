@@ -50,7 +50,8 @@ const DriveClient = (() => {
           tok.access = d.access_token; tok.exp = Date.now() + (d.expires_in || 3600) * 1000; saveTok();
         } catch (e) {
           // رمز التحديث أُلغي (سحب المستخدم الإذن من حسابه) ⇒ خروج نظيف
-          if (e.code === 'invalid_grant' || /invalid_grant/i.test(e.message)) { tok = null; saveTok(); fireAuth(); }
+          // أو أوقف المسؤولُ الحساب من لوحة التحكم
+          if (e.code === 'invalid_grant' || e.code === 'blocked' || /invalid_grant/i.test(e.message)) { tok = null; saveTok(); fireAuth(); }
           throw e;
         } finally { refreshing = null; }
       })();

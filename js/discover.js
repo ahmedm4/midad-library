@@ -226,8 +226,18 @@ const Discover = (() => {
     else search('', CATS[0].q);
   }
 
+  // المصادر الموقوفة من لوحة التحكم تُخفى (والخادم يرفضها أيضاً)
+  function applySourceSwitches() {
+    const s = (window.Cloud && Cloud.siteConfig && Cloud.siteConfig().sources) || {};
+    modal.querySelectorAll('.disc-src').forEach((b) => { b.hidden = s[b.dataset.src] === false; });
+    if (s[source] === false) {
+      const first = [...modal.querySelectorAll('.disc-src')].find((b) => !b.hidden);
+      if (first) { loaded = true; switchSource(first.dataset.src); }
+    }
+  }
   function open() {
     ensureUI();
+    applySourceSwitches();
     modal.hidden = false;
     document.body.style.overflow = 'hidden';
     if (!loaded) { loaded = true; const c = chipsEl.querySelector('.disc-chip'); if (c) c.classList.add('on'); search('', CATS[0].q); }

@@ -83,6 +83,30 @@ async function callerUser(req: Request): Promise<{ id: string; email: string } |
     return u && u.id ? { id: String(u.id), email: String(u.email || "").toLowerCase() } : null;
   } catch { return null; }
 }
+// إعدادات الموقع من لوحة التحكم (تُخزَّن دقيقة في ذاكرة الدالة)
+let cfgCache: { at: number; v: any } | null = null;
+async function siteConfig(): Promise<any> {
+  if (cfgCache && Date.now() - cfgCache.at < 60000) return cfgCache.v;
+  const SB = Deno.env.get("SUPABASE_URL") || "", key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_ANON_KEY") || "";
+  let v: any = {};
+  try { const r = await fetch(`${SB}/rest/v1/midad_config?key=eq.app&select=value`, { headers: { apikey: key, Authorization: `Bearer ${key}` } }); if (r.ok) v = ((await r.json())[0] || {}).value || {}; } catch { /* افتراضي: كل شيء متاح */ }
+  cfgCache = { at: Date.now(), v };
+  return v;
+}
+async function discoverAllowedFor(id: string): Promise<boolean> {
+  const SB = Deno.env.get("SUPABASE_URL") || "", SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!SB || !SRK) return true;
+  try {
+    const r = await fetch(`${SB}/rest/v1/midad_profiles?id=eq.${id}&select=status,role,features`, { headers: { apikey: SRK, Authorization: `Bearer ${SRK}` } });
+    if (!r.ok) return true;
+    const p = (await r.json())[0];
+    if (!p || p.role === "admin") return true;
+    if (p.status === "blocked") return false;
+    if (typeof (p.features || {}).discover === "boolean") return p.features.discover;
+    const d = ((await siteConfig()).defaults || {}).discover;
+    return d !== false;
+  } catch { return true; }
+}
 const allowedEmails = () => (Deno.env.get("ALLOWED_EMAILS") || "").split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 // مواقع الكتب التي يخدمها الوسيط لأي زائر بلا حساب (كي لا يصير وسيطاً مفتوحاً لكل الإنترنت)
@@ -442,6 +466,17 @@ Deno.serve(async (req) => {
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "list");
+
+    // لوحة التحكم: المصدر موقوف؟ الزوار بلا حساب ممنوعون؟ المستخدم معطّلة عنه الإمكانية؟
+    {
+      const cfg = await siteConfig();
+      const isNarjes = action === "fetch" && /narjeslibrary\.com|ww-api\.com/i.test(String(b.url || ""));
+      const src = isNarjes ? "narjes" : action === "fetch" ? "" : "alfeker";
+      if (src && cfg.sources && cfg.sources[src] === false) return json({ error: "هذا المصدر موقوف حالياً من إدارة التطبيق", code: "source_off" }, 403);
+      const who = await callerUser(req);
+      if (!who && cfg.discover_anonymous === false && src) return json({ error: "«استكشف» متاح لأصحاب الحسابات فقط — سجّل الدخول من زر السحابة ☁️", code: "auth" }, 401);
+      if (who && src && !(await discoverAllowedFor(who.id))) return json({ error: "«استكشف» غير مفعّل لحسابك", code: "forbidden" }, 403);
+    }
 
     if (action === "sections") {
       return json({ sections: parseSections(await getHtml(`${BASE}/sections/`)) });

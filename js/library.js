@@ -180,6 +180,7 @@ const Library = (() => {
     wireCloud();
     await refresh();
     setTimeout(maybeWelcome, 1200);
+    renderAnnouncement();
     setTimeout(checkStorage, 6000);
   }
 
@@ -208,6 +209,24 @@ const Library = (() => {
       // عند وجود إعداد مضمّن في التطبيق، لا حاجة لرابط «تغيير المشروع»
       if (Cloud.hasBuiltin && Cloud.hasBuiltin()) $('#cloud-reconfig').hidden = true;
       $('#cloud-google-wrap').hidden = signedIn || !googleOk;
+      // لوحة التحكم: حساب بانتظار الموافقة/موقوف ⇒ رسالة بدل أزرار المزامنة
+      {
+        const gate = state === 'pending' || state === 'blocked';
+        $('#cloud-gate').hidden = !gate; $('#cloud-acc-btns').hidden = gate;
+        if (gate) {
+          $('#cloud-gate-ic').textContent = state === 'pending' ? '⏳' : '⛔';
+          $('#cloud-gate-title').textContent = state === 'pending' ? 'حسابك بانتظار موافقة المسؤول' : 'تم إيقاف هذا الحساب';
+          $('#cloud-gate-text').textContent = state === 'pending'
+            ? 'ستعمل المزامنة تلقائياً فور الموافقة. يمكنك استعمال التطبيق على هذا الجهاز كالمعتاد في الأثناء.'
+            : 'المزامنة موقوفة لهذا الحساب. كتبك على هذا الجهاز باقية وتعمل كالمعتاد.';
+          $('#cloud-gate').classList.toggle('blocked', state === 'blocked');
+        }
+        const admin = signedIn && Cloud.isAdmin && Cloud.isAdmin();
+        $('#cloud-admin-link').hidden = !admin;
+        if (admin) refreshAdminBadge();
+        const signupBtn = $('#cloud-signup');
+        if (signupBtn) signupBtn.hidden = ((Cloud.siteConfig && Cloud.siteConfig().registration) === 'closed');
+      }
       $('#cloud-setup-intro').hidden = googleOk;
       if (signedIn) {
         $('#cloud-user-email').textContent = Cloud.getUserEmail() || '';
@@ -231,6 +250,11 @@ const Library = (() => {
     // من شاشة البريد/كلمة المرور: عُد إلى شاشة الخيارات (يُلغي ربط هذا الجهاز بمشروع التطبيق)
     $('#cloud-back').onclick = () => { Cloud.disconnect(); showGoogle(true); };
     $('#cloud-report').onclick = () => { modal.hidden = true; openCloudReport(); };
+    $('#cloud-gate-check').onclick = async (e) => {
+      const b = e.currentTarget; b.disabled = true;
+      try { const p = await Cloud.refreshProfile(); toast(p && p.status === 'approved' ? '✓ تمت الموافقة على حسابك — بدأت المزامنة' : 'ما زال حسابك بانتظار الموافقة', p && p.status === 'approved' ? 'gold' : ''); }
+      finally { b.disabled = false; }
+    };
 
     $('#cloud-connect').onclick = async () => {
       const url = $('#cloud-url').value, key = $('#cloud-key').value;
@@ -263,6 +287,8 @@ const Library = (() => {
       if (kind === 'signup') {
         const r = await Cloud.signUp(email, pass);
         if (r === 'confirm') toast('أُرسل رابط تأكيد إلى بريدك — افتحه ثم سجّل الدخول', 'gold');
+        else if (r === 'pending') toast('✓ أُنشئ حسابك — بانتظار موافقة المسؤول، وستعمل المزامنة فور الموافقة', 'gold');
+        else if (r === 'confirm-pending') toast('✓ أُنشئ حسابك — أكّد بريدك من الرسالة المرسلة، ثم تنتظر موافقة المسؤول', 'gold');
         else toast('أُنشئ حسابك وسُجّل دخولك ✓', 'gold');
       } else {
         await Cloud.signIn(email, pass);
@@ -290,6 +316,35 @@ const Library = (() => {
         (cloud ? 'افتح ☁️ ← «📊 حالة السحابة» ← «أفرغ مساحة»' : 'احذف كتباً لا تحتاجها، أو فعّل المزامنة لتُحفظ في السحابة'));
     } catch {}
   }
+
+  /* ─── لوحة التحكم: عدد الطلبات المعلّقة للمسؤول ─── */
+  let adminPending = 0, adminBadgeAt = 0;
+  async function refreshAdminBadge() {
+    if (Date.now() - adminBadgeAt < 60000) return;
+    adminBadgeAt = Date.now();
+    try {
+      const d = await Cloud.adminCall('pending_count');
+      adminPending = d.count || 0;
+      const b = $('#cloud-admin-badge'); if (b) { b.hidden = !adminPending; b.textContent = adminPending; }
+    } catch {}
+  }
+
+  /* ─── إعلان من المسؤول أعلى المكتبة (يُخفى حتى يتغيّر نصّه) ─── */
+  function renderAnnouncement() {
+    const a = (window.Cloud && Cloud.siteConfig && Cloud.siteConfig().announcement) || {};
+    let el = $('#site-announce');
+    const sig = String(a.at || '') + '|' + (a.text || '');
+    let dismissed = ''; try { dismissed = localStorage.getItem('midad-announce-dismissed') || ''; } catch {}
+    if (!a.active || !String(a.text || '').trim() || dismissed === sig) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'site-announce'; el.setAttribute('role', 'status');
+      const lv = $('#library-view'); lv.insertBefore(el, lv.firstChild.nextSibling);
+    }
+    el.className = 'site-announce ' + (a.kind || 'info');
+    el.innerHTML = `<span class="sa-ic">${a.kind === 'warn' ? '⚠️' : a.kind === 'success' ? '✅' : '📢'}</span><p>${esc(a.text)}</p><button class="sa-x" aria-label="إخفاء الإعلان">✕</button>`;
+    el.querySelector('.sa-x').onclick = () => { try { localStorage.setItem('midad-announce-dismissed', sig); } catch {} el.remove(); };
+  }
+  window.addEventListener('midad-site-config', renderAnnouncement);
 
   async function googleSignIn(btn) {
     if (btn) btn.disabled = true;
@@ -3369,6 +3424,7 @@ create policy "midad_own_files" on storage.objects for all
       const menu = document.createElement('div');
       menu.className = 'bc-menu';
       menu.innerHTML = `
+        ${window.Cloud && Cloud.isAdmin && Cloud.isAdmin() ? `<button data-act="admin">🛡 لوحة التحكم${adminPending ? ` <i class="menu-badge">${adminPending}</i>` : ''}</button>` : ''}
         <button data-act="libai">🔍 اسأل مكتبتك</button>
         <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
@@ -3390,6 +3446,7 @@ create policy "midad_own_files" on storage.objects for all
         else if (act === 'libai') openLibAI();
         else if (act === 'keys') openAiKeyDialog();
         else if (act === 'notes') exportNotes(null);
+        else if (act === 'admin') location.href = 'admin.html';
         else if (act === 'backup') exportBackup();
         else if (act === 'restore') $('#import-input').click();
       };

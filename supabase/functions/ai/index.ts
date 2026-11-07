@@ -31,6 +31,25 @@ async function callerUser(req: Request): Promise<{ id: string; email: string } |
     return u && u.id ? { id: String(u.id), email: String(u.email || "").toLowerCase() } : null;
   } catch { return null; }
 }
+// لوحة التحكم: مقبول + «المساعد بمفاتيح الخادم» غير معطّل له (أو للجميع افتراضياً). المسؤول دائماً.
+async function aiAllowed(who: { id: string; email: string }): Promise<{ ok: boolean; why?: string }> {
+  const SB = Deno.env.get("SUPABASE_URL") || "", SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!SB || !SRK) return { ok: true };
+  const h = { apikey: SRK, Authorization: `Bearer ${SRK}` };
+  try {
+    const pr = await fetch(`${SB}/rest/v1/midad_profiles?id=eq.${who.id}&select=status,role,features`, { headers: h });
+    if (!pr.ok) return { ok: true }; // الجداول غير مُعدّة ⇒ السلوك السابق
+    const p = (await pr.json())[0];
+    if (!p) return { ok: true };
+    if (p.role === "admin") return { ok: true };
+    if (p.status !== "approved") return { ok: false, why: p.status === "blocked" ? "تم إيقاف هذا الحساب" : "حسابك بانتظار موافقة المسؤول" };
+    if (typeof (p.features || {}).ai_server === "boolean") return { ok: p.features.ai_server, why: "المساعد بمفاتيح الخادم غير مفعّل لحسابك — أضِف مفتاح Gemini الخاص بك (🤖 الذكاء الاصطناعي)" };
+    const cr = await fetch(`${SB}/rest/v1/midad_config?key=eq.app&select=value`, { headers: h });
+    const c = cr.ok ? (await cr.json())[0] : null;
+    const def = c && c.value && c.value.defaults ? c.value.defaults.ai_server : undefined;
+    return { ok: def !== false, why: "المساعد بمفاتيح الخادم غير مفعّل حالياً — أضِف مفتاح Gemini الخاص بك (🤖 الذكاء الاصطناعي)" };
+  } catch { return { ok: true }; }
+}
 const allowedEmails = () => (Deno.env.get("ALLOWED_EMAILS") || "").split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 function buildPrompt(action: string, p: { text: string; question: string; title: string }) {
@@ -171,6 +190,8 @@ Deno.serve(async (req) => {
     // مفاتيح Gemini في هذا الخادم لصاحب المشروع ومن يأذن لهم فقط — لا لكل من يحمل المفتاح العام
     const who = await callerUser(req);
     if (!who) return json({ error: "المساعد الذكي في هذا الخادم خاص بأصحاب الحسابات — أضِف مفتاح Gemini الخاص بك من إعدادات التطبيق (🤖 الذكاء الاصطناعي)", code: "auth" }, 401);
+    const perm = await aiAllowed(who);
+    if (!perm.ok) return json({ error: perm.why, code: "forbidden" }, 403);
     const allow = allowedEmails();
     if (allow.length && !allow.includes(who.email)) return json({ error: "حسابك غير مأذون له باستخدام مفاتيح هذا الخادم — أضِف مفتاح Gemini الخاص بك من إعدادات التطبيق", code: "forbidden" }, 403);
     const b = await req.json().catch(() => ({}));
