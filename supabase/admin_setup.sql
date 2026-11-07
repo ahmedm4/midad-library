@@ -99,6 +99,8 @@ $$;
 grant execute on function public.midad_touch() to authenticated;
 
 -- ٧) إحصاءات للوحة التحكم (لمفتاح الخدمة فقط): عدد الكتب والمساحة لكل مستخدم
+-- عمود الحذف الناعم: موجود في المشاريع الحديثة؛ نضيفه للقديمة (لا يغيّر أي كتاب — القيمة false)
+alter table public.midad_books add column if not exists deleted boolean default false;
 create or replace function public.midad_admin_usage()
 returns table (owner uuid, books bigint, bytes bigint)
 language sql stable security definer set search_path = public, storage as $$
