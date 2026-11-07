@@ -29,6 +29,10 @@ async function getHtml(url: string): Promise<string> {
   return await r.text();
 }
 
+// «٦٦٥» ⇒ «665» و«٢٠ م.ب» ⇒ «20 MB» (الموقع الجديد يكتب الأرقام والأحجام بالعربية)
+const latinDigits = (s: string) => (s || "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+const sizeOf = (s: string) => latinDigits(decode(stripTags(s))).replace(/\s*م\.?\s*ب\.?/, " MB").replace(/\s*ك\.?\s*ب\.?/, " KB").replace(/\s*غ\.?\s*ب\.?/, " GB").replace(/٫/g, ".").trim();
+
 // يحوّل رابط صورة نسبيّاً إلى مطلق
 const absImg = (src: string) => !src ? "" : (src.startsWith("http") ? src : `${BASE}/${src.replace(/^\//, "")}`);
 
@@ -46,6 +50,22 @@ function parseCards(html: string) {
     const views = (c.match(/icon-eye[^>]*>\s*([\d,]+)/) || [])[1] || "";
     if (id && title) out.push({ id, title, cover: img, author, category, views });
   }
+  // ⚠ لا نكتفي بالقديم إن وُجد: صفحات الموقع الجديد قد تحوي كتلة جانبية بالبنية القديمة («كتاب مميّز»)
+  //   فيظهر كتاب واحد بدل كل النتائج. نقرأ الاثنتين ونقدّم الجديد ونحذف المكرّر.
+  const legacy = out.splice(0);
+  // الموقع الجديد (منذ نوفمبر 2026): <li class="fk-hcard"> … /b/<الرقم>/ — الرقم نفسه رقم الكتاب القديم
+  // نقسم عند بداية كل بطاقة (بطاقات نتائج البحث تحوي قوائم داخلية فلا يصلح البحث عن نهايتها)
+  for (const chunk of html.split('<li class="fk-hcard">').slice(1)) {
+    const c = chunk.slice(0, 6000);
+    const id = (c.match(/alfeker\.net\/b\/(\d+)\//) || [])[1];
+    const title = decode(stripTags((c.match(/class="fk-hcard-title"[^>]*>([\s\S]*?)<\/h3>/) || [])[1] || ""));
+    const img = absImg((c.match(/<img[^>]*src="([^"]+)"/) || [])[1] || "");
+    const author = decode(stripTags((c.match(/class="fk-hcard-author"[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
+    const category = decode(stripTags((c.match(/class="fk-hcard-section"[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
+    if (id && title && !out.some((x) => x.id === id)) out.push({ id, title, cover: img, author, category, views: "" });
+  }
+  // صفحة بالبنية القديمة كلها (الموقع القديم) ⇒ نتائجها؛ وإلا فالقديم الشاذّ يُضاف إن لم يتكرّر
+  if (!out.length) return legacy;
   return out;
 }
 
@@ -77,6 +97,7 @@ const isPublicHost = (u: string) => {
 type Mirror = { host: string; url: string };
 
 function classifyHost(url: string): string {
+  if (/alfeker\.net\/\?fk_dl=\d+/i.test(url)) return "fkdl";
   if (/(?:drive|docs)\.google\.com/i.test(url)) return "drive";
   if (/mediafire\.com/i.test(url)) return "mediafire";
   if (/dropbox\.com/i.test(url)) return "dropbox";
@@ -86,13 +107,15 @@ function classifyHost(url: string): string {
 const driveIdOf = (u: string) => (u.match(/\/file\/d\/([-\w]+)/) || u.match(/[?&]id=([-\w]+)/) || [])[1] || "";
 // معرّفات Drive القديمة (0B…) تتطلب resourcekey منذ تحديث Google الأمني (2021)، وروابط الموقع
 // لا تحمله، فتُحوِّل Google التنزيل المجهول إلى صفحة تسجيل الدخول. نؤخّرها ولا نعتمد عليها.
-const isLegacyDrive = (u: string) => /^0B/.test(driveIdOf(u));
+// … إلا إن حمل الرابط مفتاح المورد (الموقع الجديد يضيفه) فيعمل كالحديث
+const resourceKeyOf = (u: string) => (u.match(/[?&]resourcekey=([-\w]+)/) || [])[1] || "";
+const isLegacyDrive = (u: string) => /^0B/.test(driveIdOf(u)) && !resourceKeyOf(u);
 
 // ترتيب التجربة: Drive الحديث (سريع وموثوق) ← MediaFire (متوفّر في كل الكتب تقريباً)
 // ← رابط مباشر/Dropbox ← Drive القديم (يفشل غالباً).
 function mirrorRank(m: Mirror): number {
   if (m.host === "drive") return isLegacyDrive(m.url) ? 9 : 0;
-  if (m.host === "mediafire") return 1;
+  if (m.host === "mediafire" || m.host === "fkdl") return 1;
   if (m.host === "direct") return 2;
   if (m.host === "dropbox") return 3;
   return 8;
@@ -127,7 +150,33 @@ function parseParts(html: string): Part[] {
     }
     if (items.length) lists.push(items);
   }
-  if (!lists.length) return [];
+  // الموقع الجديد: كل ملف (جزء) سطرٌ واحد فيه كل روابطه — Drive (أساسي/بديل) ورابط الموقع (MediaFire)
+  if (!lists.length) {
+    for (const f of html.matchAll(/<li class="fk-file">([\s\S]*?)<\/li>/g)) {
+      const body = f[1];
+      const label = decode(stripTags((body.match(/class="fk-file-name"[^>]*>([\s\S]*?)<\/span>/) || [])[1] || ""));
+      const size = sizeOf((body.match(/<small>([\s\S]*?)<\/small>/) || [])[1] || "");
+      const urls = [...body.matchAll(/(?:href|data-fk-read)="(https?:\/\/[^"]+)"/g)].map((x) => decode(x[1]));
+      const items: Item[] = [];
+      const seenDrive = new Set<string>();
+      for (const url of urls) {
+        const host = classifyHost(url);
+        if (!host) continue;
+        if (host === "drive") { const id = driveIdOf(url); if (!id || seenDrive.has(id)) continue; seenDrive.add(id); }
+        if (!items.some((x) => x.url === url)) items.push({ label, size, url, host });
+      }
+      if (items.length) lists.push(items.map((x) => x)); // سطر = جزء
+    }
+    if (lists.length) {
+      // هنا كل «قائمة» جزءٌ واحد بمراياه؛ نحوّلها إلى أجزاء مباشرةً
+      const designatorNew = (label: string) => (label.match(/(?:الجزء|ج)\s*[-:]?\s*0*(\d{1,3})(?!\d)/) || [])[1];
+      return lists.map((items, i) => {
+        const d = designatorNew(items[0].label);
+        return { n: i + 1, label: items[0].label, short: lists.length > 1 ? `الجزء ${d || i + 1}` : "الكتاب كاملاً", size: items[0].size, mirrors: sortMirrors(items.map((x) => ({ host: x.host, url: x.url }))) };
+      });
+    }
+    return [];
+  }
 
   // تسمية مختصرة دقيقة: «الجزء 3» ، «الجزء 3 · القسم 1» ، «الجزآن 9–10».
   // (لا نستخدم حدود الكلمات b في التعابير: لا تعمل مع الحروف العربية في JS)
@@ -175,12 +224,23 @@ function parseDetail(html: string, id: string) {
   // العنوان: وسم <title> هو اسم الكتاب في alfeker (أوثق من h1/h2)
   let title = decode(stripTags((html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || ""))
     .replace(/\s*[-|]\s*(alfeker|شبكة الفكر).*$/i, "").trim();
+  // الموقع الجديد: العنوان في h1.fk-book-title (وسم <title> فيه لاحقة اسم الموقع)
+  const h1New = decode(stripTags((html.match(/<h1 class="fk-book-title"[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || ""));
+  if (h1New) title = h1New;
   if (!title) title = decode(stripTags((html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || ""));
-  const author = decode(stripTags((html.match(/authors\.php\?id=\d+[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
+  const author = decode(stripTags(
+    (html.match(/class="fk-author-chip"[\s\S]*?<b>([\s\S]*?)<\/b>/) || [])[1] ||
+    (html.match(/authors\.php\?id=\d+[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
   // القسم فقط من كتلة معلومات الكتاب (لا من قائمة التصنيفات الجانبية)
-  const category = decode(stripTags((html.match(/القسم\s*:?\s*<span>\s*<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
-  const pages = (html.match(/عدد\s*الصفحات[^\d]{0,20}(\d+)/) || [])[1] || "";
-  const cover = absImg((html.match(/uploads\/pictures\/(?!\.thumb)[^"']+\.(?:jpg|jpeg|png)/i) || html.match(/uploads\/pictures\/[^"']+\.(?:jpg|jpeg|png)/i) || [])[0] || "");
+  const secLi = (html.match(/<li title="القسم">([\s\S]*?)<\/li>/) || [])[1] || "";
+  const secLinks = [...secLi.matchAll(/<a[^>]*>([\s\S]*?)<\/a>/g)].map((x) => decode(stripTags(x[1])));
+  const category = secLinks.length ? secLinks[secLinks.length - 1]
+    : decode(stripTags((html.match(/القسم\s*:?\s*<span>\s*<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || ""));
+  const pages = (latinDigits(html.match(/<li title="عدد الصفحات">[\s\S]*?class="fk-meta-val">([^<]*)/)?.[1] || "").match(/\d+/) || [])[0]
+    || (html.match(/عدد\s*الصفحات[^\d]{0,20}(\d+)/) || [])[1] || "";
+  const cover = absImg(
+    (html.match(/property="og:image" content="([^"]+)"/) || html.match(/og:image" content="([^"]+)"/) || [])[1] ||
+    (html.match(/uploads\/pictures\/(?!\.thumb)[^"']+\.(?:jpg|jpeg|png)/i) || html.match(/uploads\/pictures\/[^"']+\.(?:jpg|jpeg|png)/i) || [])[0] || "");
 
   let parts = parseParts(html);
   // احتياط لصفحات بلا قوائم منظّمة: كل روابط الملفات مرايا لجزء واحد
@@ -247,10 +307,11 @@ async function mediafireFetch(pageUrl: string): Promise<Response> {
 }
 
 // Google Drive مع معالجة صفحة التأكيد (فحص الفيروسات للملفات الكبيرة) وكشف طلب تسجيل الدخول
-async function driveFetch(fileId: string): Promise<Response> {
+async function driveFetch(fileId: string, resourceKey = ""): Promise<Response> {
   const headers = { "User-Agent": UA };
   const toSignIn = (r: Response) => /accounts\.google\.com|ServiceLogin|\/signin\//i.test(r.url);
-  let res = await fetch(`https://drive.google.com/uc?export=download&id=${fileId}`, { headers, redirect: "follow" });
+  const rk = resourceKey ? `&resourcekey=${encodeURIComponent(resourceKey)}` : "";
+  let res = await fetch(`https://drive.google.com/uc?export=download&id=${fileId}${rk}`, { headers, redirect: "follow" });
   if (toSignIn(res)) throw new Error("يطلب تسجيل الدخول (رابط قديم غير عامّ)");
   if (isFileResponse(res)) return res;
   if (!res.ok) throw new Error("أعاد الحالة " + res.status);
@@ -272,17 +333,35 @@ async function driveFetch(fileId: string): Promise<Response> {
   }
   if (!params.has("id")) params.set("id", fileId);
   if (!params.has("export")) params.set("export", "download");
+  if (resourceKey && !params.has("resourcekey")) params.set("resourcekey", resourceKey);
   res = await fetch(action + (action.includes("?") ? "&" : "?") + params.toString(), { headers, redirect: "follow" });
   if (toSignIn(res)) throw new Error("يطلب تسجيل الدخول");
   if (!isFileResponse(res)) throw new Error("لم يُعِد الملف (قد تكون الحصّة ممتلئة)");
   return res;
 }
 
-async function resolveMirror(m: Mirror): Promise<Response> {
+async function resolveMirror(m: Mirror, depth = 0): Promise<Response> {
   if (m.host === "drive") {
     const id = driveIdOf(m.url);
     if (!id) throw new Error("رابط غير صالح");
-    return driveFetch(id);
+    return driveFetch(id, resourceKeyOf(m.url));
+  }
+  if (m.host === "fkdl") {
+    // رابط الموقع يحوّل (302) إلى المستضيف الفعلي ⇒ نقرأ الوجهة ونكمل بمعالجها المعتاد
+    const r = await fetch(m.url, { headers: { "User-Agent": UA }, redirect: "manual" });
+    const loc = r.headers.get("location") || "";
+    if (r.status >= 300 && r.status < 400 && loc && depth < 2) {
+      const target = decode(new URL(loc, m.url).href);
+      const host = classifyHost(target) || (/\.pdf/i.test(target) ? "direct" : "");
+      if (!host) {
+        const f = await fetch(target, { headers: { "User-Agent": UA }, redirect: "follow" });
+        if (isFileResponse(f)) return f;
+        throw new Error("وجهة غير معروفة");
+      }
+      return resolveMirror({ host, url: target }, depth + 1);
+    }
+    if (isFileResponse(r)) return r;
+    throw new Error("لم يحوّل إلى ملف (" + r.status + ")");
   }
   if (m.host === "mediafire") return mediafireFetch(m.url);
   const url = m.host === "dropbox"
@@ -293,7 +372,7 @@ async function resolveMirror(m: Mirror): Promise<Response> {
   return r;
 }
 
-const HOST_AR: Record<string, string> = { drive: "Google Drive", mediafire: "MediaFire", dropbox: "Dropbox", direct: "الرابط المباشر" };
+const HOST_AR: Record<string, string> = { drive: "Google Drive", mediafire: "MediaFire", dropbox: "Dropbox", direct: "الرابط المباشر", fkdl: "رابط شبكة الفكر" };
 
 // يجرّب المرايا بالترتيب ويعيد أول ملف ينجح، أو خطأً يجمع سبب فشل كل مرآة
 async function fetchFromMirrors(mirrors: Mirror[]): Promise<{ res: Response; host: string }> {
@@ -327,8 +406,9 @@ Deno.serve(async (req) => {
     if (action === "list") {
       const q = String(b.q || "").trim();
       const catid = String(b.catid || "").trim();
+      // روابط الأقسام القديمة (library.php?catid=…) ما زالت تحوّل إلى أقسام الموقع الجديد
       const url = q
-        ? `${BASE}/search.php?search=${encodeURIComponent(q)}&author=&parent=&type=`
+        ? `${BASE}/?s=${encodeURIComponent(q)}&post_type=book`
         : `${BASE}/library.php?catid=${encodeURIComponent(catid || "65")}`;
       const html = await getHtml(url);
       return json({ books: parseCards(html) });

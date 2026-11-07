@@ -464,7 +464,7 @@ const Discover = (() => {
   }
 
   // ── تفاصيل كتاب «شبكة الفكر» (عبر الوسيط) ──
-  const AF_HOST = { drive: 'Google Drive', mediafire: 'MediaFire', dropbox: 'Dropbox', direct: 'رابط مباشر' };
+  const AF_HOST = { drive: 'Google Drive', mediafire: 'MediaFire', dropbox: 'Dropbox', direct: 'رابط مباشر', fkdl: 'شبكة الفكر' };
   async function openAlfekerDetail(ds) {
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -482,7 +482,8 @@ const Discover = (() => {
     const base = d.baseTitle || title;
     const partTitle = (p) => (multi ? `${base} — ${p.short}` : title);
     // رابط التنزيل اليدوي: MediaFire يفتح في المتصفح دائماً، ثم أي مرآة أخرى
-    const manualOf = (p) => ((p.mirrors || []).find((m) => m.host === 'mediafire') || (p.mirrors || [])[0] || {}).url || '';
+    // التنزيل اليدوي: رابط الموقع نفسه (يحوّل إلى MediaFire) أو MediaFire، وإلا أول مرآة
+    const manualOf = (p) => ((p.mirrors || []).find((m) => m.host === 'fkdl' || m.host === 'mediafire') || (p.mirrors || [])[0] || {}).url || '';
     const hostsOf = (p) => [...new Set((p.mirrors || []).map((m) => AF_HOST[m.host] || m.host))].join(' ← ');
     let have = new Set();
     try { have = new Set((await Store.getBooks()).map((b) => b.title)); } catch {}
@@ -636,7 +637,7 @@ const Discover = (() => {
   function renderAlfekerLegacy(ds, d, title, author, cover) {
     const hasFile = !!d.fileUrl;
     const hostName = AF_HOST[d.host] || 'المستضيف';
-    const autoImport = hasFile && (d.host === 'drive' || d.host === 'direct');
+    const autoImport = hasFile && (d.host === 'drive' || d.host === 'direct' || d.host === 'fkdl');
     sheet.innerHTML = `
       <div class="disc-sheet-box">
         <button class="disc-back" title="رجوع">→ رجوع</button>
