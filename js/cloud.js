@@ -142,6 +142,15 @@ const Cloud = (() => {
     } catch {}
     return siteCfg;
   }
+  // المساحة المستعملة في السحابة وحدّ الحساب: {used, quota_mb|null} — أو null إن لم تُعدّ اللوحة/ليس مشروع التطبيق
+  async function myUsage() {
+    if (!user || !usesBuiltinProject()) return null;
+    try { const { data, error } = await sb.rpc('midad_my_usage'); return error ? null : data; } catch { return null; }
+  }
+  // إبلاغ المسؤول بطلب تسجيل جديد (بريد، إن ضبط المسؤول ذلك). لا يكشف شيئاً ولا يفشل التسجيل.
+  function notifySignup() {
+    try { callFn('admin', { action: 'notify_signup', app: location.origin + location.pathname.replace(/[^/]*$/, '') }).catch(() => {}); } catch {}
+  }
   async function adminCall(action, body = {}) {
     const r = await callFn('admin', { action, ...body });
     let d = null; try { d = await r.json(); } catch {}
@@ -213,7 +222,7 @@ const Cloud = (() => {
     const { data, error } = await sb.auth.signUp({ email: email.trim(), password });
     if (error) throw new Error(/database error saving new user|التسجيل مغلق/i.test(error.message) ? 'التسجيل مغلق حالياً — تواصل مع مسؤول التطبيق' : translateAuthError(error.message));
     const reg = (siteCfg && siteCfg.registration) || 'approval';
-    if (usesBuiltinProject() && reg === 'approval') return data.session ? 'pending' : 'confirm-pending';
+    if (usesBuiltinProject() && reg === 'approval') { notifySignup(); return data.session ? 'pending' : 'confirm-pending'; }
     if (!data.session) return 'confirm'; // يحتاج تأكيد بريد
     return 'ok';
   }
@@ -359,6 +368,7 @@ const Cloud = (() => {
       if (window.Library && (changed || !quiet)) Library.refresh();
     } catch (e) {
       console.error('syncAll', e);
+      if (window.Telemetry) Telemetry.report('sync', (e && e.message) || String(e), { quiet: !!quiet });
       if (!quiet) setStatus('error', friendlyErr(e)); else emitStatus();
     } finally { syncing = false; }
     prefetchFiles(); // نزّل في الخلفية ملفات الكتب التي يُرجَّح فتحها قريباً
@@ -554,13 +564,15 @@ const Cloud = (() => {
       else cloud = pl instanceof Blob ? 'pending' : 'missing';
       out.push({ id: b.id, title: b.title || '', type: b.type, local: pl != null, localSize, cloudSize: stored.get(b.id) || 0, cloud, pinned: pin.all || pin.ids.includes(b.id) });
     }
-    let quota = null;
+    let quota = null, account = null;
     if (sb.isDrive) { try { quota = await sb.quota(); } catch {} }
+    else { account = await myUsage(); }
     let localBytes = 0, localQuota = 0;
     try { const e = await navigator.storage.estimate(); localBytes = e.usage || 0; localQuota = e.quota || 0; } catch {}
     return {
       provider: sb.isDrive ? 'drive' : 'supabase',
       cloudBytes, quota, // Drive: {used, limit} لحساب المستخدم كله
+      accountQuota: account && account.quota_mb ? account.quota_mb * 1048576 : 0, // حدّ حسابك من المسؤول (إن وُجد)
       supabaseLimit: sb.isDrive ? 0 : 1024 * 1048576, // الخطة المجانية (تقديري)
       localBytes, localQuota, books: out, offline: pin,
     };
@@ -834,8 +846,17 @@ const Cloud = (() => {
         console.error('storage upload failed', upErr);
         const big = /size|large|exceed|maximum|payload|413/i.test((upErr.message || '') + ' ' + (upErr.statusCode || upErr.status || ''));
         if (big) { markBlocked(id, payload.size); const fm = { fileError: 'size', fileMB: Math.round(payload.size / 1048576) }; row.meta = { ...row.meta, ...fm }; await Store.updateBook(id, fm); }
+        let quotaMsg = '';
+        if (!big && /row-level security|violates|unauthori[sz]ed|403/i.test((upErr.message || '') + ' ' + (upErr.statusCode || upErr.status || ''))) {
+          const u = await myUsage();
+          if (u && u.quota_mb && u.used >= u.quota_mb * 1048576) {
+            markBlocked(id, payload.size);
+            quotaMsg = ` — امتلأت المساحة المخصّصة لحسابك (${Math.round(u.quota_mb)} م.ب). احذف كتباً من السحابة أو اطلب من المسؤول زيادتها`;
+          }
+        }
+        if (!quotaMsg) if (window.Telemetry) Telemetry.report('upload', (upErr.message || String(upErr)) + (upErr.statusCode ? ` (${upErr.statusCode})` : ''), { mb: +(payload.size / 1048576).toFixed(1) });
         if (!opts.silent && window.Library) {
-          Library.toast(`تعذّر رفع ملف «${b.title || ''}» للسحابة${big ? ' — الملف كبير جداً على حدّ المخزن' : ''}`);
+          Library.toast(`تعذّر رفع ملف «${b.title || ''}» للسحابة${big ? ' — الملف كبير جداً على حدّ المخزن' : quotaMsg}`);
         }
       } else { row.has_file = true; markBlocked(id, 0); if (b.fileError) { delete row.meta.fileError; delete row.meta.fileMB; await Store.updateBook(id, { fileError: undefined, fileMB: undefined }); } }
     } else if (typeof payload === 'string') {
@@ -881,7 +902,7 @@ const Cloud = (() => {
     if (!ready || !user) return;
     await touch(id);
     try { await uploadBook(id); setStatus('synced', syncedMsg()); }
-    catch (e) { console.error('pushBook', e); setStatus('error', friendlyErr(e)); }
+    catch (e) { console.error('pushBook', e); if (window.Telemetry) Telemetry.report('upload', (e && e.message) || String(e)); setStatus('error', friendlyErr(e)); }
   }
 
   function pushState(id) {
@@ -1072,6 +1093,7 @@ const Cloud = (() => {
     console.error('download payload', lastErr);
     lastPayloadError = String((lastErr && (lastErr.message || lastErr.error)) || lastErr || '');
     if (lastSize) lastPayloadError += ` · ${(lastSize / 1048576).toFixed(1)} م.ب`;
+    if (navigator.onLine) if (window.Telemetry) Telemetry.report('download', lastPayloadError || 'unknown', { status: Number((lastErr && (lastErr.status || lastErr.statusCode)) || 0) || null, mb: lastSize ? +(lastSize / 1048576).toFixed(1) : null });
     if (!quiet) emitStatus();
     return navigator.onLine ? 'error' : 'offline';
   }
@@ -1107,7 +1129,7 @@ const Cloud = (() => {
     lastPayloadError: () => lastPayloadError,
     // لوحة التحكم
     getProfile: () => profile, isAdmin: () => !!(profile && profile.role === 'admin'), can, refreshProfile: async () => { await loadProfile(); if (accountOk() && user) { subscribe(); syncAll(); } return profile; },
-    siteConfig: () => siteCfg || {}, loadSiteConfig, adminCall,
+    siteConfig: () => siteCfg || {}, loadSiteConfig, adminCall, myUsage,
     // Google Drive + حالة السحابة + دون اتصال
     googleAvailable, signInGoogle, provider: () => (sb && sb.isDrive ? 'drive' : (isConfigured() ? 'supabase' : 'none')),
     storageReport, uploadPending, downloadBooks, offlinePrefs, setOffline,

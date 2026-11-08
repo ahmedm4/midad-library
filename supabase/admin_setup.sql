@@ -135,10 +135,164 @@ do $$ begin
     execute 'create policy "midad_own_stats" on public.midad_stats for all using (auth.uid() = owner and public.midad_can(''sync'')) with check (auth.uid() = owner and public.midad_can(''sync''))';
   end if;
 end $$;
-drop policy if exists "midad_own_files" on storage.objects;
-create policy "midad_own_files" on storage.objects for all
-  using (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync'))
-  with check (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync'));
+-- (صلاحيات الملفات في المخزن: القسم ١١ أدناه — مع حدّ المساحة)
 
--- ١٠) اجعل حسابك مسؤولاً: ضع بريدك بين علامتي الاقتباس ثم نفّذ هذا السطر
+-- ١١) حدّ المساحة السحابية لكل مستخدم (فارغ = حدّ الموقع العام؛ 0 أو بلا حدّ عام = بلا حدّ)
+alter table public.midad_profiles add column if not exists quota_mb integer;
+alter table public.midad_profiles add column if not exists notified_at timestamptz; -- متى أُبلغ المسؤول بطلبه
+
+-- المساحة المستعملة لمستخدم في مخزن الملفات
+create or replace function public.midad_used_bytes(uid uuid) returns bigint
+language sql stable security definer set search_path = public, storage as $$
+  select coalesce(sum(coalesce((metadata ->> 'size')::bigint, 0)), 0)::bigint
+  from storage.objects
+  where bucket_id = 'midad-files' and (storage.foldername(name))[1] = uid::text
+$$;
+revoke all on function public.midad_used_bytes(uuid) from public, anon, authenticated;
+
+-- حدّ المستخدم الحالي بالميغابايت (null = بلا حدّ)
+create or replace function public.midad_quota_mb() returns integer
+language plpgsql stable security definer set search_path = public as $$
+declare q integer; r text;
+begin
+  select p.quota_mb, p.role into q, r from public.midad_profiles p where p.id = auth.uid();
+  if r = 'admin' then return null; end if;
+  if q is null then
+    select nullif(c.value ->> 'quota_mb', '')::integer into q from public.midad_config c where c.key = 'app';
+  end if;
+  if q is null or q <= 0 then return null; end if;
+  return q;
+end $$;
+grant execute on function public.midad_quota_mb() to authenticated;
+
+-- هل بقي للمستخدم الحالي مساحة؟ (يُفحص قبل كل رفع؛ الملف الذي يتخطّى الحدّ يكتمل ثم يُمنع ما بعده)
+create or replace function public.midad_quota_ok() returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare q integer;
+begin
+  q := public.midad_quota_mb();
+  if q is null then return true; end if;
+  return public.midad_used_bytes(auth.uid()) < q::bigint * 1048576;
+end $$;
+grant execute on function public.midad_quota_ok() to authenticated;
+
+-- ما يعرضه التطبيق للمستخدم: مساحته المستعملة وحدّه
+create or replace function public.midad_my_usage() returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object('used', public.midad_used_bytes(auth.uid()), 'quota_mb', public.midad_quota_mb())
+$$;
+grant execute on function public.midad_my_usage() to authenticated;
+
+-- الرفع (إضافة/استبدال ملف) يحترم الحدّ؛ القراءة والحذف لا يتأثّران
+drop policy if exists "midad_own_files" on storage.objects;
+drop policy if exists "midad_own_files_read" on storage.objects;
+drop policy if exists "midad_own_files_insert" on storage.objects;
+drop policy if exists "midad_own_files_update" on storage.objects;
+drop policy if exists "midad_own_files_delete" on storage.objects;
+create policy "midad_own_files_read" on storage.objects for select
+  using (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync'));
+create policy "midad_own_files_insert" on storage.objects for insert
+  with check (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync') and public.midad_quota_ok());
+create policy "midad_own_files_update" on storage.objects for update
+  using (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync'))
+  with check (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync') and public.midad_quota_ok());
+create policy "midad_own_files_delete" on storage.objects for delete
+  using (bucket_id = 'midad-files' and (storage.foldername(name))[1] = auth.uid()::text and public.midad_can('sync'));
+
+-- ١٢) الأجهزة النشطة — عدّاد مجهول: معرّف عشوائي لكل متصفح، بلا بريد ولا عنوان IP ولا أي بيانات شخصية
+create table if not exists public.midad_devices (
+  device     text primary key,
+  kind       text,                           -- phone | tablet | desktop
+  standalone boolean not null default false, -- مثبّت كتطبيق
+  signed     boolean not null default false, -- مسجّل الدخول في المزامنة
+  ver        text,
+  first_seen date not null default current_date,
+  last_seen  date not null default current_date
+);
+create table if not exists public.midad_activity (
+  day    date not null,
+  device text not null,
+  primary key (day, device)
+);
+alter table public.midad_devices enable row level security;  -- بلا سياسات: لا يقرؤها إلا مفتاح الخدمة
+alter table public.midad_activity enable row level security;
+
+create or replace function public.midad_ping(p_device text, p_kind text, p_standalone boolean, p_signed boolean, p_ver text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if p_device is null or length(p_device) < 8 or length(p_device) > 64 then return; end if;
+  insert into public.midad_devices (device, kind, standalone, signed, ver)
+  values (p_device, left(coalesce(p_kind, ''), 12), coalesce(p_standalone, false), coalesce(p_signed, false), left(coalesce(p_ver, ''), 16))
+  on conflict (device) do update set kind = excluded.kind, standalone = excluded.standalone,
+    signed = excluded.signed, ver = excluded.ver, last_seen = current_date;
+  insert into public.midad_activity (day, device) values (current_date, p_device) on conflict do nothing;
+  if random() < 0.01 then
+    delete from public.midad_activity where day < current_date - 400;
+    delete from public.midad_devices where last_seen < current_date - 400;
+  end if;
+end $$;
+grant execute on function public.midad_ping(text, text, boolean, boolean, text) to anon, authenticated;
+
+-- ١٣) سجلّ الأعطال: ما يفشل عند المستخدمين (فتح كتاب، تنزيل، مزامنة…) يصل ملخّصاً للوحة التحكم
+create table if not exists public.midad_errors (
+  id      bigserial primary key,
+  at      timestamptz not null default now(),
+  device  text,
+  email   text,          -- لأصحاب حسابات البريد فقط (من الجلسة على الخادم، لا يرسله التطبيق)
+  ver     text,
+  kind    text not null,
+  message text not null,
+  context jsonb
+);
+create index if not exists midad_errors_at on public.midad_errors (at desc);
+alter table public.midad_errors enable row level security;  -- بلا سياسات
+
+create or replace function public.midad_log_error(p_device text, p_ver text, p_kind text, p_message text, p_context jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare n integer; em text;
+begin
+  if p_message is null or length(p_message) = 0 then return; end if;
+  select count(*) into n from public.midad_errors where device = p_device and at > now() - interval '1 day';
+  if n >= 40 then return; end if;  -- سقف لكل جهاز يومياً
+  select p.email into em from public.midad_profiles p where p.id = auth.uid();
+  insert into public.midad_errors (device, email, ver, kind, message, context)
+  values (left(p_device, 64), em, left(p_ver, 16), left(coalesce(p_kind, 'other'), 40), left(p_message, 500),
+          case when p_context is not null and pg_column_size(p_context) < 4000 then p_context end);
+  if random() < 0.02 then delete from public.midad_errors where at < now() - interval '60 days'; end if;
+end $$;
+grant execute on function public.midad_log_error(text, text, text, text, jsonb) to anon, authenticated;
+
+-- ١٤) إحصاءات النشاط للوحة التحكم (لمفتاح الخدمة فقط)
+create or replace function public.midad_admin_activity(p_days integer default 30)
+returns json language sql stable security definer set search_path = public as $$
+  with days as (
+    select generate_series(current_date - (p_days - 1), current_date, interval '1 day')::date as day
+  ), daily as (
+    select d.day,
+      (select count(*) from public.midad_activity a where a.day = d.day) as active,
+      (select count(*) from public.midad_devices v where v.first_seen = d.day) as new_devices,
+      (select count(*) from public.midad_errors e where e.at::date = d.day) as errors
+    from days d
+  ), recent as (
+    select * from public.midad_devices where last_seen >= current_date - (p_days - 1)
+  )
+  select json_build_object(
+    'daily', (select coalesce(json_agg(json_build_object('day', day, 'active', active, 'new', new_devices, 'errors', errors) order by day), '[]'::json) from daily),
+    'today', (select count(*) from public.midad_activity where day = current_date),
+    'week', (select count(distinct device) from public.midad_activity where day >= current_date - 6),
+    'month', (select count(distinct device) from public.midad_activity where day >= current_date - 29),
+    'total', (select count(*) from public.midad_devices),
+    'kinds', (select coalesce(json_object_agg(k, n), '{}'::json) from (select coalesce(nullif(kind, ''), 'unknown') k, count(*) n from recent group by 1) x),
+    'installed', (select count(*) from recent where standalone),
+    'signed', (select count(*) from recent where signed),
+    'versions', (select coalesce(json_object_agg(v, n), '{}'::json) from (select coalesce(nullif(ver, ''), '?') v, count(*) n from recent group by 1 order by 2 desc limit 8) x)
+  )
+$$;
+revoke all on function public.midad_admin_activity(integer) from public, anon, authenticated;
+
+-- إصدار هذا الملف (تعرضه لوحة التحكم في «صحة النظام» لتعرف هل تحتاج إعادة تنفيذه)
+insert into public.midad_config (key, value) values ('schema', '{"v": 2}'::jsonb)
+on conflict (key) do update set value = excluded.value, updated_at = now();
+
+-- ١٥) اجعل حسابك مسؤولاً: ضع بريدك بين علامتي الاقتباس ثم نفّذ هذا السطر
 -- update public.midad_profiles set role = 'admin', status = 'approved' where email = lower('بريدك@example.com');

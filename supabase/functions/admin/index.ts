@@ -17,6 +17,11 @@ const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const svc = { apikey: SRK, Authorization: `Bearer ${SRK}` };
 
 const FEATURES = ["sync", "ai_server", "discover"] as const;
+
+/* إصدارات الدوال: «صحة النظام» في اللوحة يقارن ما هو منشور بما يتوقّعه هذا الإصدار من التطبيق */
+const FN_VERSION = "2026.11.8";
+const EXPECTED_FN: Record<string, string> = { admin: FN_VERSION, ai: FN_VERSION, alfeker: FN_VERSION, gdrive: FN_VERSION };
+const SCHEMA_EXPECTED = 2;
 const STATUSES = ["pending", "approved", "blocked"];
 
 async function rest(path: string, init: RequestInit & { prefer?: string } = {}) {
@@ -97,15 +102,64 @@ async function deleteUserData(uid: string) {
   return paths.length;
 }
 
+/* ── إشعار المسؤولين بالبريد عند وجود طلبات جديدة (اختياري) ──
+   يعمل إن أُضيف السرّ RESEND_API_KEY (حساب مجاني في resend.com). كل طلب يُبلَّغ عنه مرة واحدة (notified_at). */
+async function notifyPending(appUrl: string) {
+  const key = Deno.env.get("RESEND_API_KEY") || "";
+  if (!key) return { sent: false, why: "no_key" };
+  const cfg = await getConfig().catch(() => ({} as any));
+  if (cfg.notify_email === false) return { sent: false, why: "off" };
+  let rows: any[] = [];
+  try { rows = await rest("midad_profiles?status=eq.pending&notified_at=is.null&select=email,provider,created_at&order=created_at.asc&limit=50"); }
+  catch { return { sent: false, why: "schema" }; }
+  if (!rows.length) return { sent: false, why: "none" };
+  const to = new Set(envAdmins());
+  try { for (const a of await rest("midad_profiles?role=eq.admin&status=eq.approved&select=email")) to.add(String(a.email).toLowerCase()); } catch { /* */ }
+  if (!to.size) return { sent: false, why: "no_admin" };
+  const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+  const link = /^https:\/\/[^\s"<>]{3,200}$/.test(appUrl) ? appUrl.replace(/\/+$/, "") + "/admin.html#pending" : "";
+  const html = `<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;line-height:1.8">
+    <h2 style="margin:0 0 8px">مِداد — ${rows.length === 1 ? "طلب تسجيل جديد" : rows.length + " طلبات تسجيل جديدة"}</h2>
+    <p>بانتظار موافقتك:</p><ul>${rows.map((r) => `<li dir="ltr" style="text-align:right">${esc(String(r.email))} <small>(${r.provider === "google" ? "Google" : "بريد"})</small></li>`).join("")}</ul>
+    ${link ? `<p><a href="${link}" style="background:#c9a35f;color:#1b1430;padding:8px 16px;border-radius:8px;text-decoration:none">افتح لوحة التحكم</a></p>` : ""}
+    <p style="color:#888;font-size:12px">لإيقاف هذه الرسائل: لوحة التحكم ← إعدادات الموقع ← «إشعار بالبريد».</p></div>`;
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: Deno.env.get("RESEND_FROM") || "Midad <onboarding@resend.dev>", to: [...to], subject: `مِداد: ${rows.length} طلب تسجيل بانتظار موافقتك`, html }),
+  });
+  if (!r.ok) return { sent: false, why: "resend_" + r.status, detail: (await r.text()).slice(0, 200) };
+  const filter = `email=in.(${rows.map((x) => `"${String(x.email).replace(/"/g, "")}"`).join(",")})`;
+  await rest(`midad_profiles?${filter}`, { method: "PATCH", body: JSON.stringify({ notified_at: new Date().toISOString() }), prefer: "return=minimal" }).catch(() => {});
+  return { sent: true, count: rows.length };
+}
+
+// فحص دالة منشورة: غير منشورة (404) / قديمة (لا تعرف «version») / حديثة
+async function probeFn(name: string) {
+  try {
+    const r = await fetch(`${SB}/functions/v1/${name}`, { method: "POST", headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` }, body: JSON.stringify({ action: "version" }) });
+    const t = await r.text();
+    let d: any = null; try { d = JSON.parse(t); } catch { /* */ }
+    if (d && d.fnVersion) return { state: d.fnVersion === EXPECTED_FN[name] ? "ok" : "old", version: d.fnVersion };
+    if (r.status === 404) return { state: "missing" };
+    return { state: "old" };
+  } catch (e) { return { state: "error", detail: String((e as Error).message || e) }; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (!SB || !SRK) return json({ error: "مفتاح الخدمة غير متاح للدالة" }, 500);
   try {
+    const b = await req.json().catch(() => ({}));
+    const action = String(b.action || "");
+    // إجراءات عامة: رقم الإصدار (لفحص الصحة)، وإبلاغ المسؤول بطلبات جديدة (لا تكشف شيئاً للمتصل)
+    if (action === "version") return json({ fn: "admin", fnVersion: FN_VERSION });
+    if (action === "notify_signup") {
+      const res: any = await notifyPending(String(b.app || "")).catch((e) => ({ sent: false, why: String((e as Error).message || e) }));
+      return json({ ok: true, sent: !!res.sent });
+    }
     const who = await caller(req);
     if (!who) return json({ error: "سجّل الدخول أولاً", code: "auth" }, 401);
     if (!(await isAdmin(who))) return json({ error: "هذه الصفحة للمسؤولين فقط", code: "forbidden" }, 403);
-    const b = await req.json().catch(() => ({}));
-    const action = String(b.action || "");
 
     if (action === "me") return json({ email: who.email, admin: true });
 
@@ -178,6 +232,11 @@ Deno.serve(async (req) => {
         patch.features = f;
       }
       if (b.note !== undefined) patch.note = String(b.note || "").slice(0, 500);
+      if (b.quota_mb !== undefined) {
+        const q = b.quota_mb === null || b.quota_mb === "" ? null : Math.round(Number(b.quota_mb));
+        if (q !== null && (!Number.isFinite(q) || q < 0 || q > 10_000_000)) return json({ error: "حدّ مساحة غير صالح" }, 400);
+        patch.quota_mb = q;
+      }
       if (!Object.keys(patch).length) return json({ error: "لا تعديل" }, 400);
       // لا يُنزع المسؤول عن نفسه ولا يحظر نفسه (كي لا يُغلق الباب على اللوحة)
       if (emails.includes(who.email) && (patch.role === "user" || patch.status === "blocked" || patch.status === "pending")) {
@@ -217,7 +276,12 @@ Deno.serve(async (req) => {
       const v = b.config || {};
       const next: Record<string, unknown> = { ...cur };
       if (["open", "approval", "closed"].includes(v.registration)) next.registration = v.registration;
-      for (const k of ["google_signin", "google_approval", "discover_anonymous"]) if (typeof v[k] === "boolean") next[k] = v[k];
+      for (const k of ["google_signin", "google_approval", "discover_anonymous", "notify_email"]) if (typeof v[k] === "boolean") next[k] = v[k];
+      if (v.quota_mb !== undefined) {
+        const q = Math.round(Number(v.quota_mb) || 0);
+        if (q < 0 || q > 10_000_000) return json({ error: "حدّ مساحة غير صالح" }, 400);
+        next.quota_mb = q; // 0 = بلا حدّ
+      }
       if (v.sources && typeof v.sources === "object") {
         const s: Record<string, boolean> = { ...(cur.sources || {}) };
         for (const k of ["archive", "wikisource", "ablibrary", "narjes", "alfeker"]) if (typeof v.sources[k] === "boolean") s[k] = v.sources[k];
@@ -242,6 +306,66 @@ Deno.serve(async (req) => {
       });
       await audit(who.email, "config_set", "app", v);
       return json({ ok: true, config: next });
+    }
+
+    // النشاط: الأجهزة النشطة (عدّاد مجهول) والأعطال يومياً
+    if (action === "activity") {
+      try {
+        const d = await rest("rpc/midad_admin_activity", { method: "POST", body: JSON.stringify({ p_days: Math.min(120, Math.max(7, +b.days || 30)) }) });
+        return json({ activity: d });
+      } catch (e) {
+        if (/midad_admin_activity|does not exist|schema cache|PGRST202/i.test(String((e as Error).message))) return json({ activity: null, setup: true });
+        throw e;
+      }
+    }
+
+    // سجلّ الأعطال (يُجمَّع في اللوحة حسب الرسالة)
+    if (action === "errors") {
+      try {
+        const rows = await rest(`midad_errors?select=*&order=at.desc&limit=${Math.min(2000, Math.max(50, +b.limit || 800))}`);
+        return json({ errors: rows || [] });
+      } catch (e) {
+        if (/midad_errors|does not exist|schema cache/i.test(String((e as Error).message))) return json({ errors: [], setup: true });
+        throw e;
+      }
+    }
+    if (action === "errors_clear") {
+      const ids: number[] = Array.isArray(b.ids) ? b.ids.map((x: unknown) => Math.floor(Number(x))).filter((x: number) => x > 0).slice(0, 2000) : [];
+      await rest(ids.length ? `midad_errors?id=in.(${ids.join(",")})` : "midad_errors?id=gt.0", { method: "DELETE", prefer: "return=minimal" });
+      await audit(who.email, "errors_clear", ids.length ? `${ids.length}` : "all", null);
+      return json({ ok: true });
+    }
+
+    // صحة النظام: الجداول، والدوال المنشورة وإصداراتها، والأسرار، ومخزن الملفات
+    if (action === "health") {
+      let schema = 0;
+      try { const r = await rest("midad_config?key=eq.schema&select=value"); schema = +(r && r[0] && r[0].value && r[0].value.v) || 0; } catch { /* */ }
+      const tables: Record<string, boolean> = {};
+      await Promise.all(["midad_books", "midad_stats", "midad_profiles", "midad_config", "midad_audit", "midad_devices", "midad_activity", "midad_errors"].map(async (t) => {
+        try { await rest(`${t}?select=*&limit=0`); tables[t] = true; } catch { tables[t] = false; }
+      }));
+      const fns: Record<string, unknown> = { admin: { state: "ok", version: FN_VERSION } };
+      await Promise.all(["ai", "alfeker", "gdrive"].map(async (f) => { fns[f] = await probeFn(f); }));
+      const has = (k: string) => !!(Deno.env.get(k) || "").trim();
+      const secrets = {
+        GEMINI: has("GEMINI_API_KEYS") || has("GEMINI_API_KEY"), GOOGLE_CLIENT_ID: has("GOOGLE_CLIENT_ID"), GOOGLE_CLIENT_SECRET: has("GOOGLE_CLIENT_SECRET"),
+        RESEND_API_KEY: has("RESEND_API_KEY"), ADMIN_EMAILS: has("ADMIN_EMAILS"),
+      };
+      let bucket = false;
+      try { const r = await fetch(`${SB}/storage/v1/bucket/midad-files`, { headers: svc }); bucket = r.ok; } catch { /* */ }
+      return json({ schema, schemaExpected: SCHEMA_EXPECTED, tables, functions: fns, expected: EXPECTED_FN, secrets, bucket });
+    }
+
+    // رسالة تجريبية لبريد المسؤول (للتأكّد من إعداد Resend)
+    if (action === "notify_test") {
+      const key = Deno.env.get("RESEND_API_KEY") || "";
+      if (!key) return json({ error: "أضف السرّ RESEND_API_KEY أولاً (حساب مجاني في resend.com)" }, 400);
+      const r = await fetch("https://api.resend.com/emails", {
+        method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: Deno.env.get("RESEND_FROM") || "Midad <onboarding@resend.dev>", to: [who.email], subject: "مِداد: رسالة تجريبية ✓", html: '<div dir="rtl" style="font-family:Tahoma,Arial">وصلت ✓ — ستصلك رسالة كهذه عند كل طلب تسجيل جديد.</div>' }),
+      });
+      if (!r.ok) return json({ error: `Resend ${r.status}: ${(await r.text()).slice(0, 200)}` }, 502);
+      return json({ ok: true, to: who.email });
     }
 
     if (action === "audit") {

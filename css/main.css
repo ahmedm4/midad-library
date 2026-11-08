@@ -1480,3 +1480,7 @@ body { -webkit-tap-highlight-color: transparent; }
 }
 @media (max-width: 360px) { #btn-add .bt-short { display: none; } #btn-add { padding: 9px 11px; } }
 @media (max-width: 430px) { .brand h1 { display: none; } .topbar { padding-inline: max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-left)); } }
+
+/* v129: شارة طلبات التسجيل للمسؤول على زر السحابة */
+.cloud-btn{position:relative}
+.admin-pill{position:absolute;top:-4px;inset-inline-start:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#e0564b;color:#fff;font:700 11px/18px Tajawal,sans-serif;font-style:normal;text-align:center;box-shadow:0 0 0 2px var(--ink,#1b1430)}

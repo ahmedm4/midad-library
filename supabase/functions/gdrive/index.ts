@@ -13,6 +13,7 @@ const json = (obj: unknown, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+let appOrigin = ""; // عنوان التطبيق (لرابط لوحة التحكم في رسالة الإشعار)
 
 /* ── لوحة التحكم: حسابات Google تمرّ بالموافقة كحسابات البريد ──
    الجدول midad_profiles (ملف admin_setup.sql). إن لم يُنشأ بعد تعمل الدالة كما كانت. */
@@ -44,6 +45,10 @@ async function gate(email: string, isNewSignIn: boolean): Promise<{ ok: boolean;
       status = isNewSignIn && needApproval ? "pending" : "approved";
       await rest("midad_profiles", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
         body: JSON.stringify({ email, provider: "google", status, approved_at: status === "approved" ? new Date().toISOString() : null }) });
+      if (status === "pending") {
+        fetch(`${SB}/functions/v1/admin`, { method: "POST", headers: { "Content-Type": "application/json", apikey: SRK, Authorization: `Bearer ${SRK}` },
+          body: JSON.stringify({ action: "notify_signup", app: appOrigin }) }).catch(() => {});
+      }
     } else if (status === "approved") {
       rest(`midad_profiles?email=eq.${encodeURIComponent(email)}`, { method: "PATCH", body: JSON.stringify({ last_seen: new Date().toISOString() }), headers: { Prefer: "return=minimal" } }).catch(() => {});
     }
@@ -93,11 +98,13 @@ async function googleEnabled() {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  appOrigin = (() => { const o = req.headers.get("origin") || ""; const ref = req.headers.get("referer") || ""; try { return ref ? new URL(".", ref).href : o; } catch { return o; } })();
   const clientId = Deno.env.get("GOOGLE_CLIENT_ID") || "";
   const secret = Deno.env.get("GOOGLE_CLIENT_SECRET") || "";
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "");
+    if (action === "version") return json({ fn: "gdrive", fnVersion: "2026.11.8" });
     // هل الدخول بحساب Google مُعدّ؟ (يُظهر التطبيق الزرّ عندها فقط)
     if (action === "config") return json({ clientId: clientId && secret && (await googleEnabled()) ? clientId : "" });
     if (!clientId || !secret) return json({ error: "الدخول بحساب Google غير مُعدّ في هذا الخادم بعد", code: "not_configured" }, 503);

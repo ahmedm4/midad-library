@@ -188,6 +188,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     // مفاتيح Gemini في هذا الخادم لصاحب المشروع ومن يأذن لهم فقط — لا لكل من يحمل المفتاح العام
+    const body0 = await req.clone().json().catch(() => ({}));
+    if (body0 && body0.action === "version") return json({ fn: "ai", fnVersion: "2026.11.8" });
     const who = await callerUser(req);
     if (!who) return json({ error: "المساعد الذكي في هذا الخادم خاص بأصحاب الحسابات — أضِف مفتاح Gemini الخاص بك من إعدادات التطبيق (🤖 الذكاء الاصطناعي)", code: "auth" }, 401);
     const perm = await aiAllowed(who);

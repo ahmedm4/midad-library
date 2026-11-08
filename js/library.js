@@ -319,14 +319,27 @@ const Library = (() => {
   }
 
   /* ─── لوحة التحكم: عدد الطلبات المعلّقة للمسؤول ─── */
-  let adminPending = 0, adminBadgeAt = 0;
+  let adminPending = 0, adminBadgeAt = 0, adminPoll = null;
   async function refreshAdminBadge() {
+    if (!adminPoll) adminPoll = setInterval(() => { if (!document.hidden && Cloud.isAdmin && Cloud.isAdmin()) refreshAdminBadge(); }, 120000);
     if (Date.now() - adminBadgeAt < 60000) return;
     adminBadgeAt = Date.now();
     try {
       const d = await Cloud.adminCall('pending_count');
+      const prev = adminPending;
       adminPending = d.count || 0;
       const b = $('#cloud-admin-badge'); if (b) { b.hidden = !adminPending; b.textContent = adminPending; }
+      // على زرّ السحابة في الشريط العلوي: لا يحتاج المسؤول فتح أي قائمة ليعرف أن هناك طلبات
+      const btn = $('#btn-cloud');
+      let pill = btn && btn.querySelector('.admin-pill');
+      if (btn && adminPending && !pill) { pill = document.createElement('i'); pill.className = 'admin-pill'; btn.appendChild(pill); }
+      if (pill) { pill.hidden = !adminPending; pill.textContent = adminPending > 99 ? '99+' : adminPending; btn.title = adminPending ? `المزامنة السحابية — ${adminPending} طلب تسجيل بانتظار موافقتك` : 'المزامنة السحابية'; }
+      // إشعار المتصفح (إن فعّله المسؤول من لوحة التحكم) عند وصول طلب جديد
+      let seen = 0; try { seen = +(localStorage.getItem('midad-admin-pending-seen') || 0); } catch {}
+      if (adminPending > seen && adminPending > prev && 'Notification' in window && Notification.permission === 'granted') {
+        try { const n = new Notification('مِداد — طلب تسجيل جديد', { body: `${adminPending} حساب بانتظار موافقتك`, icon: 'icon-192.png', tag: 'midad-pending' }); n.onclick = () => { window.focus(); location.href = 'admin.html#pending'; }; } catch {}
+      }
+      try { localStorage.setItem('midad-admin-pending-seen', String(adminPending)); } catch {}
     } catch {}
   }
 
@@ -443,7 +456,9 @@ const Library = (() => {
       body.innerHTML = `
         <p class="cloud-intro" style="text-align:center;margin-bottom:10px">${drive ? 'مكتبتك في <b>Google Drive</b> الخاص بك' : 'مكتبتك في مشروع <b>Supabase</b>'}</p>
         ${drive && rep.quota ? meter('مساحة حسابك في Google (كل خدماته)', rep.quota.used, rep.quota.limit) : ''}
-        ${meter(drive ? 'ما تشغله كتب مِداد' : 'مساحة المخزن (الخطة المجانية ١ غ.ب)', rep.cloudBytes, drive ? 0 : rep.supabaseLimit)}
+        ${drive ? meter('ما تشغله كتب مِداد', rep.cloudBytes, 0)
+          : rep.accountQuota ? meter('المساحة المخصّصة لحسابك', rep.cloudBytes, rep.accountQuota)
+          : meter('مساحة المخزن (الخطة المجانية ١ غ.ب)', rep.cloudBytes, rep.supabaseLimit)}
         ${meter('على هذا الجهاز', rep.localBytes, rep.localQuota)}
         <div class="cr-sum">
           <div><b>${n((b) => b.cloud === 'ok' || b.cloud === 'text')}</b><span>في السحابة</span></div>
@@ -713,6 +728,7 @@ create policy "midad_own_files" on storage.objects for all
     try { await Reader.open(id, target); }
     catch (e) {
       console.error('فتح الكتاب', e);
+      if (window.Telemetry) Telemetry.report('open', (e && e.message) || String(e), { at: e && e.stack ? String(e.stack).split('\n')[1] : null });
       try { Reader.close(); } catch {}
       toast('تعذّر فتح الكتاب: ' + ((e && e.message) || 'خطأ غير معروف'));
     }

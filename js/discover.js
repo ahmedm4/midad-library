@@ -88,6 +88,12 @@ const Discover = (() => {
 
   let modal = null, grid = null, input = null, statusEl = null, sheet = null, subEl = null, chipsEl = null;
   let curReq = 0, loaded = false, source = 'archive';
+  // فشل الإضافة: رسالة للمستخدم + سجلّ الأعطال في لوحة التحكم (مع المصدر)
+  function addFailed(e) {
+    const m = (e && e.message) || String(e);
+    Library.toast('تعذّر إضافة الكتاب: ' + m);
+    if (window.Telemetry) Telemetry.report('discover', m, { src: source });
+  }
   let moreFn = null; // دالة «عرض المزيد» للمصدر الحالي (تعيد دفعة بطاقات إضافية أو لا شيء)
 
   /* أقسام «شبكة الفكر» تُقرأ من الموقع (كل الأقسام والفرعية بأعداد كتبها) وتُحفظ يوماً؛
@@ -535,7 +541,7 @@ const Discover = (() => {
     } catch (e) {
       sheet.querySelectorAll('.disc-import').forEach((b) => b.disabled = false);
       btn.classList.remove('loading'); btn.innerHTML = orig;
-      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      addFailed(e);
     }
   }
 
@@ -644,7 +650,7 @@ const Discover = (() => {
         addReadNow(bookId);
       } catch (e) {
         one.disabled = false; one.classList.remove('loading'); one.innerHTML = orig;
-        Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+        addFailed(e);
       }
     };
 
@@ -838,7 +844,7 @@ const Discover = (() => {
       }
     } catch (e) {
       btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
-      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      addFailed(e);
     }
   }
 
@@ -969,7 +975,7 @@ const Discover = (() => {
       }
     } catch (e) {
       btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
-      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      addFailed(e);
     }
   }
 
@@ -1049,7 +1055,7 @@ const Discover = (() => {
       }
     } catch (e) {
       btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
-      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      addFailed(e);
     }
   }
 
@@ -1089,7 +1095,7 @@ const Discover = (() => {
       }
     } catch (e) {
       btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
-      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      addFailed(e);
     }
   }
 
@@ -1175,7 +1181,7 @@ const Discover = (() => {
       }
     } catch (e) {
       btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
-      Library.toast('تعذّر إضافة الكتاب: ' + (e.message || e));
+      addFailed(e);
     }
   }
 
