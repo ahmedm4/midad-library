@@ -1380,3 +1380,103 @@ body { -webkit-tap-highlight-color: transparent; }
 .site-announce .sa-ic { font-size: 20px; }
 .site-announce .sa-x { flex: none; width: 30px; height: 30px; border-radius: 9px; color: var(--muted); background: rgba(255,255,255,.05); }
 @media (max-width: 760px) { .site-announce { margin: 0 16px 12px; } }
+
+/* ═══════ المكتبة: مساحة أكبر للكتب مع الحفاظ على جمالها ═══════
+   • «واصل القراءة» شريط أنيق من سطر واحد (بدل بطاقة كبيرة)، و«اقرأ التالي» في طرفه.
+   • شريط تصفية واحد: الحالات + الأدوات في سطر، والتصنيفات/الرفوف سطرٌ منزلق واحد بأسهم.
+   • الشريط يلتصق أعلى الشاشة عند التمرير، فالتصفية في متناولك دون أن تحجز مكاناً دائماً. */
+.topbar { padding-top: max(16px, calc(env(safe-area-inset-top) + 8px)); padding-bottom: 4px; }
+.brand-icon { width: 38px; height: 38px; }
+.brand h1 { font-size: 30px; }
+.lib-main { padding-top: 6px; }
+
+/* شريط «واصل القراءة» */
+#hero-continue { margin: 10px 0 6px; gap: 10px; flex-wrap: nowrap; }
+.continue-card { gap: 16px; padding: 10px 18px 10px 12px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.28); min-width: 0; }
+.continue-card:hover { transform: translateY(-2px); }
+.continue-card .cc-cover { width: 44px; height: 64px; border-radius: 5px; box-shadow: -4px 6px 14px rgba(0,0,0,.5); }
+.continue-card .cc-info { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label pct" "title bar" "author bar"; column-gap: 18px; align-items: center; }
+.continue-card .cc-label { grid-area: label; font-size: 11.5px; margin: 0; }
+.continue-card h3 { grid-area: title; font-size: 19px; margin: 0; line-height: 1.45; }
+.continue-card .cc-author { grid-area: author; font-size: 12.5px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.continue-card .cc-bar { grid-area: bar; width: clamp(110px, 18vw, 240px); max-width: none; height: 6px; align-self: center; }
+.continue-card .cc-pct { grid-area: pct; margin: 0; font-size: 12px; text-align: end; white-space: nowrap; }
+.continue-card .cc-btn { padding: 10px 18px; font-size: 13.5px; }
+.suggest-card { flex: 0 1 270px; gap: 12px; padding: 10px 14px; border-radius: 18px; min-width: 0; }
+.suggest-card:hover { transform: translateY(-2px); }
+.suggest-card .sc-cover { width: 38px; height: 54px; border-radius: 4px; box-shadow: -3px 5px 12px rgba(0,0,0,.45); }
+.suggest-card .sc-label { font-size: 11px; margin-bottom: 1px; }
+.suggest-card h4 { font-size: 15px; -webkit-line-clamp: 1; margin-bottom: 0; }
+.suggest-card .sc-author { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* شريط التصفية الموحّد (لاصق) */
+.lib-sentinel { height: 1px; margin-top: 6px; }
+.lib-bar { position: sticky; top: 0; z-index: 30; margin: 0 -44px 14px; padding: 10px 44px 8px; transition: background .25s, box-shadow .25s, padding .25s; }
+.lib-bar.stuck { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: 6px;
+  background: color-mix(in srgb, var(--ink) 84%, transparent); backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow: 0 10px 28px rgba(0,0,0,.35); border-bottom: 1px solid var(--card-line); }
+.lib-bar-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lib-bar .status-tabs { margin: 0; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.lib-bar .status-tabs::-webkit-scrollbar { display: none; }
+.lib-bar .status-tabs .stab { flex: none; padding: 7px 15px; border-radius: 12px; font-size: 13.5px; }
+.lib-bar .grid-head-title { margin-inline-start: auto; align-items: baseline; gap: 8px; white-space: nowrap; }
+.lib-bar .grid-head-title h2 { font-family: 'Amiri', serif; font-size: 18px; font-weight: 700; }
+.lib-bar .grid-tools { gap: 8px; }
+.lib-bar .view-toggle button { width: 30px; height: 28px; font-size: 14px; }
+.lib-bar #sort-select, .lib-bar #pair-filter { padding-top: 6px; padding-bottom: 6px; font-size: 13px; }
+.lib-bar.stuck .grid-head-title h2 { font-size: 16px; }
+/* صفّ التصنيفات المنزلق */
+.chips-scroller { position: relative; margin-top: 8px; }
+.chips-scroller .chips { margin: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 7px; padding: 2px 2px 4px; scroll-padding-inline: 40px; }
+.chips-scroller .chips::-webkit-scrollbar { display: none; }
+.chips-scroller .chips button { flex: none; padding: 6px 13px; font-size: 13px; white-space: nowrap; }
+.chips-scroller .chips .chip-sep { flex: none; }
+.cs-arrow { position: absolute; top: 50%; translate: 0 -55%; z-index: 2; width: 30px; height: 30px; border-radius: 50%; display: none; align-items: center; justify-content: center;
+  font-size: 18px; color: var(--cream); background: var(--ink-2); border: 1px solid var(--card-line); box-shadow: 0 4px 14px rgba(0,0,0,.45); }
+.cs-arrow:hover { border-color: rgba(217,169,79,.6); color: var(--gold-soft); }
+.cs-start { right: -6px; } .cs-end { left: -6px; }
+.chips-scroller.can-start .cs-start, .chips-scroller.can-end .cs-end { display: flex; }
+/* تلاشٍ عند الحافّة التي يوجد بعدها المزيد */
+.chips-scroller.can-end .chips { -webkit-mask-image: linear-gradient(to left, transparent, #000 56px); mask-image: linear-gradient(to left, transparent, #000 56px); }
+.chips-scroller.can-start .chips { -webkit-mask-image: linear-gradient(to right, transparent, #000 56px); mask-image: linear-gradient(to right, transparent, #000 56px); }
+.chips-scroller.can-start.can-end .chips { -webkit-mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); }
+.lib-bar.stuck .chips-scroller { margin-top: 6px; }
+.lib-bar + .series-suggest, .lib-bar ~ .book-grid { margin-top: 4px; }
+
+@media (max-width: 760px) {
+  .lib-bar { margin-inline: -18px; padding-inline: 18px; }
+  .lib-bar .grid-head-title h2 { display: none; }  /* العدد يكفي على الجوال */
+  .lib-bar-row { gap: 8px; }
+  .lib-bar .status-tabs { flex-basis: 100%; }
+  .lib-bar .grid-head-title { margin-inline-start: 0; }
+  .lib-bar .grid-tools { margin-inline-start: auto; }
+  .cs-arrow { display: none !important; }
+  .continue-card { padding: 9px 12px 9px 10px; gap: 12px; }
+  .continue-card .cc-cover { width: 40px; height: 58px; }
+  .continue-card .cc-info { grid-template-columns: minmax(0, 1fr); grid-template-areas: "label" "title" "bar"; row-gap: 3px; }
+  .continue-card .cc-author, .continue-card .cc-pct { display: none; }
+  .continue-card .cc-bar { width: 100%; }
+  .continue-card h3 { font-size: 16px; }
+  #hero-continue { flex-wrap: wrap; }
+  .suggest-card { display: none; } /* على الجوال: «واصل القراءة» وحده، والمساحة للكتب */
+}
+
+/* الجوال: الشريط العلوي في سطر واحد فوق البحث (أزرار مختصرة) */
+.bt-short { display: none; }
+@media (max-width: 760px) {
+  .topbar { gap: 10px 8px; padding-bottom: 2px; }
+  .brand { gap: 9px; }
+  .brand-icon { width: 30px; height: 30px; }
+  .brand h1 { font-size: 24px; }
+  .brand p { display: none; }
+  .top-actions { gap: 6px; margin-inline-start: auto; flex-wrap: nowrap; }
+  .top-actions .icon-btn, .top-actions .streak-chip { width: 38px; height: 38px; }
+  #btn-discover { padding: 0; width: 40px; height: 38px; justify-content: center; }
+  #btn-discover .bt-txt { display: none; }
+  #btn-add { padding: 9px 14px; white-space: nowrap; }
+  #btn-add .bt-txt { display: none; }
+  #btn-add .bt-short { display: inline; }
+  .search-box input { padding-top: 10px; padding-bottom: 10px; }
+}
+@media (max-width: 360px) { #btn-add .bt-short { display: none; } #btn-add { padding: 9px 11px; } }
+@media (max-width: 430px) { .brand h1 { display: none; } .topbar { padding-inline: max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-left)); } }

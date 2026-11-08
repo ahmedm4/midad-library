@@ -178,6 +178,7 @@ const Library = (() => {
     wireLibMenu();
     wireGlobalDrop();
     wireCloud();
+    wireLibBar();
     await refresh();
     setTimeout(maybeWelcome, 1200);
     renderAnnouncement();
@@ -666,7 +667,7 @@ create policy "midad_own_files" on storage.objects for all
           <h3>${esc(top.sr.title)}</h3>
           <div class="cc-author">${esc(last.author || '')}</div>
           <div class="cc-bar"><i style="width:${pct}%"></i></div>
-          <div class="cc-pct">أنجزت ${pct}٪ من السلسلة · ${ss.done} من ${ss.total} مكتمل${ss.seconds ? ' · ' + fmtDuration(ss.seconds) + ' قراءة' : ''}</div>
+          <div class="cc-pct">${pct}٪ من السلسلة · ${ss.done}/${ss.total} مكتمل${ss.seconds ? ' · ' + fmtDuration(ss.seconds) : ''}</div>
         </div>
         <button class="btn-gold cc-btn">${started ? 'استئناف القراءة' : 'ابدأ ' + esc(pi.label)} ←</button>
       </div>`;
@@ -680,7 +681,7 @@ create policy "midad_own_files" on storage.objects for all
           <h3>${esc(last.title)}</h3>
           <div class="cc-author">${esc(last.author || '')}</div>
           <div class="cc-bar"><i style="width:${pct}%"></i></div>
-          <div class="cc-pct">أنجزت ${pct}٪ ${st.seconds ? '· ' + fmtDuration(st.seconds) + ' قراءة' : ''}</div>
+          <div class="cc-pct">${pct}٪ ${st.seconds ? '· ' + fmtDuration(st.seconds) + ' قراءة' : ''}</div>
         </div>
         <button class="btn-gold cc-btn">استئناف القراءة ←</button>
       </div>`;
@@ -753,9 +754,37 @@ create policy "midad_own_files" on storage.objects for all
     }
     $('#cat-chips').innerHTML = html;
     $('#cat-chips').hidden = !html;
+    { const sc = $('#chips-scroller'); if (sc) sc.hidden = !html; }
+    setTimeout(updateChipArrows, 0);
 
     [...$('#status-tabs').querySelectorAll('button'), ...$('#cat-chips').querySelectorAll('button')]
       .forEach((btn) => { btn.onclick = () => setCat(btn.dataset.cat); });
+  }
+
+  /* صفّ التصنيفات منزلق أفقياً: أسهم تظهر فقط حين يوجد ما يُمرَّر إليه (والعجلة تمرّره أفقياً) */
+  function updateChipArrows() {
+    const nav = $('#cat-chips'), sc = $('#chips-scroller');
+    if (!nav || !sc) return;
+    const max = nav.scrollWidth - nav.clientWidth;
+    const pos = Math.abs(nav.scrollLeft); // RTL: scrollLeft سالب في أغلب المتصفحات
+    sc.classList.toggle('can-start', max > 2 && pos > 2);
+    sc.classList.toggle('can-end', max > 2 && pos < max - 2);
+  }
+  function wireLibBar() {
+    const nav = $('#cat-chips'), sc = $('#chips-scroller');
+    if (nav && sc) {
+      nav.addEventListener('scroll', updateChipArrows, { passive: true });
+      window.addEventListener('resize', updateChipArrows);
+      const step = () => Math.max(160, nav.clientWidth * 0.7);
+      sc.querySelector('.cs-start').onclick = () => nav.scrollBy({ left: step(), behavior: 'smooth' });   // RTL: البداية يميناً
+      sc.querySelector('.cs-end').onclick = () => nav.scrollBy({ left: -step(), behavior: 'smooth' });
+      nav.addEventListener('wheel', (e) => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && nav.scrollWidth > nav.clientWidth) { nav.scrollLeft -= e.deltaY; e.preventDefault(); } }, { passive: false });
+    }
+    // ظلّ وتصغير حين يلتصق الشريط أعلى الشاشة
+    const bar = $('#lib-bar'), sentinel = $('#lib-sentinel');
+    if (bar && sentinel && 'IntersectionObserver' in window) {
+      new IntersectionObserver(([e]) => bar.classList.toggle('stuck', !e.isIntersecting), { threshold: 0 }).observe(sentinel);
+    }
   }
 
   // تغيير العرض (تصنيف/رفّ/سلسلة) مع إعادة البحث داخل النطاق الجديد إن كان هناك بحث
