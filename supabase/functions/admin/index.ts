@@ -373,7 +373,7 @@ Deno.serve(async (req) => {
       return json({ entries: rows || [] });
     }
 
-    return json({ error: "إجراء غير معروف" }, 400);
+    return json({ error: "إجراء غير معروف", code: "unknown_action" }, 400);
   } catch (e) {
     const msg = String((e as Error)?.message || e);
     if (/midad_profiles|relation .* does not exist|schema cache/i.test(msg)) return json({ error: "الجداول غير مُعدّة بعد — نفّذ ملف admin_setup.sql في SQL Editor", code: "setup" }, 500);

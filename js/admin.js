@@ -42,6 +42,8 @@ async function api(action, body = {}) {
   });
   let d = null; try { d = await r.json(); } catch {}
   if (r.status === 404 && !d) throw Object.assign(new Error('دالة «admin» غير منشورة بعد'), { code: 'nofn' });
+  // دالة منشورة أقدم من الواجهة: لا تعرف الإجراءات الجديدة
+  if (d && (d.code === 'unknown_action' || d.error === 'إجراء غير معروف')) throw Object.assign(new Error('دالة «admin» المنشورة أقدم من لوحة التحكم ولا تعرف هذه الصفحة.'), { code: 'oldfn' });
   if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || `خطأ ${r.status}`), { code: d && d.code, status: r.status });
   return d;
 }
@@ -107,6 +109,13 @@ async function go(view) {
   try { await VIEWS[view](); }
   catch (e) {
     if (e.code === 'setup' || e.code === 'nofn') return showSetup(e.message);
+    if (e.code === 'oldfn') {
+      $('#view').innerHTML = `<div class="empty">⚠ ${esc(e.message)}<br><br>أعد نشر الدوال من مجلد المشروع، ثم أعد تنفيذ <code>supabase/admin_setup.sql</code>:<pre dir="ltr" style="text-align:left;user-select:all;margin-top:10px">supabase functions deploy admin --no-verify-jwt
+supabase functions deploy ai --no-verify-jwt
+supabase functions deploy alfeker --no-verify-jwt
+supabase functions deploy gdrive --no-verify-jwt</pre></div>`;
+      return;
+    }
     $('#view').innerHTML = `<div class="empty">⚠ ${esc(e.message)}</div>`;
   }
   $('#main').focus({ preventScroll: true });

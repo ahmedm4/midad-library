@@ -4063,7 +4063,8 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   const getYearGoal = () => { try { return Math.max(1, parseInt(localStorage.getItem('midad-year-goal') || '12', 10) || 12); } catch { return 12; } };
-  const setYearGoal = (n) => { try { localStorage.setItem('midad-year-goal', String(n)); } catch {} };
+  // يُزامَن مع حزمة الإعدادات (Store.getSyncedSettings) — التعديل يختم الحزمة ويدفعها
+  const setYearGoal = (n) => { try { localStorage.setItem('midad-year-goal', String(n)); } catch {} if (Store.markSettingsChanged) Store.markSettingsChanged(); };
 
   /* ─── مقتبساتي: كل ما ظلّلته في كل الكتب، في مكان واحد ─── */
   function allQuotes() {

@@ -126,7 +126,7 @@ Deno.serve(async (req) => {
       if (t) await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(t)}`, { method: "POST" }).catch(() => {});
       return json({ ok: true });
     }
-    return json({ error: "إجراء غير معروف" }, 400);
+    return json({ error: "إجراء غير معروف", code: "unknown_action" }, 400);
   } catch (e) {
     return json({ error: (e as Error).message || String(e) }, 500);
   }

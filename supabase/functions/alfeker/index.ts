@@ -578,7 +578,7 @@ Deno.serve(async (req) => {
       return new Response(dr.body, { status: 200, headers });
     }
 
-    return json({ error: "إجراء غير معروف" }, 400);
+    return json({ error: "إجراء غير معروف", code: "unknown_action" }, 400);
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
