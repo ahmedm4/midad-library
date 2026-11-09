@@ -2709,16 +2709,18 @@ const Reader = (() => {
     if (q.length < 2) { res.innerHTML = ''; count.textContent = ''; return; }
     const hay = contentEl.textContent;
     const matches = [];
-    let idx = 0;
-    while (matches.length < 80 && (idx = hay.indexOf(q, idx)) !== -1) {
-      matches.push(idx);
-      idx += q.length;
+    // يتجاهل التشكيل واختلاف الهمزات والتاء المربوطة والألف المقصورة
+    let m = null, from = 0;
+    while (matches.length < 80 && (m = ArSearch.find(hay, q, from))) {
+      matches.push(m);
+      from = m.index + m.length;
     }
     count.textContent = matches.length ? matches.length + ' نتيجة' : 'لا نتائج';
-    res.innerHTML = matches.map((off, i) => {
-      const a = Math.max(0, off - 40), b = Math.min(hay.length, off + q.length + 40);
-      const before = esc(hay.slice(a, off)), hit = esc(hay.slice(off, off + q.length)), after = esc(hay.slice(off + q.length, b));
-      return `<button data-off="${off}" data-len="${q.length}">…${before}<b>${hit}</b>${after}…</button>`;
+    res.innerHTML = matches.map((mm) => {
+      const off = mm.index, len = mm.length;
+      const a = Math.max(0, off - 40), b = Math.min(hay.length, off + len + 40);
+      const before = esc(hay.slice(a, off)), hit = esc(hay.slice(off, off + len)), after = esc(hay.slice(off + len, b));
+      return `<button data-off="${off}" data-len="${len}">…${before}<b>${hit}</b>${after}…</button>`;
     }).join('');
     res.querySelectorAll('button').forEach((btn) => {
       btn.onclick = () => { jumpToOffset(+btn.dataset.off); $('#r-search').hidden = true; };

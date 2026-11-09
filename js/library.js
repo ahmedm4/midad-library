@@ -701,6 +701,15 @@ create policy "midad_own_files" on storage.objects for all
         <button class="btn-gold cc-btn">استئناف القراءة ←</button>
       </div>`;
     }
+    const qd = quoteOfDay();
+    if (qd) {
+      html += `
+      <button class="quote-card" data-qid="${esc(qd.id)}" title="مقتبس اليوم — اضغط لكل مقتبساتك" style="--qc:${esc(qd.color || '#d9a94f')}">
+        <span class="qc-label">✍️ مقتبس اليوم</span>
+        <span class="qc-text">«${esc(qd.text)}»</span>
+        <span class="qc-src">— ${esc(qd.book.title)}</span>
+      </button>`;
+    }
     if (sug) {
       html += `
       <div class="suggest-card" data-id="${sug.id}">
@@ -721,6 +730,7 @@ create policy "midad_own_files" on storage.objects for all
     };
     if (last) asButton(hero.querySelector('.continue-card'), () => openBook(last.id), `واصل قراءة «${last.title}»`);
     if (sug) asButton(hero.querySelector('.suggest-card'), () => openBook(sug.id), `اقرأ التالي: «${sug.title}»`);
+    { const qc = hero.querySelector('.quote-card'); if (qc) qc.onclick = () => openQuotes(qc.dataset.qid); }
   }
 
   // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
@@ -856,7 +866,7 @@ create policy "midad_own_files" on storage.objects for all
       if (pairView === 'pdf') list = list.filter((b) => !pdfOf[b.id]);        // أخفِ النسخ النصية المشتقّة
       else if (pairView === 'text') list = list.filter((b) => !textTwinOf[b.id]); // أخفِ الأصل PDF الذي له نسخة نصية
     }
-    const matchQ = (b) => !query || (b.title + ' ' + (b.author || '')).toLowerCase().includes(query.toLowerCase());
+    const matchQ = (b) => !query || ArSearch.test(b.title + ' ' + (b.author || '') + ' ' + (b.series || ''), query);
     // داخل سلسلة: أجزاؤها بترتيبها الطبيعي
     if (activeCat.startsWith(SERIES_PREFIX)) {
       const sr = seriesMap.get(activeCat.slice(SERIES_PREFIX.length));
@@ -1716,12 +1726,12 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   function findHits(text, q, max = 4) {
-    const hay = text.toLowerCase(), needle = q.toLowerCase();
-    const hits = []; let idx = 0;
-    while (hits.length < max && (idx = hay.indexOf(needle, idx)) !== -1) {
-      const a = Math.max(0, idx - 45), b2 = Math.min(text.length, idx + q.length + 55);
-      hits.push({ off: idx, before: text.slice(a, idx), hit: text.slice(idx, idx + q.length), after: text.slice(idx + q.length, b2) });
-      idx += q.length;
+    const hits = []; let m = null, from = 0;
+    while (hits.length < max && (m = ArSearch.find(text, q, from))) {
+      const idx = m.index, len = m.length;
+      const a = Math.max(0, idx - 45), b2 = Math.min(text.length, idx + len + 55);
+      hits.push({ off: idx, len, before: text.slice(a, idx), hit: text.slice(idx, idx + len), after: text.slice(idx + len, b2) });
+      from = idx + len;
     }
     return hits;
   }
@@ -1809,7 +1819,7 @@ create policy "midad_own_files" on storage.objects for all
           openBook(b.id, { page: pg });
         } else {
           const rec = results.find((r) => r.book.id === b.id).src;
-          const phrase = normSpace(rec.text.substr(off, q.length + 30)).replace(/^#+\s*/, '');
+          const phrase = normSpace(rec.text.substr(off, 40)).replace(/^#+\s*/, '');
           openBook(b.id, { find: phrase });
         }
       };
@@ -1846,7 +1856,7 @@ create policy "midad_own_files" on storage.objects for all
       const st = states[b.id];
       if (!st) continue;
       for (const a of annotationsOf(b, st)) {
-        if ((a.text + ' ' + a.note).toLowerCase().includes(needle)) found.push(a);
+        if (ArSearch.test(a.text + ' ' + a.note, q)) found.push(a);
       }
     }
     if (token !== notesToken) return;
@@ -1861,10 +1871,11 @@ create policy "midad_own_files" on storage.objects for all
     const mark = (s2) => {
       const t = snippetClean(s2 || '');
       if (!t) return '';
-      const i = t.toLowerCase().indexOf(needle);
-      if (i < 0) return esc(t.slice(0, 120));
-      const a = Math.max(0, i - 40), e = Math.min(t.length, i + q.length + 60);
-      return (a > 0 ? '…' : '') + esc(t.slice(a, i)) + '<b>' + esc(t.slice(i, i + q.length)) + '</b>' + esc(t.slice(i + q.length, e)) + (e < t.length ? '…' : '');
+      const f = ArSearch.find(t, q);
+      if (!f) return esc(t.slice(0, 120));
+      const i = f.index, n = f.length;
+      const a = Math.max(0, i - 40), e = Math.min(t.length, i + n + 60);
+      return (a > 0 ? '…' : '') + esc(t.slice(a, i)) + '<b>' + esc(t.slice(i, i + n)) + '</b>' + esc(t.slice(i + n, e)) + (e < t.length ? '…' : '');
     };
 
     list.innerHTML = shown.map((a, i) => {
@@ -3473,6 +3484,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="libai">🔍 اسأل مكتبتك</button>
         <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
+        <button data-act="quotes">✍️ مقتبساتي</button>
         <button data-act="theme">🎨 سمة المكتبة</button>
         <button data-act="keys">🤖 الذكاء الاصطناعي</button>
         <button data-act="notes">📝 تصدير ملاحظاتي</button>
@@ -3486,6 +3498,7 @@ create policy "midad_own_files" on storage.objects for all
         const act = ev.target.dataset.act;
         closeCardMenu();
         if (act === 'stats') openStats();
+        else if (act === 'quotes') openQuotes();
         else if (act === 'theme') openThemePicker();
         else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();
@@ -3716,6 +3729,79 @@ create policy "midad_own_files" on storage.objects for all
     } finally { libAiBusy = false; $('#libai-body').scrollTop = $('#libai-body').scrollHeight; }
   }
 
+  const getYearGoal = () => { try { return Math.max(1, parseInt(localStorage.getItem('midad-year-goal') || '12', 10) || 12); } catch { return 12; } };
+  const setYearGoal = (n) => { try { localStorage.setItem('midad-year-goal', String(n)); } catch {} };
+
+  /* ─── مقتبساتي: كل ما ظلّلته في كل الكتب، في مكان واحد ─── */
+  function allQuotes() {
+    const out = [];
+    for (const b of books) {
+      const st = states[b.id]; if (!st) continue;
+      for (const h of (st.highlights || [])) if (normSpace(h.text || '')) out.push({ id: h.id, book: b, text: normSpace(h.text), note: h.note || '', color: h.color, at: h.at || 0, jump: { find: normSpace(h.text).slice(0, 60) } });
+      for (const h of (st.pdfHighlights || [])) if (normSpace(h.text || '')) out.push({ id: h.id, book: b, text: normSpace(h.text), note: h.note || '', color: h.color, at: h.at || 0, page: h.page, jump: { page: h.page } });
+    }
+    return out;
+  }
+  // مقتبس اليوم: ثابت طوال اليوم، يتغيّر كل يوم (من المقتبسات المتوسّطة الطول)
+  function quoteOfDay() {
+    const qs = allQuotes().filter((x) => x.text.length >= 25 && x.text.length <= 320);
+    if (!qs.length) return null;
+    qs.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const k = Store.todayKey();
+    return qs[Math.abs(hashCode(k)) % qs.length];
+  }
+  function openQuotes(focusId) {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const all = allQuotes();
+    let q = '', bookF = '', sortBy = 'new';
+    const o = document.createElement('div');
+    o.className = 'ui-dialog';
+    const bookIds = [...new Set(all.map((x) => x.book.id))];
+    o.innerHTML = `<div class="ud-box qt-box" role="dialog" aria-modal="true" aria-labelledby="qt-title">
+      <h3 id="qt-title">✍️ مقتبساتي <small>${all.length}</small></h3>
+      ${all.length ? `<div class="qt-tools">
+        <input type="search" class="qt-q" placeholder="ابحث في مقتبساتك وتعليقاتك…" aria-label="بحث في المقتبسات">
+        <select class="qt-book" aria-label="الكتاب"><option value="">كل الكتب (${bookIds.length})</option>${bookIds.map((id) => { const b = books.find((x) => x.id === id); return `<option value="${esc(id)}">${esc(b.title)}</option>`; }).join('')}</select>
+        <select class="qt-sort" aria-label="الترتيب"><option value="new">الأحدث</option><option value="old">الأقدم</option><option value="book">حسب الكتاب</option><option value="long">الأطول</option></select>
+        <button class="qt-rand" title="مقتبس عشوائي">🎲</button>
+      </div>` : ''}
+      <div class="qt-list" role="list"></div>
+      <div class="ud-actions">${all.length ? '<button class="qt-export">📝 تصدير</button>' : ''}<button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(o);
+    const close = () => o.remove();
+    o.querySelector('.ud-cancel').onclick = close;
+    o.onclick = (e) => { if (e.target === o) close(); };
+    const list = o.querySelector('.qt-list');
+    if (!all.length) { list.innerHTML = '<p class="cr-empty">لم تظلّل شيئاً بعد. حدّد عبارة أثناء القراءة واختر لوناً — تظهر هنا كل مقتبساتك من كل الكتب.</p>'; return; }
+    const draw = (onlyId) => {
+      let items = all.filter((x) => (!bookF || x.book.id === bookF) && (!q || ArSearch.test(x.text + ' ' + x.note + ' ' + x.book.title, q)));
+      if (onlyId) items = all.filter((x) => x.id === onlyId);
+      items.sort(sortBy === 'old' ? (a, b) => a.at - b.at : sortBy === 'book' ? (a, b) => a.book.title.localeCompare(b.book.title, 'ar') || (a.page || 0) - (b.page || 0) : sortBy === 'long' ? (a, b) => b.text.length - a.text.length : (a, b) => b.at - a.at);
+      const shown = items.slice(0, 200);
+      list.innerHTML = shown.length ? shown.map((x, i) => `<figure class="qt-item${x.id === focusId ? ' focus' : ''}" role="listitem" style="--qc:${esc(x.color || '#d9a94f')}">
+          <blockquote>${esc(x.text)}</blockquote>
+          ${x.note ? `<p class="qt-note">📝 ${esc(x.note)}</p>` : ''}
+          <figcaption><span>— ${esc(x.book.title)}${x.book.author ? '، ' + esc(x.book.author) : ''}${x.page ? ` · ص ${x.page}` : ''}</span>
+            <span class="qt-acts"><button data-i="${i}" data-a="copy" title="نسخ">📋</button><button data-i="${i}" data-a="open" title="افتح في الكتاب">📖</button></span></figcaption>
+        </figure>`).join('') + (items.length > shown.length ? `<p class="cr-empty">تُعرض ${shown.length} من ${items.length} — ضيّق البحث</p>` : '')
+        : '<p class="cr-empty">لا نتائج</p>';
+      list.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = async () => {
+        const x = shown[+btn.dataset.i];
+        if (btn.dataset.a === 'open') { close(); openBook(x.book.id, x.jump); return; }
+        const txt = `«${x.text}»\n— ${x.book.title}${x.book.author ? '، ' + x.book.author : ''}`;
+        try { await navigator.clipboard.writeText(txt); toast('✓ نُسخ المقتبس', 'gold'); } catch { toast('تعذّر النسخ'); }
+      }));
+      const f = list.querySelector('.focus'); if (f) f.scrollIntoView({ block: 'center' });
+    };
+    let t;
+    o.querySelector('.qt-q').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { q = e.target.value.trim(); draw(); }, 200); };
+    o.querySelector('.qt-book').onchange = (e) => { bookF = e.target.value; draw(); };
+    o.querySelector('.qt-sort').onchange = (e) => { sortBy = e.target.value; draw(); };
+    o.querySelector('.qt-rand').onclick = () => { const x = all[Math.floor(Math.random() * all.length)]; focusId = x.id; draw(x.id); };
+    o.querySelector('.qt-export').onclick = () => { close(); exportNotes(null); };
+    draw();
+  }
+
   function openStats() {
     let totalSec = 0, notes = 0, marks = 0, fin = 0, reading = 0, drawings = 0;
     const rows = [];
@@ -3777,6 +3863,40 @@ create policy "midad_own_files" on storage.objects for all
     }
     const barMax = Math.max(goal, ...bars.map((b2) => b2.min), 1);
 
+    // ── تحدّي السنة: عدد الكتب المنتهية هذا العام مقابل هدفك، مع إيقاعك مقارنةً بالخطة ──
+    const yr = dref.getFullYear(), yStart = new Date(yr, 0, 1).getTime();
+    const yGoal = getYearGoal();
+    const finishedYear = books.filter((b) => states[b.id].finished && (states[b.id].finishedAt || 0) >= yStart)
+      .sort((a, b) => states[b.id].finishedAt - states[a.id].finishedAt);
+    const dayOfYear = Math.floor((dref - yStart) / 864e5) + 1, daysInYear = (yr % 4 === 0 && (yr % 100 !== 0 || yr % 400 === 0)) ? 366 : 365;
+    const planned = yGoal * dayOfYear / daysInYear, ahead = Math.round((finishedYear.length - planned) * 10) / 10;
+    const paceTxt = finishedYear.length >= yGoal ? '🎉 حقّقت هدف السنة!'
+      : ahead >= 0.5 ? `متقدّم على خطّتك بـ ${Math.round(ahead)} ${Math.round(ahead) === 1 ? 'كتاب' : 'كتب'}`
+      : ahead <= -0.5 ? `متأخّر عن خطّتك بـ ${Math.round(-ahead)} ${Math.round(-ahead) === 1 ? 'كتاب' : 'كتب'} — كتاب كل ${((n) => n === 1 ? 'يوم' : n === 2 ? 'يومين' : n <= 10 ? n + ' أيام' : n + ' يوماً')(Math.max(1, Math.round((daysInYear - dayOfYear) / Math.max(1, yGoal - finishedYear.length))))} يعيدك للمسار`
+      : 'على المسار تماماً ✓';
+    // الدقائق شهرياً من السجلّ اليومي، والكتب المنتهية في كل شهر
+    const months = [];
+    for (let mo = 0; mo < 12; mo++) {
+      let sec = 0;
+      const dim = new Date(yr, mo + 1, 0).getDate();
+      for (let dd = 1; dd <= dim; dd++) sec += log[Store.todayKey(new Date(yr, mo, dd))] || 0;
+      const fin = finishedYear.filter((b) => new Date(states[b.id].finishedAt).getMonth() === mo).length;
+      months.push({ min: Math.round(sec / 60), fin, label: new Date(yr, mo, 1).toLocaleDateString('ar', { month: 'short' }), cur: mo === dref.getMonth(), future: mo > dref.getMonth() });
+    }
+    const moMax = Math.max(1, ...months.map((x) => x.min));
+    const yearBlock = `
+      <div class="year-card">
+        <div class="yc-head"><b>تحدّي ${yr.toLocaleString('ar', { useGrouping: false })}</b>
+          <span class="goal-stepper"><button id="ygoal-minus" aria-label="إنقاص هدف السنة">−</button><i>${yGoal}</i><button id="ygoal-plus" aria-label="زيادة هدف السنة">+</button><em>كتاباً</em></span></div>
+        <div class="yc-count"><b>${finishedYear.length}</b><span>من ${yGoal} كتاباً هذا العام</span></div>
+        <div class="yc-bar"><i style="width:${Math.min(100, finishedYear.length * 100 / Math.max(1, yGoal)).toFixed(1)}%"></i><u style="inset-inline-start:${Math.min(100, dayOfYear * 100 / daysInYear).toFixed(1)}%" title="موضعك المتوقّع اليوم"></u></div>
+        <div class="yc-pace">${paceTxt}</div>
+        ${finishedYear.length ? `<div class="yc-covers">${finishedYear.slice(0, 14).map((b) => `<span title="${esc(b.title)}">${coverHTML(b, 'yc-cover')}</span>`).join('')}${finishedYear.length > 14 ? `<em>+${finishedYear.length - 14}</em>` : ''}</div>` : ''}
+        <h4>دقائق القراءة شهرياً</h4>
+        <div class="month-bars">${months.map((x) => `<i class="${x.cur ? 'cur' : ''}${x.future ? ' fut' : ''}" title="${x.label}: ${x.min} د${x.fin ? ` · ${x.fin} كتاب` : ''}"><u style="height:${Math.round(x.min * 100 / moMax)}%">${x.fin ? `<b>${x.fin}</b>` : ''}</u><s>${x.label}</s></i>`).join('')}</div>
+        <small class="yc-note">الرقم فوق العمود = كتب أنهيتها في ذلك الشهر</small>
+      </div>`;
+
     const ring = (pct) => {
       const R = 34, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
       return `<svg class="goal-ring" viewBox="0 0 80 80"><circle cx="40" cy="40" r="${R}" class="gr-bg"/><circle cx="40" cy="40" r="${R}" class="gr-fg" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg>`;
@@ -3801,6 +3921,8 @@ create policy "midad_own_files" on storage.objects for all
         <div class="wk-card"><b>${Math.round(monthSec / 60)}<em>د</em></b><span>آخر ٣٠ يوماً</span></div>
         <div class="wk-card"><b>${avgPerActive}<em>د</em></b><span>معدّل يوم القراءة</span></div>
       </div>
+
+      ${yearBlock}
 
       <div class="bars-wrap">
         <h4>آخر ١٤ يوماً <small>الخطّ المتقطّع = هدفك (${goal} د)</small></h4>
@@ -3831,6 +3953,8 @@ create policy "midad_own_files" on storage.objects for all
           </div>`).join('')}</div>` : '<p style="color:#9a92ad;text-align:center">ابدأ القراءة لتتجمع إحصائياتك هنا ✨</p>'}`;
 
     const setG = (v) => { Store.setGoal(v); openStats(); };
+    $('#ygoal-minus').onclick = () => { setYearGoal(Math.max(1, yGoal - 1)); openStats(); };
+    $('#ygoal-plus').onclick = () => { setYearGoal(yGoal + 1); openStats(); };
     $('#goal-minus').onclick = () => setG(Math.max(1, goal - 5));
     $('#goal-plus').onclick = () => setG(goal + 5);
     $('#stats-modal').hidden = false;

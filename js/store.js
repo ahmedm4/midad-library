@@ -246,3 +246,35 @@ const Store = (() => {
     markSettingsChanged, getSettingsAt, getSyncedSettings, adoptSyncedSettings };
 })();
 window.Store = Store;
+
+/* ═══ بحث عربي متسامح ═══
+   «الاسلام» تطابق «الإسلام»، و«مكتبه» تطابق «مكتبة»، و«علي» تطابق «على»، والتشكيل والتطويل
+   لا يمنعان التطابق («محمد» تطابق «مُحَمَّد»). يُبنى تعبير نمطي يعمل على النص الأصلي مباشرةً،
+   فتبقى المواضع (للقفز إلى النتيجة) صحيحة دون نسخة مُطبَّعة من النص. */
+const ArSearch = (() => {
+  const MARKS = '[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]*';
+  const ALEF = '[اأإآٱ]', YA = '[يىئی]', HA = '[هة]', WAW = '[وؤ]', KAF = '[كک]';
+  const CLS = { 'ا': ALEF, 'أ': ALEF, 'إ': ALEF, 'آ': ALEF, 'ٱ': ALEF, 'ي': YA, 'ى': YA, 'ئ': '[يىئیؤء]', 'ی': YA, 'ه': HA, 'ة': HA, 'و': WAW, 'ؤ': '[وؤئء]', 'ء': '[ءأإؤئ]', 'ك': KAF, 'ک': KAF };
+  const cache = new Map();
+  function re(q, flags = 'gi') {
+    q = String(q || '').replace(/[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, '').trim();
+    if (!q) return null;
+    const key = flags + '|' + q;
+    if (cache.has(key)) { const r = cache.get(key); r.lastIndex = 0; return r; }
+    const parts = [...q].map((ch) => (/\s/.test(ch) ? '\\s+' : CLS[ch] || ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    const r = new RegExp(parts.join(MARKS), flags);
+    if (cache.size > 50) cache.clear();
+    cache.set(key, r);
+    return r;
+  }
+  // أول تطابق: {index, length} أو null
+  function find(text, q, from = 0) {
+    const r = re(q, 'gi'); if (!r) return null;
+    r.lastIndex = from;
+    const m = r.exec(text);
+    return m ? { index: m.index, length: m[0].length || 1 } : null;
+  }
+  const test = (text, q) => { const r = re(q, 'i'); return !r || r.test(text); };
+  return { re, find, test };
+})();
+window.ArSearch = ArSearch;
