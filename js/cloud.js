@@ -1062,6 +1062,7 @@ const Cloud = (() => {
     try { if (!(await Store.getFulltext(id))) { const c = await fetchContent(id); if (c) { const ft = JSON.parse(c); if (ft && ft.text != null) await Store.saveFulltext(id, ft); } } } catch {}
 
     if (have != null) return 'ok'; // الملف موجود محلياً
+    if (opts.textOnly) return 'textonly'; // للبحث: النص وحده يكفي، بلا تنزيل الملف
     if (!navigator.onLine) return 'offline';
     const quiet = !!opts.quiet;
     if (!quiet) setStatus('syncing', 'جارٍ تنزيل الكتاب…');

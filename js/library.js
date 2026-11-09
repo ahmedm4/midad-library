@@ -2233,50 +2233,80 @@ create policy "midad_own_files" on storage.objects for all
     return hits;
   }
 
+  /* ─── تجهيز ملفات PDF للبحث (استخراج طبقة النص مرة واحدة لكل جهاز) ───
+     طابور واحد يعمل في الخلفية مستقلاً عن كلمة البحث: لا يعيد البحثُ التالي البدءَ من الصفر،
+     ونتائج كل كتاب يكتمل تُضاف إلى البحث المعروض تباعاً. */
+  const PREP_RETRY = 6 * 3600e3; // كتاب تعذّر تجهيزه (ملف تالف/مفقود) لا يُعاد قبل ٦ ساعات
+  const prepFailed = (() => { try { return JSON.parse(localStorage.getItem('midad-prep-failed') || '{}') || {}; } catch { return {}; } })();
+  const markPrepFailed = (id) => { prepFailed[id] = Date.now(); try { localStorage.setItem('midad-prep-failed', JSON.stringify(prepFailed)); } catch {} };
+  const prepQ = { list: [], running: null, done: 0, total: 0, onBook: null };
+  const prepNoText = new Set(); // كتب سحابية بلا نص محفوظ (جُرِّبت هذه الجلسة) — لا تُطلب مع كل بحث
+  let prepAllowDownload = false; // أذن المستخدم بتنزيل الكتب غير المنزّلة لأجل البحث (هذه الجلسة)
+  // جوال أو اتصال مقتصِد/خلوي: لا ننزّل ملفات الكتب دون إذن
+  function meteredNet() {
+    const c = navigator.connection;
+    if (c && (c.saveData || c.type === 'cellular' || /(^|-)(2g|3g)$/.test(c.effectiveType || ''))) return true;
+    try { if (matchMedia('(pointer: coarse)').matches) return true; } catch {}
+    return false;
+  }
+  function prepEnqueue(items) { // items: [{ b, dl }]
+    for (const it of items) {
+      if (prepQ.running && prepQ.running.b.id === it.b.id) continue;
+      const ex = prepQ.list.find((j) => j.b.id === it.b.id);
+      if (ex) { ex.dl = ex.dl || it.dl; continue; }
+      prepQ.list.push(it); prepQ.total++;
+    }
+    prepPump();
+  }
+  async function prepOne(b, dl) {
+    if ((await Store.getPayload(b.id)) == null) {
+      if (!window.Cloud) return null;
+      // نص الـOCR المحفوظ في السحابة يكفي للبحث — طلب صغير بلا تنزيل الملف
+      try { await Cloud.ensurePayload(b.id, { quiet: true, textOnly: !dl }); } catch {}
+      const ft = await Store.getFulltext(b.id);
+      if (ft) return ft;
+      if (!dl) { prepNoText.add(b.id); return 'deferred'; }
+      if ((await Store.getPayload(b.id)) == null) { if (navigator.onLine) markPrepFailed(b.id); return null; }
+    }
+    const rec = await extractPdfText(b.id);
+    if (!rec && navigator.onLine) markPrepFailed(b.id);
+    return rec;
+  }
+  async function prepPump() {
+    if (prepQ.running) return;
+    while (prepQ.list.length) {
+      const job = prepQ.running = prepQ.list.shift();
+      let rec = null;
+      try { rec = await prepOne(job.b, job.dl); } catch (e) { console.warn('prep', e); }
+      prepQ.done++;
+      prepQ.running = null;
+      if (rec && rec !== 'deferred') lastDeep = null; // كتاب جديد صار قابلاً للبحث
+      try { if (prepQ.onBook) prepQ.onBook(job.b, rec); } catch {}
+    }
+    prepQ.done = prepQ.total = 0;
+    try { if (prepQ.onBook) prepQ.onBook(null, null); } catch {}
+  }
+
   async function deepSearch(q) {
     const token = ++deepToken;
+    const live = () => token === deepToken;
     const panel = $('#deep-results'), list = $('#deep-list');
     const scopeInfo = searchScope(), pool = scopeInfo.list;
     { const h = panel.querySelector('h3'); if (h) h.textContent = scopeInfo.label ? `📖 داخل «${scopeInfo.label}»` : '📖 داخل الكتب'; }
-    // فهرسة كسولة لملفات PDF غير المفهرسة
-    const pdfsToIndex = [], scanned = [];
+
+    // صنّف ملفات PDF: مفهرسة، تحتاج تجهيزاً (منزّلة أو في السحابة فقط)، مصوّرة بلا نص
     const watchScanned = localOcrOk();
+    const needLocal = [], needRemote = [], scanned = [];
+    const now = Date.now();
     for (const b of pool) {
       if (b.type !== 'pdf') continue;
       const ft = await Store.getFulltext(b.id);
-      if (!ft) pdfsToIndex.push(b);
-      else if (watchScanned && !ft.ocr && isScannedText(ft)) scanned.push(b);
+      if (ft) { if (watchScanned && !ft.ocr && isScannedText(ft)) scanned.push(b); continue; }
+      if (now - (prepFailed[b.id] || 0) < PREP_RETRY) continue;
+      ((await Store.getPayload(b.id)) != null ? needLocal : needRemote).push(b);
     }
-    if (token !== deepToken) return;
+    if (!live()) return;
     panel.hidden = false;
-    if (pdfsToIndex.length) {
-      list.innerHTML = `<div class="deep-indexing">⏳ تجهيز ${pdfsToIndex.length} كتاب PDF للبحث لأول مرة…<div class="di-bar"><i id="di-fill" style="width:0%"></i></div></div>`;
-      $('#deep-count').textContent = '';
-      let done = 0;
-      for (const b of pdfsToIndex) {
-        await extractPdfText(b.id);
-        done++;
-        if (token !== deepToken) return;
-        const fill = $('#di-fill'); if (fill) fill.style.width = Math.round((done / pdfsToIndex.length) * 100) + '%';
-      }
-      if (watchScanned) for (const b of pdfsToIndex) { const ft = await Store.getFulltext(b.id); if (ft && !ft.ocr && isScannedText(ft)) scanned.push(b); }
-    }
-    // كتب مصوّرة لا يصلها البحث: اقترح فهرستها على الجهاز (ما لم تكن في الطابور)
-    const busy = new Set([...(ocrQ.running ? [ocrQ.running.id] : []), ...ocrQ.list.map((j) => j.id)]);
-    const scanIds = scanned.map((b) => b.id).filter((x) => !busy.has(x));
-    const scanHint = () => {
-      if (!scanIds.length) return;
-      const el = document.createElement('div');
-      el.className = 'deep-scanned';
-      el.innerHTML = `<span>📷 ${scanIds.length === 1 ? 'كتاب مصوّر واحد لا يدخله' : scanIds.length + ' كتب مصوّرة لا يدخلها'} البحث بعد.</span><button type="button">🔤 فهرسها على الجهاز</button>`;
-      el.querySelector('button').onclick = () => {
-        const n = ocrEnqueue(scanIds, { report: false });
-        el.remove();
-        toast(n ? 'بدأت الفهرسة في الخلفية — تابع استعمال التطبيق، وتظهر النتائج في البحث حين تكتمل' : 'هذه الكتب في الطابور أصلاً');
-      };
-      list.prepend(el);
-    };
-    if (token !== deepToken) return;
 
     // نطاق البحث: عند إطالة نفس الكلمة («الجاح» ← «الجاحظ») لا يمكن أن يطابق
     // كتابٌ لم يطابق الأقصر، فنبحث في نتائج المرّة السابقة فقط.
@@ -2286,63 +2316,117 @@ create policy "midad_own_files" on storage.objects for all
       scope = pool.filter((b) => keep.has(b.id));
     }
 
-    // اقرأ النصوص بالتوازي (بسقف تزامن) بدل قراءة متسلسلة لكل كتاب
+    // ١) ابحث فوراً في كل ما هو جاهز (بالتوازي بسقف تزامن)
     const slots = new Array(scope.length);
     let next = 0;
     const worker = async () => {
       while (next < scope.length) {
         const i = next++;
         const b = scope[i];
-        if (token !== deepToken) return;
+        if (!live()) return;
         let src = null;
         try { src = await searchableOf(b, false); } catch {}
-        if (token !== deepToken) return;
+        if (!live()) return;
         if (!src || !src.text) continue;
         const hits = findHits(src.text, q, 4);
         if (hits.length) slots[i] = { book: b, src, hits };
       }
     };
     await Promise.all(Array.from({ length: Math.min(8, scope.length) }, worker));
-    if (token !== deepToken) return;
-    const results = slots.filter(Boolean); // الترتيب محفوظ حسب ترتيب المكتبة
-    lastDeep = { q: q.toLowerCase(), ids: results.map((r) => r.book.id), scope: scopeInfo.id };
+    if (!live()) return;
+    const results = slots.filter(Boolean);
+    const order = new Map(pool.map((b, i) => [b.id, i]));
 
-    const total = results.reduce((n, r) => n + r.hits.length, 0);
-    $('#deep-count').textContent = total ? `${total} نتيجة في ${results.length} كتاب` : '';
-    if (!results.length) {
-      list.innerHTML = `<div class="deep-indexing">لا توجد نتائج داخل الكتب عن «${esc(q)}»</div>`;
-      scanHint();
-      return;
-    }
-    list.innerHTML = results.map((r) => `
+    // ٢) جهّز الباقي في الخلفية: المنزّل دائماً، وغير المنزّل فقط على اتصال غير مقتصِد أو بإذن
+    const canDl = prepAllowDownload || !meteredNet();
+    let deferred = needRemote.filter((b) => !canDl && prepNoText.has(b.id));
+    const draw = () => {
+      if (!live()) return;
+      results.sort((a, b) => order.get(a.book.id) - order.get(b.book.id));
+      const total = results.reduce((n, r) => n + r.hits.length, 0);
+      $('#deep-count').textContent = total ? `${total} نتيجة في ${results.length} كتاب` : '';
+      const busyPrep = !!(prepQ.running || prepQ.list.length);
+      let h = '';
+      if (busyPrep) {
+        const pct = prepQ.total ? Math.round((prepQ.done / prepQ.total) * 100) : 0;
+        h += `<div class="deep-prep">⏳ تجهيز ${prepQ.total - prepQ.done} كتاب PDF للبحث (مرة واحدة على هذا الجهاز)… تظهر نتائجها هنا تباعاً<div class="di-bar"><i style="width:${pct}%"></i></div></div>`;
+      } else if (deferred.length) {
+        h += `<div class="deep-prep"><span>📥 ${deferred.length === 1 ? 'كتاب PDF واحد غير منزّل على هذا الجهاز لم يدخل' : deferred.length + ' كتب PDF غير منزّلة على هذا الجهاز لم تدخل'} البحث بعد.</span><button type="button" data-a="dl">نزّلها وجهّزها</button></div>`;
+      }
+      const busyOcr = new Set([...(ocrQ.running ? [ocrQ.running.id] : []), ...ocrQ.list.map((j) => j.id)]);
+      const scanIds = scanned.map((b) => b.id).filter((x) => !busyOcr.has(x));
+      if (scanIds.length) h += `<div class="deep-scanned"><span>📷 ${scanIds.length === 1 ? 'كتاب مصوّر واحد لا يدخله' : scanIds.length + ' كتب مصوّرة لا يدخلها'} البحث بعد.</span><button type="button" data-a="ocr">🔤 فهرسها على الجهاز</button></div>`;
+      if (results.length) {
+        h += results.map((r) => `
       <div class="deep-book">
         <div class="deep-book-title">${esc(r.book.title)}<span class="db-badge">${r.book.type === 'pdf' ? 'PDF' : 'نص'}${r.book.author ? ' · ' + esc(r.book.author) : ''}</span></div>
-        ${r.hits.map((h, i) => {
+        ${r.hits.map((hh) => {
           let loc = '';
           if (r.book.type === 'pdf' && r.src.pageStarts) {
-            let pg = 1; for (let k = 0; k < r.src.pageStarts.length; k++) if (r.src.pageStarts[k] <= h.off) pg = k + 1;
+            let pg = 1; for (let k = 0; k < r.src.pageStarts.length; k++) if (r.src.pageStarts[k] <= hh.off) pg = k + 1;
             loc = `<span class="dh-loc">ص ${pg}</span>`;
           }
-          return `<button class="deep-hit" data-bid="${r.book.id}" data-off="${h.off}">…${esc(snippetClean(h.before))}<b>${esc(h.hit)}</b>${esc(snippetClean(h.after))}…${loc}</button>`;
+          return `<button class="deep-hit" data-bid="${r.book.id}" data-off="${hh.off}">…${esc(snippetClean(hh.before))}<b>${esc(hh.hit)}</b>${esc(snippetClean(hh.after))}…${loc}</button>`;
         }).join('')}
       </div>`).join('');
-    scanHint();
-
-    list.querySelectorAll('.deep-hit').forEach((btn) => {
-      btn.onclick = () => {
-        const b = books.find((x) => x.id === btn.dataset.bid);
-        const off = +btn.dataset.off;
-        if (b.type === 'pdf') {
-          const rec = results.find((r) => r.book.id === b.id).src;
-          let pg = 1; for (let k = 0; k < rec.pageStarts.length; k++) if (rec.pageStarts[k] <= off) pg = k + 1;
-          openBook(b.id, { page: pg });
-        } else {
-          const rec = results.find((r) => r.book.id === b.id).src;
-          const phrase = normSpace(rec.text.substr(off, 40)).replace(/^#+\s*/, '');
-          openBook(b.id, { find: phrase });
-        }
+      } else if (!busyPrep) {
+        h += `<div class="deep-indexing">لا توجد نتائج داخل الكتب عن «${esc(q)}»</div>`;
+      }
+      list.innerHTML = h;
+      const dlBtn = list.querySelector('[data-a="dl"]');
+      if (dlBtn) dlBtn.onclick = () => {
+        prepAllowDownload = true;
+        const items = deferred.map((b) => ({ b, dl: true }));
+        deferred = [];
+        prepEnqueue(items);
+        draw();
       };
-    });
+      const ocrBtn = list.querySelector('[data-a="ocr"]');
+      if (ocrBtn) ocrBtn.onclick = () => {
+        const n = ocrEnqueue(scanIds, { report: false });
+        scanned.length = 0;
+        draw();
+        toast(n ? 'بدأت الفهرسة في الخلفية — تابع استعمال التطبيق، وتظهر النتائج في البحث حين تكتمل' : 'هذه الكتب في الطابور أصلاً');
+      };
+      list.querySelectorAll('.deep-hit').forEach((btn) => {
+        btn.onclick = () => {
+          const r = results.find((x) => x.book.id === btn.dataset.bid);
+          if (!r) return;
+          const b = r.book, off = +btn.dataset.off, rec = r.src;
+          if (b.type === 'pdf') {
+            let pg = 1; for (let k = 0; k < rec.pageStarts.length; k++) if (rec.pageStarts[k] <= off) pg = k + 1;
+            openBook(b.id, { page: pg });
+          } else {
+            const phrase = normSpace(rec.text.substr(off, 40)).replace(/^#+\s*/, '');
+            openBook(b.id, { find: phrase });
+          }
+        };
+      });
+    };
+
+    let drawT = null;
+    prepQ.onBook = (b, rec) => {
+      if (!live()) return;
+      if (b && rec === 'deferred') deferred.push(b);
+      else if (b && rec && rec.text) {
+        if (watchScanned && !rec.ocr && isScannedText(rec)) scanned.push(b);
+        if (order.has(b.id) && !results.some((r) => r.book.id === b.id)) {
+          const hits = findHits(rec.text, q, 4);
+          if (hits.length) results.push({ book: b, src: rec, hits });
+        }
+      }
+      if (!b) { // انتهى الطابور: صار بالإمكان تضييق البحث التالي بأمان
+        lastDeep = { q: q.toLowerCase(), ids: results.map((r) => r.book.id), scope: scopeInfo.id };
+        clearTimeout(drawT); draw(); return;
+      }
+      clearTimeout(drawT); drawT = setTimeout(draw, 250); // ارسم دفعةً لا مع كل كتاب
+    };
+
+    const items = [...needLocal.map((b) => ({ b, dl: true })), ...needRemote.filter((b) => !deferred.includes(b)).map((b) => ({ b, dl: canDl }))];
+    const queued = items.length || prepQ.running || prepQ.list.length;
+    lastDeep = queued ? null : { q: q.toLowerCase(), ids: results.map((r) => r.book.id), scope: scopeInfo.id };
+    if (items.length) prepEnqueue(items); // قبل الرسم: كي يظهر شريط التجهيز لا «لا توجد نتائج»
+    draw();
   }
 
   /* ─── البحث في التظليلات والملاحظات عبر كل الكتب ───
