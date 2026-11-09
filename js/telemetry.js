@@ -5,7 +5,9 @@
       الخطأ مختصرة إلى لوحة التحكم، كي يُعرف الخلل ويُصلَح قبل أن يشتكي منه أحد.
    يعمل فقط حين يكون مشروع التطبيق مضبوطاً في config.js، وبلا أي أثر على سرعة الواجهة. */
 const Telemetry = (() => {
-  const base = () => { const c = window.MIDAD_CONFIG; return c && c.url && c.anonKey ? { url: c.url.replace(/\/+$/, ''), key: c.anonKey } : null; };
+  // لا قياس ولا تقارير من نسخ التطوير المحلية، كي لا تختلط تجارب المطوّر بأعطال المستخدمين
+  const isDev = /^(localhost|127\.|\[::1\]$)|\.(localhost|test)$/.test(location.hostname);
+  const base = () => { const c = window.MIDAD_CONFIG; if (isDev) return null; return c && c.url && c.anonKey ? { url: c.url.replace(/\/+$/, ''), key: c.anonKey } : null; };
   const ver = () => { try { return typeof APP_VERSION !== 'undefined' ? APP_VERSION : ''; } catch { return ''; } };
   const ls = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; };
 

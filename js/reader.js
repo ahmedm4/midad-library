@@ -1247,8 +1247,9 @@ const Reader = (() => {
     const vs = speechSynthesis.getVoices().filter((v) => /^ar/i.test(v.lang));
     if (!vs.length) return null;
     // صوت اختاره القارئ (يُطابَق بالمعرّف ثم بالاسم، فقد يتغيّر المعرّف بين الأجهزة)
-    if (settings.ttsDeviceVoice) {
-      const chosen = vs.find((v) => v.voiceURI === settings.ttsDeviceVoice) || vs.find((v) => v.name === settings.ttsDeviceVoice);
+    const want = (settings || Store.getSettings()).ttsDeviceVoice; // settings تُحمَّل عند فتح أول كتاب
+    if (want) {
+      const chosen = vs.find((v) => v.voiceURI === want) || vs.find((v) => v.name === want);
       if (chosen) return chosen;
     }
     const score = (v) => (/(natural|online|neural|premium|enhanced)/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 2 : 0) + (v.localService ? 0 : 1);
@@ -1293,7 +1294,8 @@ const Reader = (() => {
     const vs = speechSynthesis.getVoices().filter((v) => /^ar/i.test(v.lang))
       .sort((a, b) => (/(natural|online|neural)/i.test(b.name) ? 1 : 0) - (/(natural|online|neural)/i.test(a.name) ? 1 : 0) || a.lang.localeCompare(b.lang));
     sel.innerHTML = '<option value="">تلقائي (أفضل صوت عربي)</option>' + vs.map((v) => `<option value="${esc(v.voiceURI)}">${esc(deviceVoiceLabel(v))}</option>`).join('');
-    const cur = settings.ttsDeviceVoice || '';
+    // قد يصل حدث voiceschanged قبل فتح أي كتاب (settings ما زالت null)
+    const cur = (settings || Store.getSettings()).ttsDeviceVoice || '';
     sel.value = vs.some((v) => v.voiceURI === cur) ? cur : (vs.find((v) => v.name === cur) || {}).voiceURI || '';
     const hint = $('#tts-device-hint');
     if (hint) {
