@@ -34,11 +34,12 @@ async function emailOfAccess(access: string) {
 }
 // حالة حساب Google: جديدٌ عند الدخول ⇒ بانتظار الموافقة (إن طُلبت)؛ وعند التحديث ⇒ مقبول
 // (من يملك رمز تحديث سبق له الدخول قبل تفعيل الموافقة — لا نقطع عنه الخدمة)
-async function gate(email: string, isNewSignIn: boolean): Promise<{ ok: boolean; status?: string }> {
+async function gate(email: string, isNewSignIn: boolean): Promise<{ ok: boolean; status?: string; profile?: { role: string; features: Record<string, boolean> } }> {
   if (!SB || !SRK || !email) return { ok: true };
   try {
-    const rows = await rest(`midad_profiles?email=eq.${encodeURIComponent(email)}&select=status`);
+    const rows = await rest(`midad_profiles?email=eq.${encodeURIComponent(email)}&select=status,role,features`);
     let status = rows && rows[0] ? rows[0].status : "";
+    const profile = { role: (rows && rows[0] && rows[0].role) || "user", features: (rows && rows[0] && rows[0].features) || {} };
     if (!status) {
       let needApproval = true;
       try { const c = await rest("midad_config?key=eq.app&select=value"); needApproval = !(c && c[0] && c[0].value && c[0].value.google_approval === false); } catch { /* افتراضياً: موافقة */ }
@@ -52,7 +53,7 @@ async function gate(email: string, isNewSignIn: boolean): Promise<{ ok: boolean;
     } else if (status === "approved") {
       rest(`midad_profiles?email=eq.${encodeURIComponent(email)}`, { method: "PATCH", body: JSON.stringify({ last_seen: new Date().toISOString() }), headers: { Prefer: "return=minimal" } }).catch(() => {});
     }
-    return { ok: status === "approved", status };
+    return { ok: status === "approved", status, profile };
   } catch (e) {
     // الجداول غير مُنشأة بعد ⇒ لا بوابة (السلوك السابق)
     if (/42P01|does not exist|schema cache/i.test(String((e as Error).message))) return { ok: true };
@@ -87,6 +88,7 @@ async function tokenCall(params: Record<string, string>, isNewSignIn = false) {
   return json({
     access_token: d.access_token, expires_in: d.expires_in, scope: d.scope,
     refresh_token: d.refresh_token, id_token: d.id_token,
+    profile: g.profile || null, // الدور والإمكانيات (للميزات التجريبية المفعّلة لحسابات بعينها)
   });
 }
 // إعداد الموقع: هل الدخول بحساب Google مفعّل من لوحة التحكم؟
@@ -104,7 +106,7 @@ Deno.serve(async (req) => {
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "");
-    if (action === "version") return json({ fn: "gdrive", fnVersion: "2026.11.8" });
+    if (action === "version") return json({ fn: "gdrive", fnVersion: "2026.11.9" });
     // هل الدخول بحساب Google مُعدّ؟ (يُظهر التطبيق الزرّ عندها فقط)
     if (action === "config") return json({ clientId: clientId && secret && (await googleEnabled()) ? clientId : "" });
     if (!clientId || !secret) return json({ error: "الدخول بحساب Google غير مُعدّ في هذا الخادم بعد", code: "not_configured" }, 503);

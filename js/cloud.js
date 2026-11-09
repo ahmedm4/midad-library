@@ -113,6 +113,16 @@ const Cloud = (() => {
     return d[feature] !== false;
   }
   const accountOk = () => !profile || (profile.status === 'approved' && can('sync'));
+  // إمكانيات «اختيارية» تُجرَّب أولاً (مطفأة افتراضياً): المسؤول دائماً، ثم إعداد المستخدم نفسه،
+  // ثم الافتراضي العام إن فُعّل صراحةً. حسابات Google تأخذ ملفّها من دالة gdrive مع رمز الدخول.
+  function canOpt(feature) {
+    const p = profile || (sb && sb.isDrive && sb.gprofile ? sb.gprofile() : null);
+    if (p && p.role === 'admin') return true;
+    const f = (p && p.features) || {};
+    if (typeof f[feature] === 'boolean') return f[feature] && (!p.status || p.status === 'approved');
+    const d = (siteCfg && siteCfg.defaults) || {};
+    return d[feature] === true;
+  }
   async function afterSignIn() {
     await loadProfile();
     if (!accountOk()) return; // بانتظار الموافقة/موقوف/المزامنة معطّلة ⇒ لا مزامنة (والخادم يمنعها أيضاً)
@@ -1128,7 +1138,7 @@ const Cloud = (() => {
     pushBook, pushMeta, pushState, ensureAssets, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,
     lastPayloadError: () => lastPayloadError,
     // لوحة التحكم
-    getProfile: () => profile, isAdmin: () => !!(profile && profile.role === 'admin'), can, refreshProfile: async () => { await loadProfile(); if (accountOk() && user) { subscribe(); syncAll(); } return profile; },
+    getProfile: () => profile, isAdmin: () => !!(profile && profile.role === 'admin'), can, canOpt, refreshProfile: async () => { await loadProfile(); if (accountOk() && user) { subscribe(); syncAll(); } return profile; },
     siteConfig: () => siteCfg || {}, loadSiteConfig, adminCall, myUsage,
     // Google Drive + حالة السحابة + دون اتصال
     googleAvailable, signInGoogle, provider: () => (sb && sb.isDrive ? 'drive' : (isConfigured() ? 'supabase' : 'none')),

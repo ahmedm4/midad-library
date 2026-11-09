@@ -466,7 +466,7 @@ Deno.serve(async (req) => {
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "list");
-    if (action === "version") return json({ fn: "alfeker", fnVersion: "2026.11.8" });
+    if (action === "version") return json({ fn: "alfeker", fnVersion: "2026.11.9" });
 
     // لوحة التحكم: المصدر موقوف؟ الزوار بلا حساب ممنوعون؟ المستخدم معطّلة عنه الإمكانية؟
     {

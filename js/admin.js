@@ -20,7 +20,10 @@ const FEATURES = {
   sync: { label: 'المزامنة السحابية', desc: 'حفظ الكتب والتقدّم والتظليلات في السحابة ومزامنتها بين الأجهزة (تستهلك مساحة مشروعك).' },
   ai_server: { label: 'المساعد الذكي بمفاتيح الخادم', desc: 'استعمال مفاتيح Gemini الخاصة بك للتلخيص واستخراج النص والصوت. بدونها يضيف المستخدم مفتاحه الخاص.' },
   discover: { label: '«استكشف» عبر الخادم', desc: 'جلب الكتب من شبكة الفكر ومكتبة نرجس عبر دالة الخادم.' },
+  ocr_local: { label: '🔤 استخراج النص على الجهاز (تجريبي)', desc: 'فهرسة الكتب المصوّرة للبحث بمحرّك Tesseract داخل المتصفح: مجاني بلا مفتاح ولا خادم. مطفأ افتراضياً — فعّله لمن تريد تجربته. المسؤول يملكه دائماً.', optIn: true },
 };
+// الإمكانية الاختيارية مطفأة ما لم تُفعَّل صراحةً؛ البقية مفعّلة ما لم تُعطَّل
+const featDefault = (k, defaults) => (FEATURES[k] && FEATURES[k].optIn ? defaults[k] === true : defaults[k] !== false);
 const STATUS_AR = { approved: 'مقبول', pending: 'بانتظار الموافقة', blocked: 'محظور' };
 const SOURCES_AR = { archive: '🌐 أرشيف الإنترنت', wikisource: '📜 ويكي مصدر', ablibrary: '📚 مكتبة أهل البيت', narjes: '📕 مكتبة نرجس', alfeker: '📗 شبكة الفكر' };
 
@@ -308,7 +311,7 @@ async function openUser(email) {
     <section><b>الدور</b><div class="btns">
       ${u.role === 'admin' ? `<button class="ad-btn small" data-role="user" ${u.email === me ? 'disabled' : ''}>إزالة صلاحية المسؤول</button>` : '<button class="ad-btn small" data-role="admin">🛡 جعله مسؤولاً</button>'}</div></section>
     <section><b>الإمكانيات <small style="font-weight:400">(«افتراضي» = إعداد الموقع العام)</small></b>
-      ${Object.entries(FEATURES).map(([k, f]) => `<div class="switch-row"><div><b>${f.label}</b><p>الافتراضي الآن: ${defaults[k] === false ? 'معطّل' : 'مفعّل'}</p></div>
+      ${Object.entries(FEATURES).map(([k, f]) => `<div class="switch-row"><div><b>${f.label}</b><p>الافتراضي الآن: ${featDefault(k, defaults) ? 'مفعّل' : 'معطّل'}</p></div>
         <div class="tri" data-k="${k}">${[['def', 'افتراضي'], ['on', 'مفعّل'], ['off', 'معطّل']].map(([v, l]) => `<button data-v="${v}" class="${triOf(k) === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>`).join('')}
       <div class="btns" style="margin-top:10px"><button class="ad-btn small gold" id="save-feat">حفظ الإمكانيات</button></div></section>
     ${u.provider === 'email' ? `<section><b>حدّ المساحة السحابية</b>
@@ -355,7 +358,7 @@ async function viewFeatures() {
   const overrides = (k) => users.filter((u) => typeof (u.features || {})[k] === 'boolean').length;
   $('#view').innerHTML = `<div class="panel"><h3>الإمكانيات الافتراضية <small>تنطبق على كل مستخدم مقبول ما لم تُغيَّر له من «المستخدمون ← إدارة»</small></h3>
     ${Object.entries(FEATURES).map(([k, f]) => `<div class="switch-row"><div><b>${f.label}</b><p>${f.desc}${overrides(k) ? ` · <span style="color:var(--gold-soft)">${nf(overrides(k))} مستخدم بإعداد خاص</span>` : ''}</p></div>
-      <button class="switch" role="switch" data-k="${k}" aria-checked="${defaults[k] !== false}" aria-label="${f.label}"></button></div>`).join('')}
+      <button class="switch" role="switch" data-k="${k}" aria-checked="${featDefault(k, defaults)}" aria-label="${f.label}"></button></div>`).join('')}
     <div class="save-bar"><button class="ad-btn gold" id="save-defaults">حفظ</button></div></div>
     <div class="panel"><h3>كيف تعمل الإمكانيات؟</h3><p style="color:var(--muted);line-height:1.9">تُفرض على الخادم نفسه لا في الواجهة فقط: المزامنة عبر صلاحيات قاعدة البيانات (RLS)، والمساعد في دالة <b>ai</b>، والاستكشاف في دالة <b>alfeker</b>. المسؤول يملك كل الإمكانيات دائماً. المستخدم بلا إمكانية المزامنة يبقى يقرأ كتبه على جهازه كالمعتاد.</p></div>`;
   wireSwitches();

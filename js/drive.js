@@ -47,7 +47,9 @@ const DriveClient = (() => {
       if (!refreshing) refreshing = (async () => {
         try {
           const d = await fnJSON({ action: 'refresh', refresh_token: tok.refresh });
-          tok.access = d.access_token; tok.exp = Date.now() + (d.expires_in || 3600) * 1000; saveTok();
+          tok.access = d.access_token; tok.exp = Date.now() + (d.expires_in || 3600) * 1000;
+          if (d.profile !== undefined) tok.profile = d.profile; // الدور والإمكانيات من لوحة التحكم
+          saveTok();
         } catch (e) {
           // رمز التحديث أُلغي (سحب المستخدم الإذن من حسابه) ⇒ خروج نظيف
           // أو أوقف المسؤولُ الحساب من لوحة التحكم
@@ -347,7 +349,7 @@ const DriveClient = (() => {
       const idt = jwtPayload(d.id_token || '');
       // نتحقّق أن الإذن يشمل Drive (قد يُلغي المستخدم مربّع الصلاحية في نافذة Google)
       if (d.scope && !/drive\.appdata/.test(d.scope)) throw new Error('يلزم السماح للتطبيق بحفظ بياناته في Google Drive — أعد المحاولة وفعّل المربّع');
-      tok = { refresh: d.refresh_token, access: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000, email: idt.email || '', sub: idt.sub || '' };
+      tok = { refresh: d.refresh_token, access: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000, email: idt.email || '', sub: idt.sub || '', profile: d.profile || null };
       saveTok(); index = null; fireAuth();
     }
 
@@ -383,7 +385,8 @@ const DriveClient = (() => {
     }
 
     const noopChannel = () => { const c = { on() { return c; }, subscribe() { return c; } }; return c; };
-    return { isDrive: true, from, storage, auth, signIn, quota, channel: noopChannel, removeChannel() {} };
+    const gprofile = () => (tok && tok.profile) || null;
+    return { isDrive: true, from, storage, auth, signIn, quota, gprofile, channel: noopChannel, removeChannel() {} };
   }
 
   return { create };

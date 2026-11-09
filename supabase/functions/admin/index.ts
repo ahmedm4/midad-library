@@ -16,10 +16,10 @@ const ANON = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const SRK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const svc = { apikey: SRK, Authorization: `Bearer ${SRK}` };
 
-const FEATURES = ["sync", "ai_server", "discover"] as const;
+const FEATURES = ["sync", "ai_server", "discover", "ocr_local"] as const;
 
 /* إصدارات الدوال: «صحة النظام» في اللوحة يقارن ما هو منشور بما يتوقّعه هذا الإصدار من التطبيق */
-const FN_VERSION = "2026.11.8";
+const FN_VERSION = "2026.11.9";
 const EXPECTED_FN: Record<string, string> = { admin: FN_VERSION, ai: FN_VERSION, alfeker: FN_VERSION, gdrive: FN_VERSION };
 const SCHEMA_EXPECTED = 2;
 const STATUSES = ["pending", "approved", "blocked"];

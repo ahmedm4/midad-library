@@ -1818,7 +1818,8 @@ create policy "midad_own_files" on storage.objects for all
 
   /* ─── استخراج النص من الكتب المصوّرة (OCR عبر الذكاء الاصطناعي) ─── */
   async function ocrBook(id) {
-    if (needAI('استخراج النص من الصفحات المصوّرة')) return;
+    const localOk = localOcrOk();
+    if (!localOk && needAI('استخراج النص من الصفحات المصوّرة')) return;
     const b = books.find((x) => x.id === id) || (await Store.getBook(id));
     if (!b || b.type !== 'pdf') return;
 
@@ -1830,9 +1831,13 @@ create policy "midad_own_files" on storage.objects for all
       { label: 'OpenAI — GPT-4o-mini', value: 'openai', hint: 'دقيق (يتطلب مفتاح OpenAI)', recommended: last === 'openai' },
       { label: 'OpenRouter', value: 'openrouter', hint: 'نماذج رؤية متعددة (بعضها مجاني)', recommended: last === 'openrouter' },
     ];
+    if (localOk) {
+      provOpts.push({ label: '💻 على الجهاز — مجاني (Tesseract)', value: 'local', hint: 'بلا مفتاح ولا حصّة، ويعمل في الخلفية — دقّته تكفي للبحث', recommended: last === 'local' });
+      if (!(window.Cloud && Cloud.aiReady && Cloud.aiReady())) provOpts.splice(0, provOpts.length - 1); // بلا ذكاء: المحلي وحده
+    }
     // اجعل آخر اختيار أولاً
     provOpts.sort((a, b2) => (b2.recommended ? 1 : 0) - (a.recommended ? 1 : 0));
-    const provider = await uiChoose('اختر مزوّد الذكاء لاستخراج النص من هذا الكتاب:', provOpts, { title: '🔎 مزوّد الاستخراج', icon: '🔎' });
+    const provider = await uiChoose('اختر طريقة استخراج النص من هذا الكتاب:', provOpts, { title: '🔎 مزوّد الاستخراج', icon: '🔎' });
     if (!provider) return;
     settings.ocrProvider = provider; Store.saveSettings(settings);
 
@@ -1856,6 +1861,8 @@ create policy "midad_own_files" on storage.objects for all
       }))) return;
       if (done) { freshRestart = true; existing = null; } // إعادة كاملة: تجاهل السابق
     }
+    // على الجهاز: يعمل في طابور بالخلفية (نافذة تقدّم يمكن إخفاؤها)
+    if (provider === 'local') { ocrEnqueue([id], { fresh: freshRestart, report: true }); openOcrModal(); return; }
     let blob = await Store.getPayload(id);
     if (!blob && window.Cloud) { await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
     if (!blob) return toast('تعذّر تحميل ملف الكتاب');
@@ -1987,6 +1994,171 @@ create policy "midad_own_files" on storage.objects for all
     } finally { overlay.remove(); }
   }
 
+  /* ═══ الاستخراج على الجهاز (Tesseract) — طابور يعمل في الخلفية ═══
+     يكمل الصفحات الناقصة فقط، ويحفظ كل ١٥ ثانية (فلا يضيع شيء إن أُغلق التطبيق)،
+     ويكتب النتيجة بصيغة استخراج Gemini نفسها، فتعمل معها كل الميزات ومزامنتها. */
+  const localOcrOk = () => !!(window.LocalOCR && window.Cloud && Cloud.canOpt && Cloud.canOpt('ocr_local'));
+  const ocrQ = { list: [], running: null, cancel: false, batch: 0 };
+  const fmtSec = (s) => (s < 90 ? Math.max(1, Math.round(s)) + ' ثانية' : fmtDuration(s));
+  // كتاب PDF بلا نص حقيقي (صفحات مصوّرة)
+  const isScannedText = (ft) => (ft.text || '').replace(/\s+/g, '').length < Math.max(1, (ft.pageStarts || []).length) * 25;
+
+  async function localOcrRun(id, { fresh, cancelled, onProgress }) {
+    let blob = await Store.getPayload(id);
+    if (!blob && window.Cloud) { onProgress({ phase: 'تنزيل ملف الكتاب…' }); await Cloud.ensurePayload(id); blob = await Store.getPayload(id); }
+    if (!(blob instanceof Blob)) throw new Error('تعذّر تحميل ملف الكتاب');
+    const existing = fresh ? null : await Store.getFulltext(id);
+    const pdf = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+    const N = pdf.numPages;
+    const pages = new Array(N).fill('');
+    if (existing && existing.ocr && Array.isArray(existing.pageStarts) && existing.text != null) {
+      const ps = existing.pageStarts, tx = existing.text;
+      for (let i = 0; i < N && i < ps.length; i++) pages[i] = (tx.slice(ps[i] ?? 0, ps[i + 1] ?? tx.length) || '').trim();
+    }
+    const todo = [];
+    for (let i = 0; i < N; i++) if (!pages[i]) todo.push(i + 1);
+    const filledNow = () => pages.filter((p) => p).length;
+    const save = async () => {
+      let text = ''; const pageStarts = [];
+      for (let i = 0; i < N; i++) { pageStarts.push(text.length); text += pages[i] + '\n\n'; }
+      await Store.saveFulltext(id, { text, pageStarts, ocr: true, engine: 'tesseract' });
+    };
+    const workers = await LocalOCR.init((s) => onProgress({ phase: s }));
+    const t0 = performance.now();
+    let next = 0, done = 0, confSum = 0, lastSave = Date.now(), sample = '', sampleConf = -1;
+    onProgress({ done: 0, total: todo.length, N, filled: filledNow(), sec: 0 });
+    const worker = async () => {
+      while (next < todo.length && !cancelled()) {
+        const n = todo[next++];
+        try {
+          const r = await LocalOCR.recognizePage(pdf, n);
+          pages[n - 1] = r.text;
+          confSum += r.confidence;
+          if (r.text.length > 200 && r.confidence > sampleConf) { sample = r.text; sampleConf = r.confidence; } // أوضح صفحة كعيّنة
+        } catch (e) { console.warn('ocr-local page', n, e); }
+        done++;
+        onProgress({ done, total: todo.length, N, filled: filledNow(), sec: (performance.now() - t0) / 1000 });
+        if (Date.now() - lastSave > 15000) { lastSave = Date.now(); await save(); }
+      }
+    };
+    try { await Promise.all(Array.from({ length: workers }, worker)); }
+    finally { try { await pdf.destroy(); } catch {} LocalOCR.release(); }
+    if (filledNow()) await save();
+    return { N, todo: todo.length, done, filled: filledNow(), sec: (performance.now() - t0) / 1000, conf: done ? confSum / done : 0,
+      sample: sample || pages.find((p) => p.length > 80) || '', workers, cancelled: cancelled() && done < todo.length };
+  }
+
+  function ocrEnqueue(ids, { fresh = false, report = false } = {}) {
+    let added = 0;
+    for (const id of ids) {
+      if ((ocrQ.running && ocrQ.running.id === id) || ocrQ.list.some((j) => j.id === id)) continue;
+      ocrQ.list.push({ id, fresh, report }); added++;
+    }
+    if (!report && added > 1) ocrQ.batch += added;
+    drawOcrChip();
+    if (!ocrQ.running) ocrPump();
+    return added;
+  }
+  async function ocrPump() {
+    let batchDone = 0;
+    while (ocrQ.list.length) {
+      const job = ocrQ.running = ocrQ.list.shift();
+      ocrQ.cancel = false;
+      const b = books.find((x) => x.id === job.id) || (await Store.getBook(job.id));
+      job.title = (b && b.title) || '';
+      drawOcrChip(); drawOcrModal();
+      try {
+        job.res = await localOcrRun(job.id, { fresh: job.fresh, cancelled: () => ocrQ.cancel, onProgress: (p) => { job.p = p; drawOcrChip(); drawOcrModal(); } });
+        if (job.res.filled && window.Cloud && Cloud.isSignedIn && Cloud.isSignedIn()) Cloud.pushBook(job.id); // زامِن النص لبقية الأجهزة
+        lastDeep = null; // نطاق البحث السابق لم يعد صالحاً
+      } catch (e) {
+        job.err = (e && e.message) || 'خطأ';
+        console.error('ocr-local', e);
+        if (window.Telemetry) Telemetry.report('ocr_local', job.err);
+      }
+      ocrQ.running = null;
+      closeOcrModal();
+      if (job.report) showOcrReport(job);
+      else if (job.err) toast(`تعذّرت فهرسة «${job.title}»: ${job.err}`);
+      else if (!job.res.cancelled) batchDone++;
+      if (ocrQ.stopAll) { ocrQ.list = []; ocrQ.stopAll = false; }
+    }
+    if (batchDone) toast(`✓ فُهرس ${batchDone} كتاب مصوّر — صار يظهر في البحث داخل الكتب`, 'gold');
+    ocrQ.batch = 0;
+    drawOcrChip();
+  }
+  function ocrStatusText(job) {
+    const p = job && job.p;
+    if (!p) return 'جارٍ التحضير…';
+    if (p.phase) return p.phase;
+    const per = p.done ? p.sec / p.done : 0;
+    const eta = per * (p.total - p.done);
+    return `الصفحة ${p.filled} من ${p.N}` + (per ? ` · ${per.toFixed(1)} ث للصفحة` : '') + (p.done && p.total > p.done ? ` · متبقٍّ نحو ${fmtSec(eta)}` : '');
+  }
+  const ocrPct = (job) => (job && job.p && job.p.N ? Math.round((job.p.filled / job.p.N) * 100) : 0);
+  // شارة صغيرة تبقى ظاهرة أثناء الفهرسة في الخلفية
+  function drawOcrChip() {
+    let chip = document.getElementById('ocr-chip');
+    const job = ocrQ.running;
+    if (!job || document.querySelector('.ocr-modal.local')) { if (chip) chip.remove(); return; }
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.id = 'ocr-chip'; chip.className = 'ocr-chip'; chip.setAttribute('role', 'status');
+      chip.innerHTML = '<button class="oc-open" aria-label="عرض تقدّم الاستخراج"><span class="oc-ico">🔤</span><span class="oc-t"></span><span class="oc-p"></span></button><button class="oc-stop" aria-label="إيقاف الاستخراج" title="إيقاف (يُحفظ ما اكتمل)">⏹</button>';
+      document.body.appendChild(chip);
+      chip.querySelector('.oc-open').onclick = openOcrModal;
+      chip.querySelector('.oc-stop').onclick = () => { ocrQ.cancel = true; ocrQ.stopAll = true; chip.querySelector('.oc-t').textContent = 'جارٍ الإيقاف…'; };
+    }
+    const left = ocrQ.list.length;
+    chip.querySelector('.oc-t').textContent = `«${(job.title || '').slice(0, 40)}»` + (left ? ` (+${left})` : '');
+    chip.querySelector('.oc-p').textContent = job.p && job.p.N ? ocrPct(job) + '٪' : '…';
+  }
+  function openOcrModal() {
+    if (!ocrQ.running) return;
+    document.querySelectorAll('.ocr-modal').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ocr-modal local';
+    overlay.innerHTML = `
+      <div class="om-box" role="dialog" aria-label="استخراج النص على الجهاز">
+        <h3>🔤 استخراج نص «<span class="om-title"></span>»</h3>
+        <p class="om-hint">على جهازك بمحرّك Tesseract — مجاني بلا مفتاح ولا إنترنت بعد تحميل المحرّك. يمكنك إخفاء هذه النافذة ومتابعة القراءة؛ يستمرّ الاستخراج في الخلفية ويُحفظ أولاً بأول.</p>
+        <div class="om-bar"><i id="om-fill" style="width:0%"></i></div>
+        <div class="om-status" id="om-status"></div>
+        <div class="om-actions"><button class="om-bg">↙ تابع في الخلفية</button><button class="om-cancel">إيقاف</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.om-bg').onclick = () => { overlay.remove(); drawOcrChip(); };
+    overlay.querySelector('.om-cancel').onclick = (e) => { ocrQ.cancel = true; e.target.textContent = 'جارٍ الإيقاف…'; };
+    drawOcrChip(); drawOcrModal();
+  }
+  function drawOcrModal() {
+    const m = document.querySelector('.ocr-modal.local'); const job = ocrQ.running;
+    if (!m || !job) return;
+    m.querySelector('.om-title').textContent = job.title || '';
+    m.querySelector('#om-fill').style.width = ocrPct(job) + '%';
+    m.querySelector('#om-status').textContent = ocrStatusText(job);
+  }
+  const closeOcrModal = () => document.querySelectorAll('.ocr-modal.local').forEach((m) => m.remove());
+  async function showOcrReport(job) {
+    const r = job.res;
+    if (job.err || !r) {
+      return uiConfirm(`تعذّر الاستخراج على الجهاز: ${job.err || 'خطأ غير معروف'}`, { title: 'فشل الاستخراج', okText: 'حسناً', cancelText: 'إغلاق', icon: '⚠️' });
+    }
+    if (!r.todo) return toast('كل صفحات هذا الكتاب مستخرجة من قبل ✓');
+    const per = r.done ? r.sec / r.done : 0;
+    const lines = [
+      `${r.cancelled ? '⏸ أُوقف' : '✅ اكتمل'}: ${r.filled} من ${r.N} صفحة فيها نص.`,
+      r.done ? `⏱ ${r.done} صفحة في ${fmtSec(r.sec)} — ${per.toFixed(1)} ث للصفحة (${r.workers} عمليات متوازية على هذا الجهاز).` : '',
+      r.done ? `🎯 ثقة المحرّك التقديرية: ${Math.round(r.conf)}٪ — فوق ٤٥٪ يكفي للبحث عادةً.` : '',
+      r.sample ? `\nعيّنة من النص:\n«${r.sample.replace(/\n+/g, ' ').slice(0, 280)}…»` : '',
+      r.filled ? '\nصار الكتاب يظهر في «📖 داخل الكتب» عند البحث.' : '',
+    ].filter(Boolean).join('\n');
+    if (!r.filled) return uiConfirm(lines + '\nلم يُعثر على نص — قد تكون الصفحات صوراً بلا كتابة أو جودتها منخفضة.', { title: 'تقرير الاستخراج', okText: 'حسناً', cancelText: 'إغلاق', icon: '🔤' });
+    const make = await uiConfirm(lines + '\n\nهل تنشئ منه نسخة نصية؟ (دقّة هذا المحرّك أقل من Gemini، فهو للبحث أنسب منه للقراءة)',
+      { title: 'تقرير الاستخراج على الجهاز', okText: '📄 أنشئ نسخة نصية', cancelText: 'لاحقاً', icon: '🔤' });
+    if (make) createTextFromOcr(job.id, true);
+  }
+
   // بداية سطر حاشية مرقّمة مثل (١) أو (1) أو [٣]
   const FOOTNOTE_START = /^[(\[（]\s*[\d٠-٩۰-۹]{1,3}\s*[)\]）]/;
 
@@ -2067,9 +2239,13 @@ create policy "midad_own_files" on storage.objects for all
     const scopeInfo = searchScope(), pool = scopeInfo.list;
     { const h = panel.querySelector('h3'); if (h) h.textContent = scopeInfo.label ? `📖 داخل «${scopeInfo.label}»` : '📖 داخل الكتب'; }
     // فهرسة كسولة لملفات PDF غير المفهرسة
-    const pdfsToIndex = [];
+    const pdfsToIndex = [], scanned = [];
+    const watchScanned = localOcrOk();
     for (const b of pool) {
-      if (b.type === 'pdf' && !(await Store.getFulltext(b.id))) pdfsToIndex.push(b);
+      if (b.type !== 'pdf') continue;
+      const ft = await Store.getFulltext(b.id);
+      if (!ft) pdfsToIndex.push(b);
+      else if (watchScanned && !ft.ocr && isScannedText(ft)) scanned.push(b);
     }
     if (token !== deepToken) return;
     panel.hidden = false;
@@ -2083,7 +2259,23 @@ create policy "midad_own_files" on storage.objects for all
         if (token !== deepToken) return;
         const fill = $('#di-fill'); if (fill) fill.style.width = Math.round((done / pdfsToIndex.length) * 100) + '%';
       }
+      if (watchScanned) for (const b of pdfsToIndex) { const ft = await Store.getFulltext(b.id); if (ft && !ft.ocr && isScannedText(ft)) scanned.push(b); }
     }
+    // كتب مصوّرة لا يصلها البحث: اقترح فهرستها على الجهاز (ما لم تكن في الطابور)
+    const busy = new Set([...(ocrQ.running ? [ocrQ.running.id] : []), ...ocrQ.list.map((j) => j.id)]);
+    const scanIds = scanned.map((b) => b.id).filter((x) => !busy.has(x));
+    const scanHint = () => {
+      if (!scanIds.length) return;
+      const el = document.createElement('div');
+      el.className = 'deep-scanned';
+      el.innerHTML = `<span>📷 ${scanIds.length === 1 ? 'كتاب مصوّر واحد لا يدخله' : scanIds.length + ' كتب مصوّرة لا يدخلها'} البحث بعد.</span><button type="button">🔤 فهرسها على الجهاز</button>`;
+      el.querySelector('button').onclick = () => {
+        const n = ocrEnqueue(scanIds, { report: false });
+        el.remove();
+        toast(n ? 'بدأت الفهرسة في الخلفية — تابع استعمال التطبيق، وتظهر النتائج في البحث حين تكتمل' : 'هذه الكتب في الطابور أصلاً');
+      };
+      list.prepend(el);
+    };
     if (token !== deepToken) return;
 
     // نطاق البحث: عند إطالة نفس الكلمة («الجاح» ← «الجاحظ») لا يمكن أن يطابق
@@ -2119,6 +2311,7 @@ create policy "midad_own_files" on storage.objects for all
     $('#deep-count').textContent = total ? `${total} نتيجة في ${results.length} كتاب` : '';
     if (!results.length) {
       list.innerHTML = `<div class="deep-indexing">لا توجد نتائج داخل الكتب عن «${esc(q)}»</div>`;
+      scanHint();
       return;
     }
     list.innerHTML = results.map((r) => `
@@ -2133,6 +2326,7 @@ create policy "midad_own_files" on storage.objects for all
           return `<button class="deep-hit" data-bid="${r.book.id}" data-off="${h.off}">…${esc(snippetClean(h.before))}<b>${esc(h.hit)}</b>${esc(snippetClean(h.after))}…${loc}</button>`;
         }).join('')}
       </div>`).join('');
+    scanHint();
 
     list.querySelectorAll('.deep-hit').forEach((btn) => {
       btn.onclick = () => {
