@@ -94,9 +94,9 @@ $('#gate-signout').onclick = signOut;
 $('#signout').onclick = signOut;
 
 /* ── التنقّل ── */
-const TITLES = { overview: 'نظرة عامة', pending: 'طلبات الانتظار', users: 'المستخدمون', features: 'الإمكانيات', settings: 'إعدادات الموقع', announce: 'الإعلان', audit: 'سجلّ الأعمال' };
+const TITLES = { overview: 'نظرة عامة', pending: 'طلبات الانتظار', users: 'المستخدمون', activity: 'النشاط', errors: 'الأعطال', health: 'صحة النظام', features: 'الإمكانيات', settings: 'إعدادات الموقع', announce: 'الإعلان', audit: 'سجلّ الأعمال' };
 document.querySelectorAll('#nav button').forEach((b) => (b.onclick = () => go(b.dataset.view)));
-$('#refresh').onclick = () => { state.users = state.overview = state.audit = state.config = null; go(state.view); refreshBadge(); };
+$('#refresh').onclick = () => { state.users = state.overview = state.audit = state.config = state.activity = state.errors = state.health = null; go(state.view); refreshBadge(); };
 async function go(view) {
   if (!TITLES[view]) view = 'overview';
   state.view = view;
@@ -111,8 +111,21 @@ async function go(view) {
   }
   $('#main').focus({ preventScroll: true });
 }
+let lastPending = null;
 async function refreshBadge() {
-  try { const d = await api('pending_count'); const b = $('#badge-pending'); b.hidden = !d.count; b.textContent = nf(d.count); } catch {}
+  try {
+    const d = await api('pending_count'); const b = $('#badge-pending'); b.hidden = !d.count; b.textContent = nf(d.count);
+    if (lastPending !== null && d.count > lastPending && 'Notification' in window && Notification.permission === 'granted') {
+      try { const n = new Notification('مِداد — طلب تسجيل جديد', { body: `${d.count} حساب بانتظار موافقتك`, icon: 'icon-192.png', tag: 'midad-pending' }); n.onclick = () => { window.focus(); go('pending'); }; } catch {}
+      state.users = state.overview = null;
+    }
+    lastPending = d.count;
+  } catch {}
+  try {
+    const e = await api('errors', { limit: 200 });
+    const day = Date.now() - 864e5, n = (e.errors || []).filter((x) => Date.parse(x.at) > day).length;
+    const b = $('#badge-errors'); b.hidden = !n; b.textContent = nf(n); b.title = 'أعطال آخر ٢٤ ساعة';
+  } catch {}
 }
 const loadUsers = async (force) => { if (!state.users || force) { const d = await api('users'); state.users = d.users; state.config = d.config; } return state.users; };
 const loadConfig = async (force) => { if (!state.config || force) state.config = (await api('config_get')).config; return state.config; };
@@ -130,10 +143,26 @@ async function updateUsers(emails, patch, okMsg) {
 const pillStatus = (s) => `<span class="pill ${s}">${STATUS_AR[s] || s}</span>`;
 const pillProv = (p) => `<span class="pill ${p}">${p === 'google' ? 'Google' : 'بريد'}</span>`;
 
+/* رسم أعمدة بسيط: items = [{day, v}] */
+const barChart = (items, label, cls = '') => {
+  const max = Math.max(1, ...items.map((x) => x.v));
+  return `<div class="chart ${cls}" role="img" aria-label="${esc(label)}">${items.map((x) => `<div class="bar${x.v ? '' : ' zero'}" style="height:${x.v ? Math.max(6, (x.v / max) * 100) : 3}%" data-tip="${esc(fmtDate(x.day))}: ${nf(x.v)}"></div>`).join('')}</div>
+    <div class="chart-axis"><span>${fmtDate(items[0]?.day)}</span><span>اليوم</span></div>`;
+};
+const loadActivity = async () => { if (!state.activity) { const d = await api('activity', { days: 30 }); state.activity = d.activity || { setup: true }; } return state.activity; };
+const needSql = '<div class="empty">نفّذ ملف <code>admin_setup.sql</code> المحدَّث في SQL Editor لتبدأ هذه البيانات بالتجمّع.</div>';
+
 /* ═══ نظرة عامة ═══ */
 async function viewOverview() {
-  const d = state.overview || (state.overview = await api('overview'));
+  const [d, act] = await Promise.all([state.overview || api('overview'), loadActivity().catch(() => ({ setup: true }))]);
+  state.overview = d;
   const t = d.totals, max = Math.max(1, ...d.signups.map((x) => x.n));
+  const actRow = act && !act.setup ? `<div class="kpis">
+      <div class="kpi clickable" data-go="activity"><span>أجهزة نشطة اليوم</span><b>${nf(act.today)}</b><small>كل الزوار، بحساب أو بدونه</small></div>
+      <div class="kpi clickable" data-go="activity"><span>هذا الأسبوع</span><b>${nf(act.week)}</b></div>
+      <div class="kpi clickable" data-go="activity"><span>آخر ٣٠ يوماً</span><b>${nf(act.month)}</b><small>${nf(act.installed)} مثبّت كتطبيق</small></div>
+      <div class="kpi bad clickable" data-go="errors"><span>أعطال اليوم</span><b>${nf((act.daily || []).slice(-1)[0]?.errors || 0)}</b></div>
+    </div>` : '';
   const limit = 1073741824, pct = Math.min(100, (t.bytes / limit) * 100);
   $('#view').innerHTML = `
     <div class="kpis">
@@ -143,7 +172,7 @@ async function viewOverview() {
       <div class="kpi bad"><span>المحظورون</span><b>${nf(t.blocked)}</b></div>
       <div class="kpi"><span>نشطون (٣٠ يوماً)</span><b>${nf(t.active30)}</b></div>
       <div class="kpi"><span>الكتب في السحابة</span><b>${nf(t.books)}</b></div>
-    </div>
+    </div>${actRow}
     <div class="grid2">
       <div class="panel"><h3>التسجيلات الجديدة <small>آخر ٣٠ يوماً · ${nf(d.signups.reduce((n, x) => n + x.n, 0))}</small></h3>
         <div class="chart" role="img" aria-label="رسم التسجيلات اليومية">${d.signups.map((x) => `<div class="bar${x.n ? '' : ' zero'}" style="height:${x.n ? Math.max(6, (x.n / max) * 100) : 3}%" data-tip="${esc(fmtDate(x.day))}: ${x.n}"></div>`).join('')}</div>
@@ -211,6 +240,7 @@ async function viewUsers() {
   $('#u-tabs').querySelectorAll('button').forEach((b) => (b.onclick = () => { usersFilter = b.dataset.f; viewUsers(); }));
   drawUsers();
 }
+const quotaOf = (u) => { if (u.role === 'admin') return 0; const q = u.quota_mb ?? (state.config && state.config.quota_mb) ?? 0; return q > 0 ? q : 0; };
 function drawUsers() {
   let list = (state.users || []).filter((u) => {
     if (usersFilter === 'admin' ? u.role !== 'admin' : ['google', 'email'].includes(usersFilter) ? u.provider !== usersFilter : usersFilter !== 'all' && u.status !== usersFilter) return false;
@@ -226,7 +256,7 @@ function drawUsers() {
       <td data-l="الحالة">${pillStatus(u.status)}</td>
       <td data-l="الدور">${u.role === 'admin' ? '<span class="pill admin">مسؤول</span>' : 'مستخدم'}</td>
       <td class="num" data-l="الكتب">${u.provider === 'google' ? '—' : nf(u.books)}</td>
-      <td class="num" data-l="المساحة">${u.provider === 'google' ? 'Drive' : fmtBytes(u.bytes)}</td>
+      <td class="num" data-l="المساحة">${u.provider === 'google' ? 'Drive' : fmtBytes(u.bytes) + (quotaOf(u) ? `<small class="q ${u.bytes >= quotaOf(u) * 1048576 ? 'full' : ''}"> / ${nf(quotaOf(u))} م.ب</small>` : '')}</td>
       <td data-l="التسجيل">${fmtDate(u.created_at)}</td>
       <td data-l="آخر نشاط">${ago(u.last_seen || u.last_sign_in)}</td>
       <td><div class="row-actions">${u.status === 'pending' ? '<button class="ad-btn small ok" data-q="approve">قبول</button>' : ''}<button class="ad-btn small" data-q="open">إدارة</button></div></td>
@@ -272,6 +302,10 @@ async function openUser(email) {
       ${Object.entries(FEATURES).map(([k, f]) => `<div class="switch-row"><div><b>${f.label}</b><p>الافتراضي الآن: ${defaults[k] === false ? 'معطّل' : 'مفعّل'}</p></div>
         <div class="tri" data-k="${k}">${[['def', 'افتراضي'], ['on', 'مفعّل'], ['off', 'معطّل']].map(([v, l]) => `<button data-v="${v}" class="${triOf(k) === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>`).join('')}
       <div class="btns" style="margin-top:10px"><button class="ad-btn small gold" id="save-feat">حفظ الإمكانيات</button></div></section>
+    ${u.provider === 'email' ? `<section><b>حدّ المساحة السحابية</b>
+      <p style="color:var(--muted);font-size:12.5px;margin:4px 0 8px">فارغ = حدّ الموقع العام (${conf.quota_mb ? nf(conf.quota_mb) + ' م.ب' : 'بلا حدّ'}) · 0 = بلا حدّ لهذا المستخدم · يستعمل الآن ${fmtBytes(u.bytes)}</p>
+      <div class="btns"><input type="number" min="0" step="50" id="u-quota" class="num-in" value="${u.quota_mb ?? ''}" placeholder="افتراضي" aria-label="الحدّ بالميغابايت"> <span>م.ب</span>
+      <button class="ad-btn small" id="save-quota">حفظ الحدّ</button></div></section>` : ''}
     <section><b>ملاحظة خاصة (لا يراها المستخدم)</b><textarea id="u-note" maxlength="500">${esc(u.note || '')}</textarea>
       <div class="btns" style="margin-top:8px"><button class="ad-btn small" id="save-note">حفظ الملاحظة</button></div></section>
     ${u.email !== me ? `<div class="danger-zone"><b>حذف الحساب نهائياً</b><p>${u.provider === 'email' ? 'يُحذف الحساب وكتبه وملفاته من السحابة ولا يمكن التراجع. كتبه على أجهزته تبقى محلياً.' : 'يُحذف سجلّه هنا فقط؛ بياناته في Google Drive الخاص به لا تُمسّ. إن عاد سيُعامَل كتسجيل جديد.'}</p>
@@ -291,6 +325,8 @@ async function openUser(email) {
     const k = tri.dataset.k; if (b.dataset.v === 'def') delete feat[k]; else feat[k] = b.dataset.v === 'on';
   })));
   $('#save-feat', d).onclick = async () => { if (await updateUsers([email], { features: feat }, '✓ حُفظت الإمكانيات')) after(); };
+  const sq = $('#save-quota', d);
+  if (sq) sq.onclick = async () => { const v = $('#u-quota', d).value.trim(); if (await updateUsers([email], { quota_mb: v === '' ? null : +v }, '✓ حُفظ حدّ المساحة')) after(); };
   $('#save-note', d).onclick = async () => { if (await updateUsers([email], { note: $('#u-note', d).value }, '✓ حُفظت الملاحظة')) { u.note = $('#u-note', d).value; } };
   const del = $('#del-user', d);
   if (del) del.onclick = async () => {
@@ -336,11 +372,23 @@ async function viewSettings() {
     <div class="panel"><h3>«استكشف»</h3>
       ${sw('discover_anonymous', c.discover_anonymous, 'متاح للزوار بلا حساب', 'عند الإيقاف لا يعمل جلب الكتب عبر الخادم إلا لأصحاب الحسابات المقبولة.')}
       ${Object.entries(SOURCES_AR).map(([k, l]) => sw('src:' + k, src[k], l, k === 'alfeker' || k === 'narjes' ? 'عبر دالة الخادم' : 'مباشرة من المتصفح')).join('')}</div>
+    <div class="panel"><h3>المساحة السحابية</h3>
+      <div class="switch-row"><div><b>حدّ المساحة لكل مستخدم</b><p>بالميغابايت، لحسابات البريد في مشروعك (0 = بلا حدّ). يمكن تغييره لمستخدم بعينه من درجه. مستخدمو Google يحفظون في Drive حساباتهم فلا يشملهم. المسؤول بلا حدّ.</p></div>
+        <span><input type="number" min="0" step="50" id="quota-mb" class="num-in" value="${+c.quota_mb || 0}" aria-label="الحدّ بالميغابايت"> م.ب</span></div></div>
+    <div class="panel"><h3>إشعار بالطلبات الجديدة</h3>
+      ${sw('notify_email', c.notify_email, 'إشعار بالبريد', 'رسالة لبريد كل مسؤول عند كل طلب تسجيل جديد. تحتاج السرّ RESEND_API_KEY في Supabase (حساب مجاني في resend.com).')}
+      <div class="btns" style="margin:6px 0 12px"><button class="ad-btn small" id="notify-test">✉️ أرسل رسالة تجريبية لبريدي</button></div>
+      <div class="switch-row"><div><b>إشعارات المتصفح</b><p>تنبيه على هذا الجهاز حين يصل طلب جديد واللوحة أو التطبيق مفتوحان.</p></div>
+        <button class="ad-btn small" id="notify-browser"></button></div></div>
     <div class="save-bar"><button class="ad-btn gold" id="save-settings">حفظ الإعدادات</button></div>`;
   wireSwitches();
+  const nb = $('#notify-browser');
+  const nbDraw = () => { const p = 'Notification' in window ? Notification.permission : 'unsupported'; nb.textContent = p === 'granted' ? '✓ مفعّلة' : p === 'denied' ? 'محظورة من المتصفح' : p === 'unsupported' ? 'غير مدعومة' : '🔔 فعّلها'; nb.disabled = p !== 'default'; };
+  nbDraw(); nb.onclick = async () => { try { await Notification.requestPermission(); } catch {} nbDraw(); };
+  $('#notify-test').onclick = async (e) => { e.target.disabled = true; try { const r = await api('notify_test'); toast('✓ أُرسلت إلى ' + r.to, 'ok'); } catch (er) { toast(er.message, 'bad'); } e.target.disabled = false; };
   $('#reg').querySelectorAll('button').forEach((b) => (b.onclick = () => $('#reg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))));
   $('#save-settings').onclick = async () => {
-    const v = { registration: $('#reg button.on').dataset.v, sources: {} };
+    const v = { registration: $('#reg button.on').dataset.v, sources: {}, quota_mb: Math.max(0, +$('#quota-mb').value || 0) };
     document.querySelectorAll('.switch[data-k]').forEach((s) => {
       const on = s.getAttribute('aria-checked') === 'true', k = s.dataset.k;
       if (k.startsWith('src:')) v.sources[k.slice(4)] = on; else v[k] = on;
@@ -373,13 +421,14 @@ async function viewAnnounce() {
 /* ═══ السجلّ ═══ */
 async function viewAudit() {
   const entries = state.audit || (state.audit = (await api('audit', { limit: 300 })).entries);
-  const ACT = { user_update: 'تعديل مستخدم', users_bulk: 'تعديل جماعي', user_delete: 'حذف حساب', config_set: 'تعديل الإعدادات' };
+  const ACT = { user_update: 'تعديل مستخدم', users_bulk: 'تعديل جماعي', user_delete: 'حذف حساب', config_set: 'تعديل الإعدادات', errors_clear: 'مسح أعطال' };
   const detail = (e) => {
     const d = e.detail || {};
     if (d.status) return 'الحالة ← ' + (STATUS_AR[d.status] || d.status);
     if (d.role) return 'الدور ← ' + (d.role === 'admin' ? 'مسؤول' : 'مستخدم');
     if (d.features) return 'الإمكانيات: ' + Object.entries(d.features).map(([k, v]) => `${FEATURES[k]?.label || k} ${v ? '✓' : '✕'}`).join('، ') || 'افتراضية';
     if (d.note !== undefined) return 'ملاحظة';
+    if (d.quota_mb !== undefined) return 'حدّ المساحة ← ' + (d.quota_mb == null ? 'افتراضي' : d.quota_mb + ' م.ب');
     if (e.action === 'config_set') return Object.keys(d).join('، ');
     if (e.action === 'user_delete') return d.files ? `${d.files} ملف` : '';
     return '';
@@ -389,6 +438,107 @@ async function viewAudit() {
     </tbody></table></div>` : '<div class="panel"><div class="empty">لا أعمال مسجّلة بعد</div></div>';
 }
 
-const VIEWS = { overview: viewOverview, pending: viewPending, users: viewUsers, features: viewFeatures, settings: viewSettings, announce: viewAnnounce, audit: viewAudit };
+/* ═══ النشاط ═══ */
+const KIND_AR = { phone: '📱 جوال', tablet: '📟 لوحي', desktop: '💻 حاسب', unknown: 'غير معروف' };
+async function viewActivity() {
+  const a = await loadActivity();
+  if (!a || a.setup) { $('#view').innerHTML = `<div class="panel">${needSql}</div>`; return; }
+  const daily = a.daily || [];
+  const split = (obj, map) => { const tot = Object.values(obj || {}).reduce((n, x) => n + x, 0) || 1; return Object.entries(obj || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<div class="split-row"><span>${esc(map ? map[k] || k : k)}</span><div class="meter"><i style="width:${(n * 100 / tot).toFixed(1)}%"></i></div><b>${nf(n)}</b></div>`).join('') || '<div class="empty">—</div>'; };
+  const month = a.month || 0;
+  $('#view').innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><span>نشطون اليوم</span><b>${nf(a.today)}</b></div>
+      <div class="kpi"><span>هذا الأسبوع</span><b>${nf(a.week)}</b></div>
+      <div class="kpi"><span>آخر ٣٠ يوماً</span><b>${nf(month)}</b></div>
+      <div class="kpi"><span>كل الأجهزة منذ البدء</span><b>${nf(a.total)}</b></div>
+      <div class="kpi ok"><span>مثبّت كتطبيق</span><b>${nf(a.installed)}</b><small>${month ? Math.round(a.installed * 100 / month) : 0}٪ من نشطي الشهر</small></div>
+      <div class="kpi"><span>بحساب مزامنة</span><b>${nf(a.signed)}</b><small>الباقون يقرؤون محلياً</small></div>
+    </div>
+    <div class="grid2">
+      <div class="panel"><h3>الأجهزة النشطة يومياً <small>آخر ٣٠ يوماً</small></h3>${barChart(daily.map((x) => ({ day: x.day, v: x.active })), 'الأجهزة النشطة يومياً')}</div>
+      <div class="panel"><h3>أجهزة جديدة <small>أول زيارة</small></h3>${barChart(daily.map((x) => ({ day: x.day, v: x.new })), 'الأجهزة الجديدة يومياً', 'gold')}</div>
+    </div>
+    <div class="grid2">
+      <div class="panel"><h3>نوع الجهاز <small>نشطو الشهر</small></h3>${split(a.kinds, KIND_AR)}</div>
+      <div class="panel"><h3>الإصدارات <small>من لم يحدّث تطبيقه يظهر هنا</small></h3>${split(a.versions)}</div>
+    </div>
+    <div class="panel"><p style="color:var(--muted);line-height:1.9;margin:0">🔒 العدّاد مجهول: معرّف عشوائي لكل متصفح يُرسَل مرة يومياً، بلا بريد ولا عنوان IP ولا أي محتوى. «المستخدمون» في اللوحة هم أصحاب الحسابات فقط؛ أما هذا العدد فيشمل كل من يفتح التطبيق، ومن يمسح بيانات متصفحه يُعدّ جهازاً جديداً.</p></div>`;
+}
+
+/* ═══ الأعطال ═══ */
+const ERR_KIND = { open: '📖 فتح كتاب', download: '⬇️ تنزيل من السحابة', upload: '⬆️ رفع للسحابة', sync: '🔄 مزامنة', discover: '🧭 استكشف', js: '⚙️ خطأ برمجي', promise: '⚙️ خطأ برمجي' };
+let errGroup = null;
+async function viewErrors() {
+  const d = state.errors || (state.errors = await api('errors', { limit: 1500 }));
+  if (d.setup) { $('#view').innerHTML = `<div class="panel">${needSql}</div>`; return; }
+  const list = d.errors || [];
+  if (!list.length) { $('#view').innerHTML = '<div class="panel"><div class="empty">✓ لا أعطال مسجّلة — كل شيء يعمل عند المستخدمين.</div></div>'; return; }
+  const groups = new Map();
+  for (const e of list) {
+    const key = e.kind + '|' + e.message;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { key, kind: e.kind, message: e.message, items: [], devices: new Set(), users: new Set(), vers: new Set() }));
+    g.items.push(e); g.devices.add(e.device); if (e.email) g.users.add(e.email); if (e.ver) g.vers.add(e.ver);
+  }
+  const gs = [...groups.values()].sort((a, b) => Date.parse(b.items[0].at) - Date.parse(a.items[0].at));
+  const day = Date.now() - 864e5;
+  $('#view').innerHTML = `<div class="toolbar"><span style="color:var(--muted);font-size:13px">${nf(list.length)} عطل في ${nf(gs.length)} نوع · آخر ٢٤ ساعة: ${nf(list.filter((e) => Date.parse(e.at) > day).length)}</span>
+      <button class="ad-btn small bad" id="err-clear-all" style="margin-inline-start:auto">🗑 مسح الكل</button></div>
+    <div class="err-list">${gs.map((g, i) => `<div class="err-g${errGroup === g.key ? ' open' : ''}" data-i="${i}">
+      <button class="err-head"><span class="err-kind">${ERR_KIND[g.kind] || esc(g.kind)}</span><span class="err-msg">${esc(g.message)}</span>
+        <span class="err-meta"><b>${nf(g.items.length)}×</b> · ${nf(g.devices.size)} جهاز · ${ago(g.items[0].at)}</span></button>
+      <div class="err-body">
+        <p>الإصدارات: ${[...g.vers].map(esc).join('، ') || '—'}${g.users.size ? ` · الحسابات: ${[...g.users].slice(0, 5).map(esc).join('، ')}${g.users.size > 5 ? '…' : ''}` : ''}</p>
+        <div class="table-wrap"><table><thead><tr><th>الوقت</th><th>الإصدار</th><th>الحساب</th><th>السياق</th></tr></thead><tbody>
+        ${g.items.slice(0, 15).map((e) => `<tr><td data-l="الوقت">${esc(new Date(e.at).toLocaleString('ar'))}</td><td data-l="الإصدار">${esc(e.ver || '')}</td><td class="email" data-l="الحساب">${esc(e.email || '—')}</td><td data-l="السياق"><code class="ctx">${esc(Object.entries(e.context || {}).map(([k, v]) => `${k}=${v}`).join(' · '))}</code></td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="btns" style="margin-top:8px"><button class="ad-btn small" data-clear="${i}">✓ عولج — امسح هذا النوع</button></div>
+      </div></div>`).join('')}</div>`;
+  document.querySelectorAll('.err-g').forEach((el) => {
+    const g = gs[+el.dataset.i];
+    el.querySelector('.err-head').onclick = () => { el.classList.toggle('open'); errGroup = el.classList.contains('open') ? g.key : null; };
+  });
+  document.querySelectorAll('[data-clear]').forEach((b) => (b.onclick = async () => {
+    const g = gs[+b.dataset.clear];
+    try { await api('errors_clear', { ids: g.items.map((e) => e.id) }); toast('✓ مُسح', 'ok'); state.errors = null; viewErrors(); refreshBadge(); } catch (e) { toast(e.message, 'bad'); }
+  }));
+  $('#err-clear-all').onclick = async () => {
+    if (!confirm('مسح كل الأعطال المسجّلة؟')) return;
+    try { await api('errors_clear', {}); toast('✓ مُسحت كل الأعطال', 'ok'); state.errors = null; viewErrors(); refreshBadge(); } catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
+/* ═══ صحة النظام ═══ */
+async function viewHealth() {
+  const h = state.health || (state.health = await api('health'));
+  const row = (ok, title, desc, fix) => `<div class="hl-row ${ok === true ? 'ok' : ok === 'warn' ? 'warn' : 'bad'}"><span class="hl-ic">${ok === true ? '✓' : ok === 'warn' ? '!' : '✕'}</span><div><b>${title}</b>${desc ? `<p>${desc}</p>` : ''}${ok !== true && fix ? `<p class="fix">${fix}</p>` : ''}</div></div>`;
+  const deploy = (fn) => `انشرها: <code>npx supabase functions deploy ${fn} --project-ref ${esc((cfg.url.match(/https:\/\/([^.]+)/) || [])[1] || '')} --no-verify-jwt</code>`;
+  const FN = { admin: 'لوحة التحكم', ai: 'المساعد الذكي', alfeker: 'شبكة الفكر ونرجس', gdrive: 'الدخول بحساب Google' };
+  const fnRows = Object.entries(h.functions || {}).map(([k, f]) => {
+    const st = f.state;
+    return row(st === 'ok' ? true : st === 'old' ? 'warn' : false, `الدالة ${k} — ${FN[k] || ''}`,
+      st === 'ok' ? `محدّثة (${esc(f.version)})` : st === 'old' ? `منشورة لكنها أقدم من هذا الإصدار${f.version ? ` (${esc(f.version)})` : ''}` : st === 'missing' ? 'غير منشورة' : 'تعذّر فحصها ' + esc(f.detail || ''), deploy(k));
+  }).join('');
+  const T = h.tables || {}, missingT = Object.keys(T).filter((k) => !T[k]);
+  const S = h.secrets || {};
+  const schemaOk = h.schema >= h.schemaExpected;
+  const okCount = [schemaOk, !missingT.length, h.bucket, ...Object.values(h.functions || {}).map((f) => f.state === 'ok')].filter(Boolean).length;
+  const total = 3 + Object.keys(h.functions || {}).length;
+  $('#view').innerHTML = `
+    <div class="panel hl-sum ${okCount === total ? 'ok' : 'warn'}"><b>${okCount === total ? '✓ كل شيء سليم ومحدّث' : `${nf(total - okCount)} بند يحتاج انتباهك`}</b><span>${nf(okCount)} / ${nf(total)}</span></div>
+    <div class="panel"><h3>قاعدة البيانات</h3>
+      ${row(schemaOk, 'ملف admin_setup.sql', schemaOk ? `منفَّذ بآخر إصدار (${h.schema})` : `الإصدار المنفَّذ ${h.schema || 'قديم'} والمطلوب ${h.schemaExpected}`, 'أعد تنفيذ الملف كاملاً في SQL Editor — آمن لإعادة التنفيذ.')}
+      ${row(!missingT.length, 'الجداول', missingT.length ? 'ناقص: ' + missingT.map(esc).join('، ') : 'كلها موجودة', 'تُنشأ بتنفيذ ملف admin_setup.sql (وجداول الكتب من خطوات إعداد المزامنة).')}
+      ${row(h.bucket, 'مخزن الملفات midad-files', h.bucket ? 'موجود' : 'غير موجود', 'أنشئه من Storage ← New bucket باسم midad-files (خاص).')}</div>
+    <div class="panel"><h3>دوال الخادم</h3>${fnRows}</div>
+    <div class="panel"><h3>الأسرار <small>Supabase ← Edge Functions ← Secrets</small></h3>
+      ${row(S.GEMINI ? true : 'warn', 'مفاتيح Gemini (GEMINI_API_KEYS)', S.GEMINI ? 'مضبوطة' : 'غير مضبوطة — المستخدمون يحتاجون مفاتيحهم الخاصة للمساعد')}
+      ${row(S.GOOGLE_CLIENT_ID && S.GOOGLE_CLIENT_SECRET ? true : 'warn', 'الدخول بحساب Google', S.GOOGLE_CLIENT_ID && S.GOOGLE_CLIENT_SECRET ? 'مضبوط' : 'غير مضبوط — زرّ Google لا يظهر')}
+      ${row(S.RESEND_API_KEY ? true : 'warn', 'الإشعار بالبريد (RESEND_API_KEY)', S.RESEND_API_KEY ? 'مضبوط' : 'اختياري — بدونه تصلك الطلبات كشارة في التطبيق فقط')}
+      ${row(true, 'ADMIN_EMAILS', S.ADMIN_EMAILS ? 'مضبوط' : 'غير مضبوط (اختياري — دور «مسؤول» في الجدول يكفي)')}</div>`;
+}
+
+const VIEWS = { overview: viewOverview, pending: viewPending, users: viewUsers, activity: viewActivity, errors: viewErrors, health: viewHealth, features: viewFeatures, settings: viewSettings, announce: viewAnnounce, audit: viewAudit };
 window.__adminState = state; // للاختبار
 boot();

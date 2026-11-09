@@ -186,3 +186,31 @@ td.num { font-variant-numeric: tabular-nums; }
   td.email { max-width: none; font-weight: 700; }
   td.email::before { content: none; }
 }
+
+/* v129: النشاط، الأعطال، صحة النظام */
+.chart.gold .bar{background:var(--gold)}
+.split-row{display:grid;grid-template-columns:110px 1fr auto;gap:10px;align-items:center;margin:8px 0;font-size:13.5px}
+.split-row .meter{margin:0}
+.num-in{width:110px;padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:inherit;font:inherit}
+td small.q{color:var(--muted)} td small.q.full{color:#ff8a80;font-weight:700}
+.err-list{display:flex;flex-direction:column;gap:8px}
+.err-g{border:1px solid var(--line);border-radius:12px;background:var(--card,rgba(255,255,255,.03));overflow:hidden}
+.err-head{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;width:100%;padding:12px 14px}
+.err-head:focus-visible{outline:2px solid var(--gold)}
+.err-kind{font-size:12.5px;white-space:nowrap;color:var(--gold-soft,var(--gold))}
+.err-msg{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:auto}
+.err-meta{font-size:12px;color:var(--muted);white-space:nowrap}
+.err-body{display:none;padding:0 14px 14px;font-size:13px}
+.err-g.open .err-body{display:block} .err-g.open .err-msg{white-space:normal}
+code.ctx{font-size:11.5px;direction:ltr;unicode-bidi:plaintext;word-break:break-all}
+.hl-sum{display:flex;justify-content:space-between;align-items:center;font-size:17px}
+.hl-sum.ok b{color:#7ee2a8} .hl-sum.warn b{color:#ffcf70}
+.hl-row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.hl-row:last-child{border-bottom:0}
+.hl-row p{margin:3px 0 0;color:var(--muted);font-size:13px;line-height:1.7}
+.hl-row p.fix{color:inherit} .hl-row>div{min-width:0} .hl-row code{display:block;margin-top:4px;direction:ltr;unicode-bidi:plaintext;font-size:12px;overflow-wrap:anywhere}
+.hl-ic{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px}
+.hl-row.ok .hl-ic{background:rgba(80,200,130,.18);color:#7ee2a8}
+.hl-row.warn .hl-ic{background:rgba(255,190,80,.18);color:#ffcf70}
+.hl-row.bad .hl-ic{background:rgba(255,100,90,.18);color:#ff8a80}
+@media (max-width:700px){.err-head{grid-template-columns:1fr}.err-meta,.err-kind{white-space:normal}}
