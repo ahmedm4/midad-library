@@ -796,6 +796,329 @@ create policy "midad_own_files" on storage.objects for all
     sc.classList.toggle('can-start', max > 2 && pos > 2);
     sc.classList.toggle('can-end', max > 2 && pos < max - 2);
   }
+  /* ═══ التحديد المتعدد: عمليات على عدة كتب دفعةً واحدة ═══
+     زرّ «تحديد» في شريط التصفية، أو ضغطة مطوّلة على أي كتاب. بطاقة السلسلة تحدّد كل أجزائها. */
+  let selectMode = false;
+  const selected = new Set();
+  const cardIds = (card) => (card.dataset.series ? ((seriesMap.get(card.dataset.series) || {}).parts || []).map((b) => b.id) : [card.dataset.id]);
+  function markSelected(nodes) {
+    (nodes || document.querySelectorAll('#book-grid [data-id], #book-grid [data-series]')).forEach((c) => {
+      if (!c.dataset || (!c.dataset.id && !c.dataset.series)) return;
+      const ids = cardIds(c), on = ids.length && ids.every((id) => selected.has(id));
+      c.classList.toggle('sel', !!on);
+      c.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+  function setSelectMode(on, firstIds) {
+    selectMode = on;
+    selected.clear();
+    if (on && firstIds) firstIds.forEach((id) => selected.add(id));
+    document.body.classList.toggle('select-mode', on);
+    const b = $('#btn-select'); if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    markSelected();
+    drawSelBar();
+  }
+  function toggleCard(card) {
+    const ids = cardIds(card);
+    const all = ids.every((id) => selected.has(id));
+    ids.forEach((id) => (all ? selected.delete(id) : selected.add(id)));
+    markSelected([card]);
+    drawSelBar();
+  }
+  function drawSelBar() {
+    let bar = $('#sel-bar');
+    if (!selectMode) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'sel-bar'; bar.className = 'sel-bar'; bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', 'عمليات على الكتب المحدّدة');
+      document.body.appendChild(bar);
+    }
+    const n = selected.size, dis = n ? '' : 'disabled';
+    const allFav = n && [...selected].every((id) => (books.find((b) => b.id === id) || {}).fav);
+    bar.innerHTML = `<span class="sb-count" aria-live="polite"><b>${n}</b> محدّد</span>
+      <button data-s="all">تحديد الكل</button>
+      <span class="sb-sep"></span>
+      <button data-s="fav" ${dis}>${allFav ? '☆ إزالة من المفضلة' : '⭐ المفضلة'}</button>
+      <button data-s="shelf" ${dis}>🗂 إلى رفّ</button>
+      <button data-s="cat" ${dis}>🏷 التصنيف</button>
+      <button data-s="done" ${dis}>✅ مكتمل</button>
+      <button data-s="unread" ${dis}>↺ لم أبدأ</button>
+      <button data-s="del" class="danger" ${dis}>🗑 حذف</button>
+      <button data-s="close" class="sb-x" aria-label="إنهاء التحديد">✕</button>`;
+    bar.querySelectorAll('[data-s]').forEach((x) => (x.onclick = () => selAction(x.dataset.s)));
+  }
+  async function selAction(a) {
+    const ids = [...selected].filter((id) => books.some((b) => b.id === id));
+    if (a === 'close') return setSelectMode(false);
+    if (a === 'all') {
+      const vis = []; curList.forEach((it) => { if (it.__series) (seriesMap.get(it.__series) || { parts: [] }).parts.forEach((b) => vis.push(b.id)); else vis.push(it.id); });
+      const allOn = vis.length && vis.every((id) => selected.has(id));
+      vis.forEach((id) => (allOn ? selected.delete(id) : selected.add(id)));
+      markSelected(); return drawSelBar();
+    }
+    if (!ids.length) return;
+    const done = async (msg) => { setSelectMode(false); await refresh(); toast(msg, 'gold'); };
+    if (a === 'fav') {
+      const on = !ids.every((id) => books.find((b) => b.id === id).fav);
+      for (const id of ids) { await Store.updateBook(id, { fav: on }); pushMetaOf(id); }
+      return done(on ? `⭐ أُضيف ${ids.length} إلى المفضلة` : `أُزيل ${ids.length} من المفضلة`);
+    }
+    if (a === 'shelf') {
+      const shelves = allShelves();
+      const ch = await uiChoose(`${ids.length} كتاب`, [...shelves.map((s) => ({ label: '🗂 ' + s, value: s })), { label: '➕ رفّ جديد…', value: '\u0000new' }], { title: 'أضف إلى رفّ', icon: '🗂' });
+      if (ch == null) return;
+      let name = ch;
+      if (ch === '\u0000new') { name = (prompt('اسم الرفّ الجديد:') || '').trim(); if (!name) return; Store.saveShelves([...Store.getShelves(), name]); }
+      for (const id of ids) {
+        const b = books.find((x) => x.id === id);
+        const sh = [...new Set([...(b.shelves || []), name])];
+        await Store.updateBook(id, { shelves: sh }); pushMetaOf(id);
+      }
+      return done(`🗂 أُضيف ${ids.length} إلى «${name}»`);
+    }
+    if (a === 'cat') {
+      const ch = await uiChoose(`${ids.length} كتاب`, CATEGORIES.map((c) => ({ label: c, value: c })), { title: 'غيّر التصنيف', icon: '🏷' });
+      if (ch == null) return;
+      for (const id of ids) { await Store.updateBook(id, { category: ch }); pushMetaOf(id); }
+      return done(`🏷 صار تصنيف ${ids.length} كتاب «${ch}»`);
+    }
+    if (a === 'done' || a === 'unread') {
+      for (const id of ids) {
+        const st = await Store.getState(id);
+        if (a === 'done') Object.assign(st, { finished: true, finishedAt: st.finishedAt || Date.now(), pct: 1, lastRead: st.lastRead || Date.now() });
+        else Object.assign(st, { finished: false, finishedAt: undefined, pct: 0, page: 0, scrollTop: 0 });
+        await Store.saveState(st); if (window.Cloud) Cloud.pushState(id);
+      }
+      return done(a === 'done' ? `✅ عُلّم ${ids.length} كتاب مكتملاً` : `↺ أُعيد ${ids.length} كتاب إلى «لم تبدأ»`);
+    }
+    if (a === 'del') {
+      const notes = ids.reduce((n, id) => n + ((states[id] && (states[id].highlights || []).length + (states[id].pdfHighlights || []).length) || 0), 0);
+      if (!(await uiConfirm(`سيُحذف ${ids.length} كتاب نهائياً من مكتبتك ومن السحابة${notes ? `، ومعها ${notes} تظليل` : ''}. لا يمكن التراجع.`, { title: `حذف ${ids.length} كتاب؟`, okText: 'احذف', cancelText: 'إلغاء', danger: true }))) return;
+      for (const id of ids) { await Store.deleteBook(id); if (window.Cloud) Cloud.deleteBook(id); }
+      return done(`🗑 حُذف ${ids.length} كتاب`);
+    }
+  }
+  function wireSelect() {
+    const btn = $('#btn-select'), grid = $('#book-grid');
+    if (btn) btn.onclick = () => setSelectMode(!selectMode);
+    if (!grid) return;
+    const cardOf = (t) => t.closest && t.closest('#book-grid [data-id], #book-grid [data-series]');
+    // في وضع التحديد: الضغط على البطاقة يحدّدها بدل فتحها (يُلتقط قبل معالجات البطاقة)
+    grid.addEventListener('click', (e) => {
+      // النقرة التي تلي الضغطة المطوّلة لا تُلغي التحديد الذي بدأته
+      if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; return; }
+      if (!selectMode) return;
+      const c = cardOf(e.target); if (!c) return;
+      e.preventDefault(); e.stopPropagation();
+      toggleCard(c);
+    }, true);
+    grid.addEventListener('keydown', (e) => {
+      if (!selectMode || (e.key !== 'Enter' && e.key !== ' ')) return;
+      const c = cardOf(e.target); if (!c) return;
+      e.preventDefault(); e.stopPropagation(); toggleCard(c);
+    }, true);
+    // ضغطة مطوّلة (لمس أو فأرة) ⇒ يبدأ التحديد بهذا الكتاب
+    let lpTimer = null, lpStart = null, longPressed = false;
+    grid.addEventListener('pointerdown', (e) => {
+      if (selectMode || e.button > 0) return;
+      const c = cardOf(e.target); if (!c) return;
+      lpStart = { x: e.clientX, y: e.clientY };
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(() => { longPressed = true; setSelectMode(true, cardIds(c)); try { navigator.vibrate && navigator.vibrate(18); } catch {} }, 520);
+    });
+    const cancel = () => clearTimeout(lpTimer);
+    grid.addEventListener('pointerup', cancel); grid.addEventListener('pointercancel', cancel);
+    grid.addEventListener('pointermove', (e) => { if (lpStart && Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > 10) cancel(); });
+    grid.addEventListener('contextmenu', (e) => { if (longPressed || selectMode) { e.preventDefault(); e.stopPropagation(); } }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && selectMode && !document.querySelector('.ui-dialog')) setSelectMode(false); });
+  }
+
+  /* ═══ كشف الكتب المكرّرة ═══
+     العنوان يُطبَّع (بلا تشكيل، والهمزات والتاء المربوطة موحّدة، وبلا علامات ترقيم) ويُقارن مع المؤلف.
+     نسختا الكتاب الواحد (PDF + نص) ليستا تكراراً — فالنوع جزء من المقارنة. */
+  const normTitle = (t) => String(t || '').replace(/[\u064B-\u065F\u0670\u0640]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/ؤ/g, 'و').replace(/ئ/g, 'ي')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  // للمقارنة: بلا مسافات («البيان و التبيين» = «البيان والتبيين»)
+  const dupKey = (t) => normTitle(t).replace(/ /g, '');
+  function findDuplicate({ title, author, type }, exceptId) {
+    const t = dupKey(title), a = dupKey(author);
+    if (!t) return null;
+    return books.find((b) => b.id !== exceptId && !b.guide && (!type || b.type === type) && dupKey(b.title) === t && (!a || !dupKey(b.author) || dupKey(b.author) === a)) || null;
+  }
+  async function confirmIfDuplicate(meta) {
+    const d = findDuplicate(meta);
+    if (!d) return true;
+    const st = states[d.id] || {};
+    const prog = st.finished ? 'أنهيته' : st.pct > 0 ? `قرأت ${Math.round(st.pct * 100)}٪ منه` : 'لم تبدأه بعد';
+    return uiConfirm(`في مكتبتك كتاب بالعنوان نفسه: «${d.title}»${d.author ? ' — ' + d.author : ''} (${d.type === 'pdf' ? 'PDF' : 'نص'}، ${prog}). هل تضيف نسخة أخرى؟`, { title: 'الكتاب موجود مسبقاً', okText: 'أضفه مع ذلك', cancelText: 'لا، إلغاء', icon: '📚' });
+  }
+  function openDuplicates() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const groups = new Map();
+    for (const b of books) {
+      if (b.guide) continue;
+      const k = b.type + '|' + dupKey(b.title);
+      if (!dupKey(b.title)) continue;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(b);
+    }
+    // داخل المجموعة: من اختلف مؤلفاهما (وكلاهما مذكور) ليسا تكراراً
+    const dups = [];
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const byAuthor = new Map();
+      for (const b of g) { const a = dupKey(b.author); const key = a || '*'; if (!byAuthor.has(key)) byAuthor.set(key, []); byAuthor.get(key).push(b); }
+      const anon = byAuthor.get('*') || [];
+      byAuthor.delete('*');
+      if (!byAuthor.size) { if (anon.length > 1) dups.push(anon); continue; }
+      let first = true;
+      for (const list of byAuthor.values()) { const all = first ? list.concat(anon) : list; first = false; if (all.length > 1) dups.push(all); }
+    }
+    const o = document.createElement('div'); o.className = 'ui-dialog';
+    const info = (b) => { const st = states[b.id] || {}; const hl = (st.highlights || []).length + (st.pdfHighlights || []).length; return `${b.type === 'pdf' ? 'PDF' : 'نص'} · ${st.finished ? '✓ مكتمل' : st.pct > 0 ? Math.round(st.pct * 100) + '٪' : 'لم يبدأ'}${hl ? ` · ${hl} تظليل` : ''} · أُضيف ${new Date(b.addedAt || 0).toLocaleDateString('ar')}`; };
+    o.innerHTML = `<div class="ud-box cr-box" role="dialog" aria-modal="true" aria-labelledby="dup-t"><h3 id="dup-t">🔁 الكتب المكرّرة</h3>
+      ${dups.length ? `<p class="cloud-intro" style="text-align:center">${dups.length} كتاب له أكثر من نسخة. احذف ما لا تحتاجه — النسخة ذات التقدّم والتظليلات معلَّمة بـ ★.</p>
+        ${dups.map((g, gi) => { const keep = g.slice().sort((x, y) => ((states[y.id] || {}).pct || 0) - ((states[x.id] || {}).pct || 0) || (((states[y.id] || {}).highlights || []).length - ((states[x.id] || {}).highlights || []).length))[0];
+          return `<div class="dup-g"><b>${esc(g[0].title)}</b>${g.map((b) => `<div class="dup-row"><span>${b.id === keep.id ? '★ ' : ''}${esc(b.author || '—')}<small>${info(b)}</small></span><button data-open="${esc(b.id)}">فتح</button><button class="danger" data-del="${esc(b.id)}" data-g="${gi}">حذف</button></div>`).join('')}</div>`; }).join('')}`
+        : '<p class="cr-empty">✓ لا كتب مكرّرة في مكتبتك</p>'}
+      <div class="ud-actions"><button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(o);
+    const close = () => o.remove();
+    o.querySelector('.ud-cancel').onclick = close;
+    o.onclick = (e) => { if (e.target === o) close(); };
+    o.querySelectorAll('[data-open]').forEach((x) => (x.onclick = () => { close(); openBook(x.dataset.open); }));
+    o.querySelectorAll('[data-del]').forEach((x) => (x.onclick = async () => {
+      const b = books.find((y) => y.id === x.dataset.del); if (!b) return;
+      if (!(await uiConfirm(`حذف هذه النسخة من «${b.title}» (${info(b)})؟`, { title: 'حذف النسخة؟', okText: 'احذف', danger: true }))) return openDuplicates();
+      await Store.deleteBook(b.id); if (window.Cloud) Cloud.deleteBook(b.id); await refresh(); toast('حُذفت النسخة'); openDuplicates();
+    }));
+  }
+
+  /* ═══ إكمال بيانات الكتب: المؤلف والغلاف والتصنيف من Google Books ═══
+     للكتب بلا مؤلف أو بلا غلاف حقيقي. لا يُطبَّق شيء دون موافقتك: تُعرض الاقتراحات وتختار ما تريد. */
+  const CAT_MAP = [[/fiction|novel|رواي|قص/i, 'رواية'], [/relig|islam|quran|hadith|theolog|فقه|دين|عقيد|تفسير|حديث/i, 'دين'], [/histor|biograph|تاريخ|سير/i, 'تاريخ'],
+    [/science|math|medic|physic|chem|tech|computer|علوم|طب/i, 'علوم'], [/self-help|psycholog|success|business|تطوير|نفس/i, 'تطوير ذات'], [/poetry|literary|literature|شعر|أدب/i, 'أدب وشعر'], [/juvenile|child|أطفال/i, 'أطفال']];
+  const mapCategory = (cats) => { const s = (cats || []).join(' '); for (const [re, c] of CAT_MAP) if (re.test(s)) return c; return ''; };
+  function titleSim(a, b) {
+    const A = new Set(normTitle(a).split(' ').filter((w) => w.length > 1)), B = new Set(normTitle(b).split(' ').filter((w) => w.length > 1));
+    if (!A.size || !B.size) return 0;
+    let n = 0; for (const w of A) if (B.has(w)) n++;
+    return n / Math.max(A.size, B.size);
+  }
+  // المصدر الأول Google Books (أغلفة وتصنيفات)، والاحتياطي Open Library (يغطّي المؤلفين العرب جيداً).
+  // حصّة Google المجانية بلا مفتاح مشتركة بين الجميع فقد تنفد — لذلك لا نعتمد عليها وحدها.
+  const AR_RE = /[\u0600-\u06FF]/;
+  const FA_RE = /[پچژگیک]/; // حروف فارسية/أردية: طبعة غير عربية
+  // درجة المطابقة: نسبة الكلمات المشتركة، مع تفضيل التطابق التامّ واستبعاد الطبعات الفارسية
+  const matchScore = (base, t) => titleSim(base, t) + (dupKey(base) === dupKey(t) ? 0.1 : 0) + (String(t).trim() === base ? 0.02 : 0) - (FA_RE.test(t) && !FA_RE.test(base) ? 1 : 0);
+  async function lookupGoogle(base, author) {
+    const q = 'intitle:' + base + (author ? ' inauthor:' + author : '');
+    const r = await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=5&printType=books&q=' + encodeURIComponent(q));
+    if (!r.ok) return null;
+    const d = await r.json();
+    let best = null, score = 0;
+    for (const it of d.items || []) {
+      const v = it.volumeInfo || {};
+      const s = Math.max(matchScore(base, v.title || ''), matchScore(base, (v.title || '') + ' ' + (v.subtitle || '')));
+      if (s > score) { score = s; best = v; }
+    }
+    if (!best || score < 0.8) return null;
+    const img = best.imageLinks && (best.imageLinks.thumbnail || best.imageLinks.smallThumbnail);
+    return {
+      author: (best.authors || []).join('، '),
+      cover: img ? img.replace(/^http:/, 'https:').replace(/&edge=curl/, '') : '',
+      category: mapCategory(best.categories),
+      year: (best.publishedDate || '').slice(0, 4),
+      title: best.title || '',
+    };
+  }
+  async function lookupOpenLibrary(base, author) {
+    const r = await fetch('https://openlibrary.org/search.json?limit=8&fields=title,author_name,cover_i,subject,first_publish_year&title=' + encodeURIComponent(base) + (author ? '&author=' + encodeURIComponent(author) : ''));
+    if (!r.ok) return null;
+    const d = await r.json();
+    let best = null, score = 0;
+    for (const x of d.docs || []) {
+      // الأفضل: عنوان مطابق ومؤلف بالحروف العربية وغلاف
+      const names = (x.author_name || []).filter((n) => AR_RE.test(n) && !FA_RE.test(n) && !/\.\.\.|,/.test(n));
+      const s = matchScore(base, x.title || '') + (names.length ? 0.05 : 0) + (x.cover_i ? 0.03 : 0);
+      if (s > score) { score = s; best = x; }
+    }
+    if (!best || score < 0.8) return null;
+    // الاسم الأول فقط (المحقّقون والمترجمون بعده)، وبالحروف العربية لكتاب عربي العنوان
+    const names = (best.author_name || []).map((n) => String(n).replace(/[،,\s]+$/, '').trim()).filter((n) => n && !/\.\.\.|,/.test(n));
+    const ar = names.filter((n) => AR_RE.test(n) && !FA_RE.test(n));
+    const who = ar[0] || (AR_RE.test(base) ? '' : names[0] || '');
+    return {
+      author: who,
+      cover: best.cover_i ? `https://covers.openlibrary.org/b/id/${best.cover_i}-M.jpg` : '',
+      category: '', // مواضيع Open Library غير منضبطة — التصنيف من Google وحده
+      year: best.first_publish_year ? String(best.first_publish_year) : '',
+      title: best.title || '',
+    };
+  }
+  async function lookupBook(b) {
+    const base = String(b.series || b.title || '').replace(PART_TITLE_RE, '$1').replace(/\s*—\s*(الجزء|المجلد).*$/, '').trim();
+    let g = null, o = null;
+    try { g = await lookupGoogle(base, b.author); } catch {}
+    if (!g || !g.author || !g.cover) { try { o = await lookupOpenLibrary(base, b.author); } catch {} }
+    if (!g && !o) return null;
+    if (!g) return o;
+    if (!o) return g;
+    return { ...g, author: g.author || o.author, cover: g.cover || o.cover, category: g.category || o.category, year: g.year || o.year };
+  }
+  async function openEnrich() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const cands = books.filter((b) => !b.guide && (!String(b.author || '').trim() || !b.cover)).slice(0, 60);
+    const o = document.createElement('div'); o.className = 'ui-dialog';
+    o.innerHTML = `<div class="ud-box cr-box" role="dialog" aria-modal="true" aria-labelledby="en-t"><h3 id="en-t">✨ إكمال بيانات الكتب</h3>
+      <div class="en-body"><p class="cr-empty">${cands.length ? `⏳ أبحث عن بيانات ${cands.length} كتاب ناقص البيانات…<span class="en-prog"></span>` : '✓ كل كتبك لها مؤلف وغلاف'}</p></div>
+      <div class="ud-actions"><button class="gold en-apply" hidden>طبّق المحدَّد</button><button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(o);
+    let stop = false;
+    const close = () => { stop = true; o.remove(); };
+    o.querySelector('.ud-cancel').onclick = close;
+    o.onclick = (e) => { if (e.target === o) close(); };
+    if (!cands.length) return;
+    const found = [];
+    let failed = 0;
+    for (let i = 0; i < cands.length && !stop; i++) {
+      const p = o.querySelector('.en-prog'); if (p) p.textContent = ` ${i + 1}/${cands.length}`;
+      try {
+        const m = await lookupBook(cands[i]);
+        if (m) {
+          const b = cands[i], s = {};
+          if (!String(b.author || '').trim() && m.author) s.author = m.author;
+          if (!b.cover && m.cover) s.cover = m.cover;
+          if ((!b.category || b.category === 'أخرى') && m.category) s.category = m.category;
+          if (Object.keys(s).length) found.push({ b, s, m });
+        }
+      } catch { failed++; }
+      await new Promise((r) => setTimeout(r, 250)); // لطفاً بالخدمة المجانية
+    }
+    if (stop) return;
+    const body = o.querySelector('.en-body');
+    if (!found.length) { body.innerHTML = `<p class="cr-empty">لم أجد بيانات موثوقة لهذه الكتب${failed ? ' (تعذّر الوصول للخدمة أحياناً — أعد المحاولة لاحقاً)' : ''}. يمكنك تعديل أي كتاب يدوياً من «⋯ ← تعديل البيانات».</p>`; return; }
+    body.innerHTML = `<p class="cloud-intro" style="text-align:center">وجدتُ بيانات لـ ${found.length} من ${cands.length} كتاب. راجعها واترك ما تريد تطبيقه محدّداً:</p>
+      ${found.map((f, i) => `<div class="en-row">
+        ${f.s.cover ? `<img src="${esc(f.s.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="en-noimg"></span>'}
+        <div><b>${esc(f.b.title)}</b><small>مطابقة: «${esc(f.m.title)}»${f.m.year ? ' · ' + esc(f.m.year) : ''}</small>
+          ${f.s.author ? `<label><input type="checkbox" data-i="${i}" data-k="author" checked> المؤلف: ${esc(f.s.author)}</label>` : ''}
+          ${f.s.cover ? `<label><input type="checkbox" data-i="${i}" data-k="cover" checked> الغلاف</label>` : ''}
+          ${f.s.category ? `<label><input type="checkbox" data-i="${i}" data-k="category" checked> التصنيف: ${esc(f.s.category)}</label>` : ''}</div></div>`).join('')}`;
+    const ap = o.querySelector('.en-apply'); ap.hidden = false;
+    ap.onclick = async () => {
+      ap.disabled = true; ap.textContent = '⏳ جارٍ التطبيق…';
+      let n = 0, coverFail = 0;
+      for (let i = 0; i < found.length; i++) {
+        const f = found[i], patch = {};
+        o.querySelectorAll(`input[data-i="${i}"]:checked`).forEach((c) => { patch[c.dataset.k] = f.s[c.dataset.k]; });
+        if (patch.cover) { const c = await coverFromUrl(patch.cover); if (c) patch.cover = c; else { delete patch.cover; coverFail++; } }
+        if (Object.keys(patch).length) { await Store.updateBook(f.b.id, patch); pushMetaOf(f.b.id); n++; }
+      }
+      close(); await refresh();
+      toast(`✨ حُدّثت بيانات ${n} كتاب${coverFail ? ` (تعذّر جلب ${coverFail} غلاف)` : ''}`, 'gold');
+    };
+  }
+
   function wireLibBar() {
     const nav = $('#cat-chips'), sc = $('#chips-scroller');
     if (nav && sc) {
@@ -806,6 +1129,7 @@ create policy "midad_own_files" on storage.objects for all
       sc.querySelector('.cs-end').onclick = () => nav.scrollBy({ left: -step(), behavior: 'smooth' });
       nav.addEventListener('wheel', (e) => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && nav.scrollWidth > nav.clientWidth) { nav.scrollLeft -= e.deltaY; e.preventDefault(); } }, { passive: false });
     }
+    wireSelect();
     // ظلّ وتصغير حين يلتصق الشريط أعلى الشاشة
     const bar = $('#lib-bar'), sentinel = $('#lib-sentinel');
     if (bar && sentinel && 'IntersectionObserver' in window) {
@@ -1047,6 +1371,7 @@ create policy "midad_own_files" on storage.objects for all
     const nodes = [...tmp.children];
     nodes.forEach((n) => grid.appendChild(n));
     wireCards(nodes);
+    if (selectMode) markSelected(nodes);
     renderCursor += slice.length;
     // حرّك الحارس إلى نهاية الشبكة أو أزله عند اكتمال العرض
     if (renderCursor < curList.length) { grid.appendChild(gridSentinel); gridSentinel.hidden = false; }
@@ -2945,6 +3270,9 @@ create policy "midad_own_files" on storage.objects for all
     if (blob instanceof Blob && expectedSize && blob.size < expectedSize * 0.9) {
       throw new Error('التنزيل غير مكتمل — تحقّق من اتصالك وحاول مجدداً');
     }
+    if (!(await confirmIfDuplicate({ title: title || name, author, type: kind === 'pdf' ? 'pdf' : 'text' }))) {
+      throw Object.assign(new Error('أُلغيت الإضافة'), { silent: true });
+    }
     let id;
     if (kind === 'epub') {
       const p = await parseEpub(await blob.arrayBuffer());
@@ -3417,6 +3745,7 @@ create policy "midad_own_files" on storage.objects for all
       return toast('أضف ملفاً أو الصق نصاً أولاً');
     }
 
+    if (!(await confirmIfDuplicate(meta))) return;
     const newId = await Store.addBook(meta, payload);
     if (pendingFile && pendingFile.assets && pendingFile.assets.length) await saveBookAssets(newId, pendingFile.assets);
     if (window.Cloud) Cloud.pushBook(newId);
@@ -3487,6 +3816,8 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="quotes">✍️ مقتبساتي</button>
         <button data-act="theme">🎨 سمة المكتبة</button>
         <button data-act="keys">🤖 الذكاء الاصطناعي</button>
+        <button data-act="enrich">✨ أكمل بيانات الكتب</button>
+        <button data-act="dups">🔁 الكتب المكرّرة</button>
         <button data-act="notes">📝 تصدير ملاحظاتي</button>
         <button data-act="backup">📦 تصدير نسخة احتياطية</button>
         <button data-act="restore">📥 استيراد نسخة احتياطية</button>`;
@@ -3499,6 +3830,8 @@ create policy "midad_own_files" on storage.objects for all
         closeCardMenu();
         if (act === 'stats') openStats();
         else if (act === 'quotes') openQuotes();
+        else if (act === 'enrich') openEnrich();
+        else if (act === 'dups') openDuplicates();
         else if (act === 'theme') openThemePicker();
         else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();

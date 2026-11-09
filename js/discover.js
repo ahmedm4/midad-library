@@ -90,6 +90,7 @@ const Discover = (() => {
   let curReq = 0, loaded = false, source = 'archive';
   // فشل الإضافة: رسالة للمستخدم + سجلّ الأعطال في لوحة التحكم (مع المصدر)
   function addFailed(e) {
+    if (e && e.silent) return; // ألغاها المستخدم (مثلاً: الكتاب موجود مسبقاً)
     const m = (e && e.message) || String(e);
     Library.toast('تعذّر إضافة الكتاب: ' + m);
     if (window.Telemetry) Telemetry.report('discover', m, { src: source });
