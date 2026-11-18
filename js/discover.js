@@ -1292,6 +1292,28 @@ const Discover = (() => {
     ib.onclick = () => importIh(ds, { title, author, cover }, ib);
   }
 
+  // غلاف الموقع عبر خادمك (الموقع يرفض الصور المطلوبة من مواقع أخرى)، مصغّراً ومحفوظاً مع الكتاب
+  async function ihCover(url) {
+    if (!url) return '';
+    try {
+      const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url });
+      if (!r.ok || !/^image\//i.test(r.headers.get('content-type') || '')) return '';
+      const blob = await r.blob();
+      return await new Promise((res) => {
+        const img = new Image();
+        img.onload = () => {
+          const w = Math.min(320, img.naturalWidth || 320), h = Math.round(w * img.naturalHeight / img.naturalWidth);
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(img.src);
+          res(c.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => { URL.revokeObjectURL(img.src); res(''); };
+        img.src = URL.createObjectURL(blob);
+      });
+    } catch { return ''; }
+  }
+
   async function importIh(ds, meta, btn) {
     if (!window.Library || !Library.addRemoteBook) return;
     const orig = btn.innerHTML;
@@ -1302,15 +1324,17 @@ const Discover = (() => {
     try {
       const it = ihItems.get(ds.id);
       if (!it || !it.pdf) throw new Error('لا يوجد ملف قابل للتنزيل لهذا الإصدار');
+      const coverP = ihCover(it.cover); // بالتوازي مع تنزيل الملف
       const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url: it.pdf });
       const ct = r.headers.get('content-type') || '';
       if (!r.ok || /application\/json/i.test(ct)) { let msg = 'تعذّر تنزيل الملف'; try { const j = await r.json(); if (j.error) msg = j.error; } catch {} throw new Error(msg); }
       const blob = await r.blob();
+      const cover = await coverP;
       setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
       const bookId = await Library.addRemoteBook({
         blob, name: meta.title, kind: 'pdf', title: meta.title, author: meta.author || ihPublisher(it.cat) || '',
-        // الغلاف من الصفحة الأولى للملف: صور الموقع محمية من العرض خارجه (Referer)، فلا نعتمد عليها في المكتبة
-        category: it.type === 'MAGAZINE' ? 'أخرى' : 'دين', cover: '',
+        // غلاف الموقع المصمَّم (أول صفحة في الملف غالباً صفحة عنوان بيضاء)؛ عند التعذّر تُرسم الصفحة الأولى
+        category: it.type === 'MAGAZINE' ? 'أخرى' : 'دين', cover,
         expectedSize: +r.headers.get('content-length') || 0,
       });
       btn.classList.remove('loading'); btn.classList.add('done');
