@@ -35,7 +35,9 @@ const Library = (() => {
   let states = {};
   let activeCat = 'الكل';
   let query = '';
-  let sort = 'recent';
+  const SORTS = ['recent', 'read', 'added', 'oldest', 'title', 'author', 'progress'];
+  const savedSort = () => { try { const v = localStorage.getItem('midad-lib-sort'); return SORTS.includes(v) ? v : 'recent'; } catch { return 'recent'; } };
+  let sort = savedSort(); // آخر ترتيب اختاره القارئ (يُزامَن مع أجهزته)
   let viewMode = (() => { try { return localStorage.getItem('midad-view') || 'grid'; } catch { return 'grid'; } })();
   let pairView = (() => { try { return localStorage.getItem('midad-pairview') || 'both'; } catch { return 'both'; } })(); // both | pdf | text
   const CHUNK = 40;           // عدد الكتب في كل دفعة عرض (تحميل تدريجي)
@@ -2996,7 +2998,12 @@ create policy "midad_own_files" on storage.objects for all
       if (query.length >= 2) deepTimer = setTimeout(() => { deepSearch(query); notesSearch(query); }, 350);
       else { $('#deep-results').hidden = true; $('#notes-results').hidden = true; notesToken++; lastDeep = null; }
     };
-    $('#sort-select').onchange = (e) => { sort = e.target.value; renderGrid(); };
+    $('#sort-select').value = sort;
+    $('#sort-select').onchange = (e) => {
+      sort = e.target.value; renderGrid();
+      try { localStorage.setItem('midad-lib-sort', sort); } catch {}
+      Store.markSettingsChanged();
+    };
     { const tg = $('#view-toggle'); if (tg) { tg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.view === viewMode); b.onclick = () => setView(b.dataset.view); }); } }
     { const pf = $('#pair-filter'); if (pf) { pf.value = pairView; pf.onchange = (e) => { pairView = e.target.value; try { localStorage.setItem('midad-pairview', pairView); } catch {} renderGrid(); }; } }
     $('#btn-add').onclick = () => openAddModal();
@@ -4078,6 +4085,8 @@ create policy "midad_own_files" on storage.objects for all
   window.addEventListener('midad-settings-adopted', () => {
     let t = 'purple'; try { t = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
     applyLibTheme(t);
+    const ns = savedSort();
+    if (ns !== sort) { sort = ns; const el = $('#sort-select'); if (el) el.value = sort; renderGrid(); }
   });
   function openThemePicker() {
     let cur = 'purple'; try { cur = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
