@@ -25,7 +25,7 @@ const FEATURES = {
 // الإمكانية الاختيارية مطفأة ما لم تُفعَّل صراحةً؛ البقية مفعّلة ما لم تُعطَّل
 const featDefault = (k, defaults) => (FEATURES[k] && FEATURES[k].optIn ? defaults[k] === true : defaults[k] !== false);
 const STATUS_AR = { approved: 'مقبول', pending: 'بانتظار الموافقة', blocked: 'محظور' };
-const SOURCES_AR = { archive: '🌐 أرشيف الإنترنت', wikisource: '📜 ويكي مصدر', ablibrary: '📚 مكتبة أهل البيت', narjes: '📕 مكتبة نرجس', alfeker: '📗 شبكة الفكر' };
+const SOURCES_AR = { archive: '🌐 أرشيف الإنترنت', wikisource: '📜 ويكي مصدر', ablibrary: '📚 مكتبة أهل البيت', narjes: '📕 مكتبة نرجس', alfeker: '📗 شبكة الفكر', imamhussain: '📘 إصدارات العتبة الحسينية' };
 
 let sb = null, session = null;
 let state = { view: 'overview', users: null, config: null, overview: null, audit: null };
@@ -372,7 +372,7 @@ const wireSwitches = () => document.querySelectorAll('.switch').forEach((s) => (
 /* ═══ إعدادات الموقع ═══ */
 async function viewSettings() {
   const c = await loadConfig();
-  const src = { archive: true, wikisource: true, ablibrary: true, narjes: true, alfeker: true, ...(c.sources || {}) };
+  const src = { archive: true, wikisource: true, ablibrary: true, narjes: true, alfeker: true, imamhussain: true, ...(c.sources || {}) };
   const sw = (k, on, label, desc) => `<div class="switch-row"><div><b>${label}</b><p>${desc}</p></div><button class="switch" role="switch" data-k="${k}" aria-checked="${on !== false}" aria-label="${label}"></button></div>`;
   $('#view').innerHTML = `
     <div class="panel"><h3>التسجيل بالبريد</h3>
@@ -383,7 +383,7 @@ async function viewSettings() {
       ${sw('google_approval', c.google_approval, 'حسابات Google الجديدة تنتظر الموافقة', 'عند الإيقاف يُقبل كل حساب Google جديد تلقائياً.')}</div>
     <div class="panel"><h3>«استكشف»</h3>
       ${sw('discover_anonymous', c.discover_anonymous, 'متاح للزوار بلا حساب', 'عند الإيقاف لا يعمل جلب الكتب عبر الخادم إلا لأصحاب الحسابات المقبولة.')}
-      ${Object.entries(SOURCES_AR).map(([k, l]) => sw('src:' + k, src[k], l, k === 'alfeker' || k === 'narjes' ? 'عبر دالة الخادم' : 'مباشرة من المتصفح')).join('')}</div>
+      ${Object.entries(SOURCES_AR).map(([k, l]) => sw('src:' + k, src[k], l, k === 'alfeker' || k === 'narjes' || k === 'imamhussain' ? 'عبر دالة الخادم' : 'مباشرة من المتصفح')).join('')}</div>
     <div class="panel"><h3>المساحة السحابية</h3>
       <div class="switch-row"><div><b>حدّ المساحة لكل مستخدم</b><p>بالميغابايت، لحسابات البريد في مشروعك (0 = بلا حدّ). يمكن تغييره لمستخدم بعينه من درجه. مستخدمو Google يحفظون في Drive حساباتهم فلا يشملهم. المسؤول بلا حدّ.</p></div>
         <span><input type="number" min="0" step="50" id="quota-mb" class="num-in" value="${+c.quota_mb || 0}" aria-label="الحدّ بالميغابايت"> م.ب</span></div></div>

@@ -80,7 +80,36 @@ const Discover = (() => {
     wikisource: { name: 'ويكي مصدر', sub: 'نصوص التراث العربي الحرّة — ar.wikisource.org' },
     ablibrary: { name: 'مكتبة أهل البيت', sub: 'مكتبة إسلامية شاملة — ablibrary.net (نصّ كامل قابل للبحث)' },
     narjes: { name: 'مكتبة نرجس', sub: 'كتب عربية مصوّرة (PDF) — narjeslibrary.com (عبر خادمك)' },
+    imamhussain: { name: 'إصدارات العتبة الحسينية', sub: 'كتب ومجلات العتبة الحسينية المقدسة (PDF) — publication.imamhussain.org (عبر خادمك)' },
   };
+  // «إصدارات العتبة الحسينية»: شريحتان ثابتتان ثم الأبواب (الجهات الناشرة) من الموقع، تُحفظ يوماً
+  const IH_FIXED = [{ label: '📚 الكتب', kind: 'books' }, { label: '🆕 أحدث الإصدارات', kind: 'latest' }];
+  let ihSections = null, ihMode = { kind: 'books', cat: '' };
+  const ihItems = new Map(); // id → سجلّ الإصدار (للتفاصيل والإضافة)
+  try { const c = JSON.parse(localStorage.getItem('midad-ih-sections') || 'null'); if (c && Date.now() - c.at < 864e5 && c.list && c.list.length) ihSections = c.list; } catch {}
+  async function ensureIhSections() {
+    if (ihSections) return ihSections;
+    try {
+      const d = await Cloud.invokeFn('alfeker', { action: 'ih_sections' });
+      if (d && d.sections && d.sections.length) {
+        ihSections = d.sections;
+        try { localStorage.setItem('midad-ih-sections', JSON.stringify({ at: Date.now(), list: ihSections })); } catch {}
+      }
+    } catch {}
+    return ihSections;
+  }
+  const ihPublisher = (cat) => { const s = (ihSections || []).find((x) => x.id === String(cat)); return s ? s.label : ''; };
+  // العناوين تأتي مثل «77- سيرة … - الشيخ فلان»: أزل رقم التسلسل، وافصل اسم المؤلف إن كان في الآخر
+  function ihSplitTitle(raw) {
+    let t = String(raw || '').replace(/^\s*\d+\s*[-–ـ]\s*/, '').trim();
+    let author = '';
+    const parts = t.split(/\s+[-–]\s+/);
+    if (parts.length > 1) {
+      const last = parts[parts.length - 1].trim();
+      if (last.length <= 60 && /^(ال)?(شيخ|سيد|دكتور|أستاذ|استاذ|علامة|علّامة|مرجع)|^(د|أ|م)\s*\.|^(أ\.د|ا\.د)/.test(last)) { author = last; t = parts.slice(0, -1).join(' - ').trim(); }
+    }
+    return { title: t || String(raw || ''), author };
+  }
   const WS_API = 'https://ar.wikisource.org/w/api.php';
   const AB_GRPC = 'https://grpc.ablibrary.net/ablibrary.services';
   const NJ_SITE = '2015198', NJ_SEC = '30705272'; // معرّفات مكتبة نرجس على منصّة ww-api
@@ -131,6 +160,7 @@ const Discover = (() => {
             <button class="disc-src" data-src="ablibrary">📚 ${SOURCES.ablibrary.name}</button>
             <button class="disc-src" data-src="narjes">📕 ${SOURCES.narjes.name}</button>
             <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
+            <button class="disc-src" data-src="imamhussain">📘 ${SOURCES.imamhussain.name}</button>
           </div>
           <button class="disc-x" title="إغلاق">✕</button>
         </div>
@@ -171,6 +201,7 @@ const Discover = (() => {
     chipsEl.classList.remove('af');
     { const sc = modal.querySelector('.disc-subchips'); if (sc) { sc.hidden = true; sc.innerHTML = ''; } }
     if (source === 'alfeker' && afSections) return renderAfChips();
+    if (source === 'imamhussain') return renderIhChips();
     const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : (source === 'narjes' ? NARJES_CATS : CATS)));
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
     chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
@@ -210,6 +241,19 @@ const Discover = (() => {
     if (activePath) { const a = chipsEl.querySelector(`.disc-chip[data-section="${CSS.escape(activePath)}"]`); if (a) a.classList.add('on'); }
   }
 
+  function renderIhChips() {
+    const chips = [...IH_FIXED, ...(ihSections || []).map((s) => ({ label: s.label, cat: s.id }))];
+    chipsEl.innerHTML = chips.map((c) => `<button class="disc-chip" data-kind="${esc(c.kind || '')}" data-cat="${esc(c.cat || '')}">${esc(c.label)}</button>`).join('');
+    const on = chipsEl.querySelector(ihMode.cat ? `.disc-chip[data-cat="${CSS.escape(ihMode.cat)}"]` : `.disc-chip[data-kind="${ihMode.kind}"]`);
+    if (on) on.classList.add('on');
+    chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
+      chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on'));
+      ch.classList.add('on'); input.value = '';
+      ihMode = { kind: ch.dataset.kind || '', cat: ch.dataset.cat || '' };
+      search('');
+    });
+  }
+
   function switchSource(src) {
     if (src === source) return;
     source = src;
@@ -230,6 +274,12 @@ const Discover = (() => {
     else if (source === 'wikisource') search('', WIKISOURCE_CATS[0].q);
     else if (source === 'ablibrary') { chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on')); search('', ''); } // تصفّح الكل افتراضياً
     else if (source === 'narjes') search('', NARJES_CATS[0].q);
+    else if (source === 'imamhussain') {
+      ihMode = { kind: 'books', cat: '' };
+      renderIhChips();
+      search('');
+      if (!ihSections) ensureIhSections().then((l) => { if (l && source === 'imamhussain') renderIhChips(); });
+    }
     else search('', CATS[0].q);
   }
 
@@ -331,6 +381,25 @@ const Discover = (() => {
             return (jj.books || []).filter(abIsArabic).map(mapAb);
           };
         }
+      } else if (source === 'imamhussain') {
+        if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) status('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «إصدارات العتبة الحسينية».'); return; }
+        const term = (q || '').trim();
+        const req = term ? { action: 'ih_list', q: term } : (ihMode.cat ? { action: 'ih_list', cat: ihMode.cat } : { action: 'ih_list', kind: ihMode.kind || 'books' });
+        const mapIh = (it) => {
+          ihItems.set(it.id, it);
+          const t = ihSplitTitle(it.title);
+          const kind = it.type === 'MAGAZINE' ? '📰 مجلة' : '📖 كتاب';
+          return { source: 'imamhussain', id: it.id, title: t.title, author: t.author || ihPublisher(it.cat), cover: it.cover, meta: `${kind}${it.size ? ' · ' + it.size + ' م.ب' : ''}` };
+        };
+        const seen = new Set();
+        const fresh = (list) => (list || []).filter((it) => !seen.has(it.id) && seen.add(it.id)).map(mapIh);
+        const d = await Cloud.invokeFn('alfeker', req);
+        if (my !== curReq) return;
+        cards = fresh(d.items);
+        if (d.hasMore) {
+          let page = d.page || 1;
+          moreFn = async () => { page++; const dd = await Cloud.invokeFn('alfeker', { ...req, page }); if (!dd.hasMore) moreFn = null; return fresh(dd.items); };
+        }
       } else if (source === 'narjes') {
         if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) status('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «مكتبة نرجس».'); return; }
         await njEnsureCatalog();
@@ -366,7 +435,7 @@ const Discover = (() => {
         <div class="disc-cover">
           <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
           <span class="disc-fallback gen">${esc((c.title || '؟').trim())}</span>
-          ${(c.source === 'wikisource' || c.source === 'ablibrary' || c.source === 'narjes') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
+          ${(c.source === 'wikisource' || c.source === 'ablibrary' || c.source === 'narjes' || c.source === 'imamhussain') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
         <div class="disc-info">
           <b title="${esc(c.title)}">${esc(c.title)}</b>
@@ -384,6 +453,7 @@ const Discover = (() => {
         const meta = { title: el.dataset.title, author: el.dataset.author };
         if (el.dataset.src === 'ablibrary') importAblibrary(el.dataset, meta, qa);
         else if (el.dataset.src === 'narjes') importNarjes(el.dataset, meta, qa);
+        else if (el.dataset.src === 'imamhussain') importIh(el.dataset, meta, qa);
         else importWikisource(el.dataset, meta, qa);
       };
       el.onclick = () => openDetail(el.dataset);
@@ -423,6 +493,7 @@ const Discover = (() => {
     if (ds.src === 'wikisource') return openWikisourceDetail(ds);
     if (ds.src === 'ablibrary') return openAblibraryDetail(ds);
     if (ds.src === 'narjes') return openNarjesDetail(ds);
+    if (ds.src === 'imamhussain') return openIhDetail(ds);
     const id = ds.id;
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -1173,6 +1244,77 @@ const Discover = (() => {
       btn.classList.remove('loading'); btn.classList.add('done');
       setBtn('✓ أُضيف');
       Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+      const fmts = sheet.querySelector('.disc-formats');
+      if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
+        const rn = document.createElement('button');
+        rn.className = 'disc-readnow'; rn.innerHTML = '📖 اقرأ الآن';
+        rn.onclick = () => { close(); if (window.Library && Library.openBook) Library.openBook(bookId); else if (window.Reader) Reader.open(bookId); };
+        fmts.prepend(rn);
+      }
+    } catch (e) {
+      btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
+      addFailed(e);
+    }
+  }
+
+  // ── «إصدارات العتبة الحسينية» — الملف رابط PDF مباشر، يُنزَّل عبر خادمك (الموقع بلا CORS) ──
+  function openIhDetail(ds) {
+    const it = ihItems.get(ds.id) || {};
+    const title = ds.title || it.title || 'بدون عنوان';
+    const author = ds.author || '';
+    const cover = ds.cover || it.cover || '';
+    const pub = ihPublisher(it.cat);
+    let desc = (it.desc || '').trim();
+    if (desc === (it.title || '').trim()) desc = ''; // كثير من الإصدارات نبذتها هي العنوان نفسه
+    const facts = [it.type === 'MAGAZINE' ? '📰 مجلة' : '📖 كتاب', it.size ? it.size + ' م.ب' : '', it.downloads ? '⬇ ' + fmtNum(it.downloads) : '', it.date || ''].filter(Boolean).join(' · ');
+    sheet.hidden = false;
+    sheet.innerHTML = `
+      <div class="disc-sheet-box">
+        <button class="disc-back" title="رجوع">→ رجوع</button>
+        <div class="disc-detail">
+          <div class="disc-detail-cover${cover ? '' : ' no-img'}">${cover ? `<img src="${esc(cover)}" alt="" onerror="this.style.display='none'">` : `<span class="disc-fallback">${esc(title.trim().slice(0, 1))}</span>`}</div>
+          <div class="disc-detail-meta">
+            <h3>${esc(title)}</h3>
+            ${author && author !== pub ? `<p class="dd-author">${esc(author)}</p>` : ''}
+            ${pub ? `<p class="dd-author">🏛 ${esc(pub)}</p>` : ''}
+            <p class="dd-author" style="opacity:.75">${esc(facts)}</p>
+            ${desc ? `<p class="dd-desc">${esc(desc)}</p>` : ''}
+            ${it.pdf ? `<a class="dd-link" href="${esc(it.pdf)}" target="_blank" rel="noopener">↗ افتح الملف في موقع الإصدارات</a>` : ''}
+          </div>
+        </div>
+        <div class="disc-formats">
+          <h4>أضِفه إلى مكتبتك:</h4>
+          <button class="disc-import"><span class="di-label">📕 أضِف (PDF)<em>يُنزَّل عبر خادمك ويُضاف إلى مكتبتك</em></span>${it.size ? `<span class="di-size">${esc(it.size)} م.ب</span>` : ''}</button>
+        </div>
+      </div>`;
+    sheet.querySelector('.disc-back').onclick = closeSheet;
+    const ib = sheet.querySelector('.disc-import');
+    ib.onclick = () => importIh(ds, { title, author, cover }, ib);
+  }
+
+  async function importIh(ds, meta, btn) {
+    if (!window.Library || !Library.addRemoteBook) return;
+    const orig = btn.innerHTML;
+    const compact = btn.classList.contains('disc-quickadd');
+    const setBtn = (html) => { btn.innerHTML = compact ? html : `<span class="di-label">${html}</span>`; };
+    btn.disabled = true; btn.classList.add('loading');
+    setBtn('<span class="disc-spin"></span> جارٍ التنزيل…');
+    try {
+      const it = ihItems.get(ds.id);
+      if (!it || !it.pdf) throw new Error('لا يوجد ملف قابل للتنزيل لهذا الإصدار');
+      const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url: it.pdf });
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok || /application\/json/i.test(ct)) { let msg = 'تعذّر تنزيل الملف'; try { const j = await r.json(); if (j.error) msg = j.error; } catch {} throw new Error(msg); }
+      const blob = await r.blob();
+      setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
+      const bookId = await Library.addRemoteBook({
+        blob, name: meta.title, kind: 'pdf', title: meta.title, author: meta.author || ihPublisher(it.cat) || '',
+        category: it.type === 'MAGAZINE' ? 'أخرى' : 'دين', cover: ds.cover || it.cover || '',
+        expectedSize: +r.headers.get('content-length') || 0,
+      });
+      btn.classList.remove('loading'); btn.classList.add('done');
+      setBtn('✓ أُضيف');
+      Library.toast('أُضيف الإصدار إلى مكتبتك 📚', 'gold');
       const fmts = sheet.querySelector('.disc-formats');
       if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
         const rn = document.createElement('button');

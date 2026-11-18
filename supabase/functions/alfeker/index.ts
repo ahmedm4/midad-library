@@ -112,11 +112,43 @@ const allowedEmails = () => (Deno.env.get("ALLOWED_EMAILS") || "").split(/[,\s]+
 // مواقع الكتب التي يخدمها الوسيط لأي زائر بلا حساب (كي لا يصير وسيطاً مفتوحاً لكل الإنترنت)
 const PUBLIC_HOSTS = ["alfeker.net", "mediafire.com", "drive.google.com", "docs.google.com", "googleusercontent.com",
   "dropbox.com", "dropboxusercontent.com", "narjeslibrary.com", "ww-api.com", "ablibrary.net", "archive.org",
-  "wikisource.org", "inahj.org"];
+  "wikisource.org", "inahj.org", "imamhussain.org"];
 const isPublicHost = (u: string) => {
   try { const h = new URL(u).hostname.toLowerCase(); return PUBLIC_HOSTS.some((d) => h === d || h.endsWith("." + d)); }
   catch { return false; }
 };
+
+/* ── «إصدارات العتبة الحسينية» (publication.imamhussain.org) ──
+   موقع Laravel بلا واجهة برمجية عامة، لكن كل بطاقة تحمل سجلّ الإصدار كاملاً (JSON) في
+   onclick="selectedImage({...})": العنوان والنبذة والغلاف والحجم والنوع (BOOK/MAGAZINE) والملف.
+   الملفات روابط PDF مباشرة؛ تُنزَّل عبر إجراء fetch العام (الموقع لا يرسل ترويسات CORS). */
+const IH = "https://publication.imamhussain.org";
+function ihParse(html: string) {
+  const out: any[] = [], seen = new Set<number>();
+  for (const m of html.matchAll(/selectedImage\((\{[\s\S]*?\})\)"/g)) {
+    let o: any;
+    try { o = JSON.parse(decode(m[1])); } catch { continue; }
+    if (!o || !o.id || !o.pdf || o.deleted_at || seen.has(o.id)) continue;
+    seen.add(o.id);
+    out.push({
+      id: String(o.id), title: String(o.title || "").trim(), type: String(o.type || "").toUpperCase(),
+      desc: stripTags(decode(String(o.content || ""))).slice(0, 600),
+      cover: o.pic ? `${IH}/uploads/publications/${encodeURIComponent(o.pic)}` : "",
+      pdf: `${IH}/uploads/pdf/${encodeURIComponent(o.pdf)}`,
+      size: String(o.size || ""), downloads: +o.downloads || 0, cat: o.cat_id ? String(o.cat_id) : "", date: String(o.created_at || "").slice(0, 10),
+    });
+  }
+  return out;
+}
+function ihSections(html: string) {
+  const out: { id: string; label: string }[] = [], seen = new Set<string>();
+  for (const m of html.matchAll(/category\/(\d+)"[^>]*>([\s\S]{0,400}?)<\/a>/g)) {
+    const label = decode(stripTags(m[2]));
+    if (!label || seen.has(m[1])) continue;
+    seen.add(m[1]); out.push({ id: m[1], label });
+  }
+  return out;
+}
 
 /* ── المستضيفات والمرايا ── */
 type Mirror = { host: string; url: string };
@@ -466,17 +498,40 @@ Deno.serve(async (req) => {
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "list");
-    if (action === "version") return json({ fn: "alfeker", fnVersion: "2026.11.9" });
+    if (action === "version") return json({ fn: "alfeker", fnVersion: "2026.11.18" });
 
     // لوحة التحكم: المصدر موقوف؟ الزوار بلا حساب ممنوعون؟ المستخدم معطّلة عنه الإمكانية؟
     {
       const cfg = await siteConfig();
       const isNarjes = action === "fetch" && /narjeslibrary\.com|ww-api\.com/i.test(String(b.url || ""));
-      const src = isNarjes ? "narjes" : action === "fetch" ? "" : "alfeker";
+      const isIH = action.startsWith("ih_") || (action === "fetch" && /imamhussain\.org/i.test(String(b.url || "")));
+      const src = isIH ? "imamhussain" : isNarjes ? "narjes" : action === "fetch" ? "" : "alfeker";
       if (src && cfg.sources && cfg.sources[src] === false) return json({ error: "هذا المصدر موقوف حالياً من إدارة التطبيق", code: "source_off" }, 403);
       const who = await callerUser(req);
       if (!who && cfg.discover_anonymous === false && src) return json({ error: "«استكشف» متاح لأصحاب الحسابات فقط — سجّل الدخول من زر السحابة ☁️", code: "auth" }, 401);
       if (who && src && !(await discoverAllowedFor(who.id))) return json({ error: "«استكشف» غير مفعّل لحسابك", code: "forbidden" }, 403);
+    }
+
+    // إصدارات العتبة الحسينية: الأبواب (الجهات الناشرة)، والقوائم (بحث | باب | الكتب | الأحدث)
+    if (action === "ih_sections") {
+      return json({ sections: ihSections(await getHtml(`${IH}/`)) });
+    }
+    if (action === "ih_list") {
+      const q = String(b.q || "").trim().slice(0, 120);
+      const cat = /^\d+$/.test(String(b.cat || "")) ? String(b.cat) : "";
+      const page = Math.max(1, Math.min(500, Math.floor(+b.page || 1)));
+      const pg = page > 1 ? `page=${page}` : "";
+      const latest = !q && !cat && b.kind !== "books";
+      if (latest && page > 1) return json({ items: [], page, hasMore: false }); // «الأحدث» صفحة واحدة
+      const url = q ? `${IH}/results?query=${encodeURIComponent(q)}${pg ? "&" + pg : ""}`
+        : cat ? `${IH}/category/${cat}${pg ? "?" + pg : ""}`
+        : latest ? `${IH}/` : `${IH}/books${pg ? "?" + pg : ""}`;
+      let html: string;
+      try { html = await getHtml(url); }
+      catch (e) { if (page > 1) return json({ items: [], page, hasMore: false }); throw e; }
+      const items = ihParse(html);
+      const hasMore = !latest && items.length > 0 && new RegExp(`[?&]page=${page + 1}(?!\\d)`).test(html);
+      return json({ items, page, hasMore });
     }
 
     if (action === "sections") {
