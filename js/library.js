@@ -1215,6 +1215,8 @@ create policy "midad_own_files" on storage.objects for all
     // «الأحدث نشاطاً»: آخر قراءة أو تاريخ الإضافة أيّهما أحدث — فالكتاب المضاف للتوّ يظهر أولاً
     // (كان يُدفن بعد كل الكتب المقروءة، وراء دفعة العرض الأولى في المكتبات الكبيرة)
     if (sort === 'recent') { const act = (b) => Math.max(st(b).lastRead || 0, b.addedAt || 0); items.sort((a, b) => act(b) - act(a)); }
+    // «الأحدث قراءة» فقط: بتاريخ آخر قراءة، وما لم يُفتح بعدُ يأتي آخراً (الأحدث إضافةً أولاً بينها)
+    else if (sort === 'read') items.sort((a, b) => (st(b).lastRead || 0) - (st(a).lastRead || 0) || b.addedAt - a.addedAt);
     else if (sort === 'added') items.sort((a, b) => b.addedAt - a.addedAt);
     else if (sort === 'oldest') items.sort((a, b) => a.addedAt - b.addedAt);
     else if (sort === 'title') items.sort((a, b) => a.title.localeCompare(b.title, 'ar'));
