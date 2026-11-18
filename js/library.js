@@ -1787,10 +1787,30 @@ create policy "midad_own_files" on storage.objects for all
       const t = await Store.getPayload(b.id);
       return typeof t === 'string' ? { text: b.assets ? stripImageMarkers(t) : t } : null;
     }
-    const cached = await Store.getFulltext(b.id);
+    const cached = await upgradeFulltext(b.id, await Store.getFulltext(b.id));
     if (cached && cached.text != null) return cached;
     if (!allowIndex) return null;
     return await extractPdfText(b.id);
+  }
+
+  /* نصّ PDF «معكوس الحروف المتّصلة» (خطوط ناقصة الجداول — مثل إصدارات العتبة الحسينية):
+     يُصحَّح صفحةً صفحة (فتبقى أرقام الصفحات صحيحة) ويُعلَّم garbled ليُقترح استخراجه بالتعرّف الضوئي.
+     FT_REV يختم السجلّ كي يُفحص كل كتاب مفهرَس قبل هذا الإصدار مرة واحدة فقط. */
+  const FT_REV = 2;
+  function repairPages(pages) {
+    const garbled = !!(window.ArFix && ArFix.detect(pages.join('\n')));
+    if (garbled) pages = pages.map((p) => ArFix.fix(p));
+    let text = ''; const pageStarts = [];
+    for (const p of pages) { pageStarts.push(text.length); text += p; }
+    return { text, pageStarts, garbled, rev: FT_REV };
+  }
+  async function upgradeFulltext(id, ft) {
+    if (!ft || ft.ocr || ft.rev >= FT_REV || ft.text == null || !window.ArFix) return ft;
+    const ps = Array.isArray(ft.pageStarts) && ft.pageStarts.length ? ft.pageStarts : [0];
+    const pages = ps.map((s, i) => ft.text.slice(s ?? 0, ps[i + 1] ?? ft.text.length));
+    const rec = repairPages(pages);
+    try { await Store.saveFulltext(id, rec); } catch {}
+    return rec;
   }
 
   async function extractPdfText(id) {
@@ -1802,15 +1822,14 @@ create policy "midad_own_files" on storage.objects for all
     try {
       const buf = await blob.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-      let text = ''; const pageStarts = [];
+      const pages = [];
       for (let n = 1; n <= pdf.numPages; n++) {
-        pageStarts.push(text.length);
         const page = await pdf.getPage(n);
         const tc = await page.getTextContent();
-        text += tc.items.map((i) => i.str).join(' ') + '\n';
+        pages.push(tc.items.map((i) => i.str).join(' ') + '\n');
       }
       try { await pdf.destroy(); } catch {}
-      const rec = { text, pageStarts };
+      const rec = repairPages(pages);
       await Store.saveFulltext(id, rec);
       return rec;
     } catch (e) { console.error('extract pdf', e); return null; }
@@ -2002,6 +2021,8 @@ create policy "midad_own_files" on storage.objects for all
   const fmtSec = (s) => (s < 90 ? Math.max(1, Math.round(s)) + ' ثانية' : fmtDuration(s));
   // كتاب PDF بلا نص حقيقي (صفحات مصوّرة)
   const isScannedText = (ft) => (ft.text || '').replace(/\s+/g, '').length < Math.max(1, (ft.pageStarts || []).length) * 25;
+  // يستحق الاستخراج بالتعرّف الضوئي: مصوّر بلا نص، أو نصّه مشوّه من المصدر (أُصلح جزئياً فقط)
+  const needsOcr = (ft) => !!ft && !ft.ocr && (isScannedText(ft) || !!ft.garbled);
 
   async function localOcrRun(id, { fresh, cancelled, onProgress }) {
     let blob = await Store.getPayload(id);
@@ -2300,8 +2321,8 @@ create policy "midad_own_files" on storage.objects for all
     const now = Date.now();
     for (const b of pool) {
       if (b.type !== 'pdf') continue;
-      const ft = await Store.getFulltext(b.id);
-      if (ft) { if (watchScanned && !ft.ocr && isScannedText(ft)) scanned.push(b); continue; }
+      const ft = await upgradeFulltext(b.id, await Store.getFulltext(b.id));
+      if (ft) { if (watchScanned && needsOcr(ft)) scanned.push(b); continue; }
       if (now - (prepFailed[b.id] || 0) < PREP_RETRY) continue;
       ((await Store.getPayload(b.id)) != null ? needLocal : needRemote).push(b);
     }
@@ -2355,7 +2376,7 @@ create policy "midad_own_files" on storage.objects for all
       }
       const busyOcr = new Set([...(ocrQ.running ? [ocrQ.running.id] : []), ...ocrQ.list.map((j) => j.id)]);
       const scanIds = scanned.map((b) => b.id).filter((x) => !busyOcr.has(x));
-      if (scanIds.length) h += `<div class="deep-scanned"><span>📷 ${scanIds.length === 1 ? 'كتاب مصوّر واحد لا يدخله' : scanIds.length + ' كتب مصوّرة لا يدخلها'} البحث بعد.</span><button type="button" data-a="ocr">🔤 فهرسها على الجهاز</button></div>`;
+      if (scanIds.length) h += `<div class="deep-scanned"><span>📷 ${scanIds.length === 1 ? 'كتاب واحد مصوّر أو نصّه مشوّه من المصدر لا يدخله' : scanIds.length + ' كتب مصوّرة أو نصّها مشوّه من المصدر لا يدخلها'} البحث جيداً بعد.</span><button type="button" data-a="ocr">🔤 فهرسها على الجهاز</button></div>`;
       if (results.length) {
         h += results.map((r) => `
       <div class="deep-book">
@@ -2409,7 +2430,7 @@ create policy "midad_own_files" on storage.objects for all
       if (!live()) return;
       if (b && rec === 'deferred') deferred.push(b);
       else if (b && rec && rec.text) {
-        if (watchScanned && !rec.ocr && isScannedText(rec)) scanned.push(b);
+        if (watchScanned && needsOcr(rec)) scanned.push(b);
         if (order.has(b.id) && !results.some((r) => r.book.id === b.id)) {
           const hits = findHits(rec.text, q, 4);
           if (hits.length) results.push({ book: b, src: rec, hits });
