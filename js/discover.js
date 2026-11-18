@@ -433,7 +433,7 @@ const Discover = (() => {
   const cardHTML = (c) => `
       <button class="disc-card" data-src="${c.source}" data-id="${esc(c.id)}" data-title="${esc(c.title)}" data-author="${esc(c.author || '')}" data-cover="${esc(c.cover || '')}">
         <div class="disc-cover">
-          <img loading="lazy" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
+          <img loading="lazy" referrerpolicy="no-referrer" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
           <span class="disc-fallback gen">${esc((c.title || '؟').trim())}</span>
           ${(c.source === 'wikisource' || c.source === 'ablibrary' || c.source === 'narjes' || c.source === 'imamhussain') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
@@ -1272,7 +1272,7 @@ const Discover = (() => {
       <div class="disc-sheet-box">
         <button class="disc-back" title="رجوع">→ رجوع</button>
         <div class="disc-detail">
-          <div class="disc-detail-cover${cover ? '' : ' no-img'}">${cover ? `<img src="${esc(cover)}" alt="" onerror="this.style.display='none'">` : `<span class="disc-fallback">${esc(title.trim().slice(0, 1))}</span>`}</div>
+          <div class="disc-detail-cover${cover ? '' : ' no-img'}">${cover ? `<img referrerpolicy="no-referrer" src="${esc(cover)}" alt="" onerror="this.style.display='none'">` : `<span class="disc-fallback">${esc(title.trim().slice(0, 1))}</span>`}</div>
           <div class="disc-detail-meta">
             <h3>${esc(title)}</h3>
             ${author && author !== pub ? `<p class="dd-author">${esc(author)}</p>` : ''}
@@ -1309,7 +1309,8 @@ const Discover = (() => {
       setBtn('<span class="disc-spin"></span> جارٍ الإضافة…');
       const bookId = await Library.addRemoteBook({
         blob, name: meta.title, kind: 'pdf', title: meta.title, author: meta.author || ihPublisher(it.cat) || '',
-        category: it.type === 'MAGAZINE' ? 'أخرى' : 'دين', cover: ds.cover || it.cover || '',
+        // الغلاف من الصفحة الأولى للملف: صور الموقع محمية من العرض خارجه (Referer)، فلا نعتمد عليها في المكتبة
+        category: it.type === 'MAGAZINE' ? 'أخرى' : 'دين', cover: '',
         expectedSize: +r.headers.get('content-length') || 0,
       });
       btn.classList.remove('loading'); btn.classList.add('done');
