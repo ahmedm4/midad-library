@@ -295,6 +295,8 @@ const Discover = (() => {
   function open() {
     ensureUI();
     applySourceSwitches();
+    ownedP = null; // أعد قراءة المكتبة عند كل فتح (ربما أُضيف أو حُذف شيء)
+    grid.querySelectorAll('.disc-card').forEach((el) => markOwned(el));
     modal.hidden = false;
     document.body.style.overflow = 'hidden';
     if (!loaded) { loaded = true; const c = chipsEl.querySelector('.disc-chip'); if (c) c.classList.add('on'); search('', CATS[0].q); }
@@ -444,9 +446,27 @@ const Discover = (() => {
         </div>
       </button>`;
 
+  /* كتب موجودة في مكتبتك (بالعنوان): تُعلَّم «✓ في مكتبتك» وتفتح الكتاب، بدل «أضف» من جديد */
+  const normT = (s) => String(s || '').replace(/[ً-ٰٟـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/\s+/g, ' ').trim();
+  let ownedP = null;
+  const ownedMap = () => (ownedP = ownedP || Store.getBooks().then((bs) => new Map(bs.map((b) => [normT(b.title), b.id]))).catch(() => new Map()));
+  const noteOwned = (title, id) => { if (id) ownedMap().then((m) => m.set(normT(title), id)); };
+  const openOwned = (id) => { close(); if (window.Library && Library.openBook) Library.openBook(id); else if (window.Reader) Reader.open(id); };
+  async function markOwned(el) {
+    const id = (await ownedMap()).get(normT(el.dataset.title));
+    if (!id || !el.isConnected) return;
+    el.classList.add('owned');
+    let qa = el.querySelector('.disc-quickadd');
+    if (!qa) { qa = document.createElement('span'); qa.className = 'disc-quickadd'; qa.setAttribute('role', 'button'); el.querySelector('.disc-cover').appendChild(qa); }
+    qa.classList.remove('loading'); qa.classList.add('done');
+    qa.textContent = '✓ في مكتبتك — اقرأ';
+    qa.onclick = (e) => { e.stopPropagation(); openOwned(id); };
+  }
+
   function wireCards() {
     grid.querySelectorAll('.disc-card').forEach((el) => {
       if (el.__wired) return; el.__wired = true;
+      markOwned(el);
       const qa = el.querySelector('.disc-quickadd');
       if (qa) qa.onclick = (e) => {
         e.stopPropagation();
@@ -1290,6 +1310,13 @@ const Discover = (() => {
     sheet.querySelector('.disc-back').onclick = closeSheet;
     const ib = sheet.querySelector('.disc-import');
     ib.onclick = () => importIh(ds, { title, author, cover }, ib);
+    ownedMap().then((m) => {
+      const oid = m.get(normT(title));
+      const f = sheet.querySelector('.disc-formats');
+      if (!oid || !f || sheet.hidden || !sheet.contains(ib)) return; // أُغلقت الصفحة أو فُتح غيرها
+      f.innerHTML = '<h4>✓ هذا الإصدار في مكتبتك</h4><button class="disc-readnow">📖 اقرأ الآن</button>';
+      f.querySelector('.disc-readnow').onclick = () => openOwned(oid);
+    });
   }
 
   // غلاف الموقع عبر خادمك (الموقع يرفض الصور المطلوبة من مواقع أخرى)، مصغّراً ومحفوظاً مع الكتاب
@@ -1339,7 +1366,9 @@ const Discover = (() => {
       });
       btn.classList.remove('loading'); btn.classList.add('done');
       setBtn('✓ أُضيف');
-      Library.toast('أُضيف الإصدار إلى مكتبتك 📚', 'gold');
+      Library.toast('أُضيف الإصدار إلى مكتبتك 📚 — تجده أول المكتبة', 'gold');
+      noteOwned(meta.title, bookId);
+      { const c = grid.querySelector(`.disc-card[data-src="imamhussain"][data-id="${CSS.escape(String(ds.id))}"]`); if (c) setTimeout(() => markOwned(c), 1500); }
       const fmts = sheet.querySelector('.disc-formats');
       if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {
         const rn = document.createElement('button');
