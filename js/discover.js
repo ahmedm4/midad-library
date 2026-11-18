@@ -461,6 +461,43 @@ const Discover = (() => {
     qa.classList.remove('loading'); qa.classList.add('done');
     qa.textContent = '✓ في مكتبتك — اقرأ';
     qa.onclick = (e) => { e.stopPropagation(); openOwned(id); };
+    if (el.dataset.src === 'imamhussain') fixIhCover(id, el.dataset.id);
+  }
+
+  /* إصدارات أُضيفت قبل v137 أخذت غلافها من أول صفحة في الملف (صفحة عنوان بيضاء غالباً).
+     حين تظهر في «استكشف» يُستبدل غلافها بغلاف الموقع مرة واحدة (coverFrom يمنع التكرار)،
+     ويقتصر ذلك على ملفات PDF أُضيفت منذ إطلاق هذا المصدر كي لا يُمسّ غلاف اخترته بنفسك لكتاب أقدم. */
+  const IH_SINCE = Date.parse('2026-11-18T00:00:00Z');
+  const coverFixQ = []; let coverFixing = false, coverFixed = 0, coverFixT = null;
+  function fixIhCover(bookId, itemId) {
+    if (coverFixQ.some((j) => j.bookId === bookId)) return;
+    coverFixQ.push({ bookId, itemId });
+    pumpCoverFix();
+  }
+  async function pumpCoverFix() {
+    if (coverFixing) return;
+    coverFixing = true;
+    while (coverFixQ.length) {
+      const { bookId, itemId } = coverFixQ.shift();
+      try {
+        const b = await Store.getBook(bookId), it = ihItems.get(itemId);
+        if (!b || !it || !it.cover || b.type !== 'pdf' || b.coverFrom || (b.addedAt || 0) < IH_SINCE) continue;
+        const cover = await ihCover(it.cover);
+        if (!cover) continue;
+        await Store.updateBook(bookId, { cover, coverFrom: 'site' });
+        if (window.Cloud && Cloud.pushMeta) Cloud.pushMeta(bookId);
+        coverFixed++;
+      } catch {}
+    }
+    coverFixing = false;
+    if (coverFixed) {
+      clearTimeout(coverFixT);
+      coverFixT = setTimeout(() => {
+        if (window.Library && Library.refresh) Library.refresh();
+        Library.toast(`🖼 حُدّث غلاف ${coverFixed === 1 ? 'كتاب واحد' : coverFixed + ' كتب'} في مكتبتك بغلاف الموقع`, 'gold');
+        coverFixed = 0;
+      }, 400);
+    }
   }
 
   function wireCards() {
@@ -1368,6 +1405,7 @@ const Discover = (() => {
       setBtn('✓ أُضيف');
       Library.toast('أُضيف الإصدار إلى مكتبتك 📚 — تجده أول المكتبة', 'gold');
       noteOwned(meta.title, bookId);
+      if (cover && bookId) { try { await Store.updateBook(bookId, { coverFrom: 'site' }); } catch {} }
       { const c = grid.querySelector(`.disc-card[data-src="imamhussain"][data-id="${CSS.escape(String(ds.id))}"]`); if (c) setTimeout(() => markOwned(c), 1500); }
       const fmts = sheet.querySelector('.disc-formats');
       if (fmts && bookId && !fmts.querySelector('.disc-readnow')) {

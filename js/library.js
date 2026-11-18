@@ -3475,7 +3475,7 @@ create policy "midad_own_files" on storage.objects for all
     const renderPrev = () => { prev.innerHTML = pending ? `<img src="${pending}" alt="">` : coverHTML({ ...b, cover: null }); };
     renderPrev();
     const save = async (cover) => {
-      await Store.updateBook(id, { cover: cover || undefined });
+      await Store.updateBook(id, { cover: cover || undefined, coverFrom: 'user' }); // غلاف اختاره المستخدم: لا يُستبدل تلقائياً
       b.cover = cover || undefined;
       if (window.Cloud) Cloud.pushBook(id);
       await refresh();
