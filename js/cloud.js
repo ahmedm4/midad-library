@@ -1133,7 +1133,141 @@ const Cloud = (() => {
       .subscribe();
   }
 
+  /* ── نقل المكتبة من حساب البريد (Supabase) إلى Google Drive المستخدم ──
+     ينسخ كل كتاب (صفّه + نصّه + ملف PDF + صور EPUB) وسجلّ القراءة والإعدادات إلى Drive،
+     ثم يتحقّق أن كل شيء وصل قبل التحويل. لا يحذف شيئاً من Supabase (يبقى نسخة احتياطية،
+     والخروج من Google لاحقاً يعيد الجهاز إليه). قابل للاستئناف: ما نُقل سابقاً يُتخطّى. */
+  let migDc = null;
+  const migClient = () => migDc || (migDc = window.DriveClient.create({ callFn }));
+  async function migrateAccount() {
+    if (!window.DriveClient) return null;
+    const { data } = await migClient().auth.getSession();
+    return data.session ? data.session.user.email || '' : null;
+  }
+  async function migrateSignIn() {
+    const id = await googleClientId(true);
+    if (!id) throw new Error('الدخول بحساب Google غير مُفعّل في هذه النسخة بعد');
+    const dc = migClient();
+    const { data } = await dc.auth.getSession();
+    if (data.session) await dc.auth.signOut(); // «حساب آخر»: نبدأ نظيفين
+    migDc = null;
+    await migClient().signIn(id);
+    return migrateAccount();
+  }
+  async function migrateRun(onProgress, shouldStop) {
+    if (initDone) { try { await initDone; } catch {} }
+    if (!ready || !user || !sb || sb.isDrive) throw new Error('هذه الأداة لمكتبة متزامنة بحساب البريد');
+    const dc = migClient();
+    const P = (o) => { if (onProgress) { try { onProgress(o); } catch {} } };
+    P({ phase: 'scan' });
+    await syncAll({ quiet: true }); // ما على هذا الجهاز ولم يُرفع بعد يصل أولاً
+    let rows = null, error = null;
+    for (const cols of ['id, meta, state, deck, has_file, deleted, updated_at', 'id, meta, state, has_file, updated_at']) {
+      ({ data: rows, error } = await sb.from(TABLE).select(cols));
+      if (!error) break;
+    }
+    if (error) throw new Error(friendlyErr(error));
+    rows = rows || [];
+    const { data: dRows, error: de } = await dc.from(TABLE).select('*');
+    if (de) throw de;
+    const dById = new Map((dRows || []).map((r) => [r.id, r]));
+    const dFiles = new Map();
+    { const { data: fl, error: fe } = await dc.storage.from(BUCKET).list('m'); if (fe) throw fe; for (const f of fl || []) dFiles.set(f.name, (f.metadata && f.metadata.size) || 0); }
+
+    const total = rows.length, failed = [];
+    let done = 0, copied = 0, bytes = 0, stopped = false;
+    for (const r of rows) {
+      if (shouldStop && shouldStop()) { stopped = true; break; }
+      const title = (r.meta && r.meta.title) || 'كتاب';
+      P({ phase: 'books', done, total, title });
+      try {
+        const live = !r.deleted;
+        // ① الملف أولاً: لا نكتب صفّاً يزعم ملفاً لم يصل بعد
+        if (live && r.has_file && !(dFiles.get(r.id) > 0)) {
+          const local = await Store.getPayload(r.id);
+          let blob = local instanceof Blob ? local : null;
+          if (!blob) { P({ phase: 'download', done, total, title }); blob = await downloadBookFile(r.id, true); }
+          const { error: ue } = await dc.storage.from(BUCKET).upload(`m/${r.id}`, blob, {
+            contentType: 'application/pdf', onProgress: (f) => P({ phase: 'upload', done, total, title, frac: f }),
+          });
+          if (ue) throw ue;
+          dFiles.set(r.id, blob.size); bytes += blob.size;
+        }
+        // ② صور EPUB
+        if (live && r.meta && r.meta.type && r.meta.type !== 'pdf') {
+          const { data: al } = await sb.storage.from(BUCKET).list(assetDir(r.id), { limit: 1000 });
+          const files = (al || []).filter((a) => a.name && a.id !== null);
+          if (files.length) {
+            const { data: have } = await dc.storage.from(BUCKET).list(`m/assets/${r.id}`);
+            const hs = new Set((have || []).map((f) => f.name));
+            for (const a of files) {
+              if (hs.has(a.name)) continue;
+              const { data: b, error: e1 } = await sb.storage.from(BUCKET).download(`${assetDir(r.id)}/${a.name}`);
+              if (e1 || !b) throw e1 || new Error('تعذّر تنزيل صورة');
+              const { error: e2 } = await dc.storage.from(BUCKET).upload(`m/assets/${r.id}/${a.name}`, b, { contentType: b.type || 'image/jpeg' });
+              if (e2) throw e2;
+              bytes += b.size;
+            }
+          }
+        }
+        // ③ الصفّ (ميتا + حالة + بطاقات) ونصّ الكتاب — إلا إن كان في Drive نسخة ليست أقدم
+        const d = dById.get(r.id);
+        const fresh = d && new Date(d.updated_at).getTime() >= new Date(r.updated_at).getTime() && !!d.has_file === !!r.has_file;
+        if (!fresh) {
+          const row = { ...r };
+          if (live) {
+            const { data: c } = await sb.from(TABLE).select('content').eq('id', r.id).limit(1);
+            const v = c && c[0] ? c[0].content : null;
+            if (v != null) row.content = v;
+          }
+          const { error: we } = await dc.from(TABLE).upsert(row);
+          if (we) throw we;
+          copied++;
+        }
+      } catch (e) {
+        console.warn('migrate', r.id, e);
+        failed.push({ id: r.id, title, msg: friendlyErr(e) });
+      }
+      done++;
+    }
+    if (!stopped) {
+      // سجلّ القراءة اليومي لكل جهاز، ثم الإعدادات المُزامَنة
+      P({ phase: 'extras', done, total });
+      try {
+        const { data: srows } = await sb.from(STATS_TABLE).select('device, log, goal, goal_at, updated_at');
+        for (const s of srows || []) await dc.from(STATS_TABLE).upsert(s);
+      } catch (e) { console.warn('migrate stats', e); }
+      try {
+        const { data: u } = await sb.auth.getUser();
+        const m = (u && u.user && u.user.user_metadata) || {};
+        const local = Store.getSyncedSettings ? Store.getSyncedSettings() : null;
+        const at = Math.max(+m.midad_settings_at || 0, Store.getSettingsAt ? Store.getSettingsAt() : 0) || Date.now();
+        const data = (Store.getSettingsAt && Store.getSettingsAt() >= (+m.midad_settings_at || 0)) ? local : m.midad_settings;
+        if (data) await dc.auth.updateUser({ data: { midad_settings: data, midad_settings_at: at } });
+      } catch (e) { console.warn('migrate settings', e); }
+    }
+    // ④ تحقّق نهائي من Drive نفسه
+    P({ phase: 'verify', done, total });
+    const { data: after, error: ae } = await dc.from(TABLE).select('*');
+    if (ae) throw ae;
+    const aIds = new Set((after || []).map((r) => r.id));
+    const { data: fl2 } = await dc.storage.from(BUCKET).list('m');
+    const f2 = new Set((fl2 || []).filter((f) => (f.metadata && f.metadata.size) > 0).map((f) => f.name));
+    const missing = rows.filter((r) => !r.deleted && (!aIds.has(r.id) || (r.has_file && !f2.has(r.id))))
+      .map((r) => ({ id: r.id, title: (r.meta && r.meta.title) || 'كتاب' }));
+    return {
+      total, live: rows.filter((r) => !r.deleted).length, files: rows.filter((r) => !r.deleted && r.has_file).length,
+      copied, bytes, failed, missing, stopped, ok: !stopped && !missing.length,
+    };
+  }
+  // التحويل: هذا الجهاز يعمل على Drive من الآن (حساب البريد وبياناته تبقى كما هي)
+  function migrateFinish() {
+    try { localStorage.setItem(MODE_KEY, 'drive'); localStorage.setItem('midad-migrated', String(Date.now())); } catch {}
+    location.reload();
+  }
+
   return {
+    migrateAccount, migrateSignIn, migrateRun, migrateFinish,
     init, configure, disconnect, isConfigured, isSignedIn,
     signIn, signUp, signOut, syncAll, onStatus,
     pushBook, pushMeta, pushState, ensureAssets, pushDeck, pushStats, syncStats, syncSettings, deleteBook, ensurePayload,

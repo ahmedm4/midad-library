@@ -1592,3 +1592,19 @@ body.select-mode #book-grid .bc-fav, body.select-mode #book-grid .bc-menu-btn { 
 .en-row img, .en-noimg { width: 46px; height: 66px; object-fit: cover; border-radius: 4px; flex-shrink: 0; background: rgba(255,255,255,.06); }
 .en-row b { display: block; } .en-row small { display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 4px; }
 .en-row label { display: block; margin: 3px 0; cursor: pointer; } .en-row input { accent-color: var(--gold); }
+
+/* أداة النقل إلى Google Drive */
+.ui-dialog .mig-box { max-width: 480px; text-align: right; }
+.ui-dialog .mig-box h3 { text-align: center; }
+.mig-points { list-style: none; padding: 0; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; }
+.mig-points li { font-size: 13.5px; line-height: 1.75; color: var(--cream); background: rgba(255,255,255,.03); border: 1px solid var(--card-line); border-radius: 12px; padding: 9px 12px; }
+.mig-points li.warn { color: var(--muted); }
+.mig-acct { font-size: 13.5px; color: var(--muted); margin-bottom: 14px; text-align: center; }
+.mig-acct b { color: var(--cream); }
+.mig-box .mig-phase { margin-bottom: 10px; color: var(--cream); font-size: 14px; }
+.mig-box .mig-bar { margin-bottom: 6px; }
+.mig-box .mig-sub { font-size: 12.5px; margin-bottom: 10px; text-align: center; }
+.mig-box .mig-note { font-size: 12.5px; margin-bottom: 16px; }
+.mig-box .mig-done { color: var(--cream); text-align: center; }
+.mig-fails { max-height: 180px; overflow: auto; margin: 0 0 16px; padding-inline-start: 18px; font-size: 13px; color: var(--cream); line-height: 1.8; }
+.mig-fails small { color: var(--muted); }

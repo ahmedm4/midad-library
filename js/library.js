@@ -238,6 +238,7 @@ const Library = (() => {
         if (info) info.textContent = drive ? 'Google Drive · مكتبتك متزامنة مع كل أجهزتك' : 'مكتبتك متزامنة مع كل أجهزتك';
         const av = document.querySelector('.cloud-avatar'); if (av) av.textContent = drive ? 'G' : '☁️';
       }
+      { const td = $('#cloud-to-drive'); if (td) td.hidden = !(signedIn && googleOk && Cloud.provider && Cloud.provider() === 'supabase'); }
     });
 
     // زر «المزامنة بحساب Google» يظهر حين يكون مُفعّلاً في خادم التطبيق
@@ -247,8 +248,10 @@ const Library = (() => {
       gBtn.hidden = !googleOk; $('#cloud-google-note').hidden = !googleOk;
       $('#cloud-google-wrap').hidden = Cloud.isSignedIn() || !googleOk;
       $('#cloud-setup-intro').hidden = googleOk;
+      { const td = $('#cloud-to-drive'); if (td) td.hidden = !(Cloud.isSignedIn() && googleOk && Cloud.provider() === 'supabase'); }
     };
     showGoogle();
+    { const td = $('#cloud-to-drive'); if (td) td.onclick = () => { modal.hidden = true; openDriveMigration(); }; }
     gBtn.onclick = () => googleSignIn(gBtn);
     // من شاشة البريد/كلمة المرور: عُد إلى شاشة الخيارات (يُلغي ربط هذا الجهاز بمشروع التطبيق)
     $('#cloud-back').onclick = () => { Cloud.disconnect(); showGoogle(true); };
@@ -412,6 +415,95 @@ const Library = (() => {
     if (n < 1073741824) return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' م.ب';
     return (n / 1073741824).toFixed(2) + ' غ.ب';
   };
+  /* ── أداة «انقل مكتبتي إلى Google Drive» (لحسابات البريد في Supabase) ── */
+  async function openDriveMigration() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-dialog';
+    overlay.innerHTML = `<div class="ud-box mig-box" role="dialog" aria-modal="true" aria-labelledby="mig-title">
+      <div class="ud-icon">🚚</div><h3 id="mig-title">انقل مكتبتي إلى Google Drive</h3><div class="mig-body"></div></div>`;
+    document.body.appendChild(overlay);
+    const body = overlay.querySelector('.mig-body');
+    let running = false, stop = false, lock = null;
+    const close = () => { if (running) return toast('النقل جارٍ — أوقفه أولاً'); overlay.remove(); };
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    const admin = Cloud.isAdmin && Cloud.isAdmin();
+
+    async function intro() {
+      let acct = null; try { acct = await Cloud.migrateAccount(); } catch {}
+      body.innerHTML = `
+        <ul class="mig-points">
+          <li>📚 تُنسخ كتبك وملفاتها ونصوصها، وتظليلاتك وملاحظاتك وبطاقاتك، وسجلّ قراءتك وإعداداتك إلى مجلد خاص بالتطبيق في Drive حسابك (لا يظهر بين ملفاتك).</li>
+          <li>💾 مساحتك المجانية في Google (١٥ غ.ب) بدل المساحة المشتركة في خادم التطبيق.</li>
+          <li>🛟 لا يُحذف شيء من حسابك الحالي: يبقى نسخةً احتياطية، والنقل يُستأنف من حيث توقّف إن انقطع.</li>
+          <li>📱 بعد النقل: سجّل الدخول بـ«المزامنة بحساب Google» على أجهزتك الأخرى.</li>
+          <li class="warn">🤖 المساعد الذكي مع Drive يعمل بمفتاح Gemini الخاص بك (لا بمفتاح الخادم).${admin ? '<br>🛡 أنت المسؤول: لوحة التحكم تحتاج حساب البريد — يمكنك العودة إليه متى شئت بتسجيل الخروج من Google.' : ''}</li>
+        </ul>
+        ${acct != null ? `<div class="mig-acct">حساب Google: <b dir="ltr">${esc(acct || '—')}</b> <button class="cloud-link mig-other">حساب آخر</button></div>` : ''}
+        <div class="ud-actions"><button class="ud-cancel">إغلاق</button>
+          <button class="btn-gold mig-go">${acct != null ? 'ابدأ النقل' : 'اربط حساب Google'}</button></div>`;
+      body.querySelector('.ud-cancel').onclick = close;
+      const link = async (btn) => {
+        btn.disabled = true;
+        try { await Cloud.migrateSignIn(); await intro(); }
+        catch (e) { toast(e.message || 'تعذّر الدخول بحساب Google'); btn.disabled = false; }
+      };
+      body.querySelector('.mig-go').onclick = (e) => (acct != null ? run() : link(e.currentTarget));
+      const other = body.querySelector('.mig-other'); if (other) other.onclick = (e) => link(e.currentTarget);
+    }
+
+    function progressView() {
+      body.innerHTML = `<p class="mig-phase">⏳ يجري التحضير…</p>
+        <div class="cr-bar mig-bar"><i style="width:0%"></i></div><p class="mig-sub"></p>
+        <p class="mig-note">أبقِ التطبيق مفتوحاً حتى ينتهي. يمكنك الإيقاف والمتابعة لاحقاً دون إعادة ما نُقل.</p>
+        <div class="ud-actions"><button class="ud-cancel mig-stop">⏸ أوقف</button></div>`;
+      body.querySelector('.mig-stop').onclick = (e) => { stop = true; e.currentTarget.disabled = true; e.currentTarget.textContent = 'يتوقّف بعد الكتاب الحالي…'; };
+    }
+    const PH = { scan: 'يجري فحص مكتبتك…', download: 'تنزيل من السحابة الحالية', upload: 'رفع إلى Drive', books: 'نقل', extras: 'نقل سجلّ القراءة والإعدادات…', verify: 'التحقّق من وصول كل شيء…' };
+    function onProg(p) {
+      const ph = body.querySelector('.mig-phase'); if (!ph) return;
+      const n = p.total || 0, d = p.done || 0;
+      const frac = n ? (d + (p.frac || 0)) / n : 0;
+      body.querySelector('.mig-bar i').style.width = (p.phase === 'verify' ? 100 : Math.min(100, frac * 100)).toFixed(1) + '%';
+      if (p.title) ph.textContent = `${PH[p.phase] || 'نقل'} «${p.title.slice(0, 40)}»${p.phase === 'upload' && p.frac ? ` — ${Math.round(p.frac * 100)}٪` : ''}`;
+      else ph.textContent = PH[p.phase] || '…';
+      body.querySelector('.mig-sub').textContent = n ? `${Math.min(d + 1, n)} من ${n}` : '';
+    }
+
+    async function run() {
+      running = true; stop = false; progressView();
+      try { lock = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch {}
+      let res = null, err = null;
+      try { res = await Cloud.migrateRun(onProg, () => stop); } catch (e) { err = e; }
+      running = false;
+      try { if (lock) await lock.release(); } catch {} lock = null;
+      if (err) return result(null, err);
+      result(res);
+    }
+
+    function result(res, err) {
+      if (err) {
+        body.innerHTML = `<p>⚠️ توقّف النقل: ${esc(err.message || String(err))}</p>
+          <div class="ud-actions"><button class="ud-cancel">إغلاق</button><button class="btn-gold mig-retry">↻ تابع النقل</button></div>`;
+      } else if (res.ok) {
+        body.innerHTML = `<p class="mig-done">✅ وصلت مكتبتك كاملة إلى Google Drive<br>
+          <b>${res.live}</b> كتاباً، منها <b>${res.files}</b> بملفاتها${res.bytes ? ` (رُفع ${fmtBytes(res.bytes)} الآن)` : ''}.</p>
+          <p>الخطوة الأخيرة: اجعل هذا الجهاز يعمل على Drive. حسابك الحالي يبقى كما هو نسخةً احتياطية.</p>
+          <div class="ud-actions"><button class="ud-cancel">لاحقاً</button><button class="btn-gold mig-switch">انتقل إلى Drive الآن</button></div>`;
+      } else {
+        const bad = [...res.failed, ...res.missing.filter((m) => !res.failed.some((f) => f.id === m.id))];
+        body.innerHTML = `<p>${res.stopped ? '⏸ أوقفتَ النقل' : '⚠️ انتهت الجولة وبقيت كتب لم تصل'} — ما نُقل محفوظ ولن يُعاد.</p>
+          ${bad.length ? `<ul class="mig-fails">${bad.slice(0, 30).map((f) => `<li>«${esc(f.title)}»${f.msg ? ` — <small>${esc(f.msg)}</small>` : ''}</li>`).join('')}${bad.length > 30 ? `<li>… و${bad.length - 30} غيرها</li>` : ''}</ul>` : ''}
+          <div class="ud-actions"><button class="ud-cancel">إغلاق</button><button class="btn-gold mig-retry">↻ تابع النقل</button></div>`;
+      }
+      body.querySelector('.ud-cancel').onclick = close;
+      const rt = body.querySelector('.mig-retry'); if (rt) rt.onclick = run;
+      const sw = body.querySelector('.mig-switch'); if (sw) sw.onclick = () => { sw.disabled = true; Cloud.migrateFinish(); };
+    }
+
+    intro();
+  }
+
   async function openCloudReport() {
     document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
     const overlay = document.createElement('div');
@@ -4086,7 +4178,7 @@ create policy "midad_own_files" on storage.objects for all
     let t = 'purple'; try { t = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
     applyLibTheme(t);
     const ns = savedSort();
-    if (ns !== sort) { sort = ns; const el = $('#sort-select'); if (el) el.value = sort; renderGrid(); }
+    if (ns !== sort) { sort = ns; const el = $('#sort-select'); if (el) el.value = sort; refresh(); }
   });
   function openThemePicker() {
     let cur = 'purple'; try { cur = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
