@@ -65,6 +65,7 @@ const Store = (() => {
     changed();
     await p(os('files', 'readwrite').delete(id));
     try { await deleteAssets(id); } catch {}
+    try { await deleteAudio(id); } catch {}
     await p(os('states', 'readwrite').delete(id));
     try { await p(os('fulltext', 'readwrite').delete(id)); } catch {}
     try { await p(os('decks', 'readwrite').delete(id)); } catch {}
@@ -85,6 +86,11 @@ const Store = (() => {
       req.onerror = () => reject(req.error);
     });
   }
+  /* ── الكتاب المسموع: مقاطع الصوت وبيانها بمفتاح «معرّف::au::…» (على هذا الجهاز فقط، لا تُزامَن) ── */
+  const audioRange = (bookId) => IDBKeyRange.bound(`${bookId}::au::`, `${bookId}::au::￿`);
+  const putAudio = (bookId, key, val) => p(os('files', 'readwrite').put(val, `${bookId}::au::${key}`));
+  const getAudio = (bookId, key) => p(os('files').get(`${bookId}::au::${key}`));
+  const deleteAudio = (bookId, key) => p(os('files', 'readwrite').delete(key ? `${bookId}::au::${key}` : audioRange(bookId)));
   const updatePayload = (id, payload) => p(os('files', 'readwrite').put(payload, id));
   // حذف ملف الكتاب من هذا الجهاز فقط (يبقى الكتاب وبياناته، ويُنزَّل الملف من السحابة عند فتحه)
   const deletePayload = (id) => p(os('files', 'readwrite').delete(id));
@@ -245,7 +251,7 @@ const Store = (() => {
     return streak;
   }
 
-  return { init, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, deletePayload, putAsset, getAssets, deleteAssets, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
+  return { init, putAudio, getAudio, deleteAudio, addBook, getBooks, getBook, updateBook, deleteBook, getPayload, updatePayload, deletePayload, putAsset, getAssets, deleteAssets, getFulltext, saveFulltext, getDeck, saveDeck, getAllDecks, deleteDeck, getState, getAllStates, blankState, saveState, getSettings, saveSettings, resetSettings, logAddSeconds, getLog, getGoal, setGoal, getStreak, todayKey, getShelves, saveShelves,
     deviceId, getRemoteLog, setRemoteLog, getCombinedLog, getGoalAt, adoptGoal,
     markSettingsChanged, getSettingsAt, getSyncedSettings, adoptSyncedSettings };
 })();

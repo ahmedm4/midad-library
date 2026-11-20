@@ -696,7 +696,7 @@ create policy "midad_own_files" on storage.objects for all
     try {
       const now = Date.now();
       const decks = Store.getAllDecks ? await Store.getAllDecks() : [];
-      reviewDueCount = decks.reduce((n, d) => n + (d.cards || []).filter((c) => (c.due || 0) <= now).length, 0);
+      reviewDueCount = decks.reduce((n, d) => n + (d.cards || []).filter((c) => !c.del && (c.due || 0) <= now).length, 0);
     } catch { reviewDueCount = 0; }
     render();
   }
@@ -829,6 +829,8 @@ create policy "midad_own_files" on storage.objects for all
 
   // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
   async function openBook(id, target) {
+    // كتاب ورقي: نصّه يُبنى من مقتبساته (التي تُزامَن مع البيانات الوصفية) فيبقى محدّثاً على كل جهاز
+    try { const b = await Store.getBook(id); if (b && b.paper) await Store.updatePayload(id, paperText(b)); } catch {}
     try { await Reader.open(id, target); }
     catch (e) {
       console.error('فتح الكتاب', e);
@@ -1329,7 +1331,7 @@ create policy "midad_own_files" on storage.objects for all
           ${coverHTML(b)}
           <button class="bc-fav ${b.fav ? 'on' : ''}" title="${b.fav ? 'إزالة من المفضلة' : 'أضف إلى المفضلة'}">${b.fav ? '★' : '☆'}</button>
           ${st.finished ? '<span class="done-badge">✓ مكتمل</span>' : ''}
-          <span class="type-badge">${b.type === 'pdf' ? 'PDF' : 'نص'}</span>
+          <span class="type-badge">${b.type === 'pdf' ? 'PDF' : b.paper ? '📷 ورقي' : 'نص'}</span>
           ${pct > 0 && !st.finished ? `<div class="prog-ring" title="${pct}٪">
             <svg viewBox="0 0 36 36"><circle class="pr-bg" cx="18" cy="18" r="15.5"/><circle class="pr-fg" cx="18" cy="18" r="15.5" stroke-dasharray="${(pct * 0.974).toFixed(1)} 100"/></svg>
             <span>${pct}<i>٪</i></span>
@@ -4218,6 +4220,8 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
         <button data-act="quotes">✍️ مقتبساتي</button>
+        <button data-act="vocab">📒 كلماتي</button>
+        <button data-act="capture">📷 اقتباس من كتاب ورقي</button>
         <button data-act="theme">🎨 سمة المكتبة</button>
         <button data-act="keys">🤖 الذكاء الاصطناعي</button>
         <button data-act="enrich">✨ أكمل بيانات الكتب</button>
@@ -4234,6 +4238,8 @@ create policy "midad_own_files" on storage.objects for all
         closeCardMenu();
         if (act === 'stats') openStats();
         else if (act === 'quotes') openQuotes();
+        else if (act === 'vocab') openVocab();
+        else if (act === 'capture') openCapture();
         else if (act === 'enrich') openEnrich();
         else if (act === 'dups') openDuplicates();
         else if (act === 'theme') openThemePicker();
@@ -4341,7 +4347,7 @@ create policy "midad_own_files" on storage.objects for all
 
   /* ─── مراجعة البطاقات بالتكرار المتباعد (نظام Leitner) ─── */
   const SRS_INTERVALS = [0, 6e5, 864e5, 2592e5, 6048e5, 1382e5 * 10]; // box0غير مستخدم:10د،1ي،3ي،7ي،16ي
-  async function openReview() {
+  async function openReview(opts = {}) {
     const modal = $('#review-modal'), body = $('#review-body');
     modal.hidden = false;
     modal.querySelectorAll('[data-close]').forEach((btn) => (btn.onclick = () => { modal.hidden = true; refresh(); }));
@@ -4355,10 +4361,10 @@ create policy "midad_own_files" on storage.objects for all
     for (const d of decks) {
       deckMap[d.bookId] = d.cards || [];
       const bk = books.find((x) => x.id === d.bookId);
-      for (const c of (d.cards || [])) if ((c.due || 0) <= now) queue.push({ bookId: d.bookId, card: c, title: bk ? bk.title : '' });
+      for (const c of (d.cards || [])) if (!c.del && (c.due || 0) <= now && (!opts.words || c.kind === 'word')) queue.push({ bookId: d.bookId, card: c, title: bk ? bk.title : '' });
     }
     if (!queue.length) {
-      const total = decks.reduce((n, d) => n + (d.cards || []).length, 0);
+      const total = decks.reduce((n, d) => n + (d.cards || []).filter((c) => !c.del).length, 0);
       body.innerHTML = `<div class="rev-done">${total ? '🎉 أحسنت! لا بطاقات مستحقّة للمراجعة الآن.<br><span>عُد لاحقاً — ستُذكّرك البطاقات في وقتها.</span>' : '🃏 لا بطاقات محفوظة بعد.<br><span>وّلد بطاقات مراجعة من مساعد القراءة داخل أي كتاب، واضغط «احفظ للمراجعة».</span>'}</div>`;
       return;
     }
@@ -4478,6 +4484,8 @@ create policy "midad_own_files" on storage.objects for all
       for (const h of (st.highlights || [])) if (normSpace(h.text || '')) out.push({ id: h.id, book: b, text: normSpace(h.text), note: h.note || '', color: h.color, at: h.at || 0, jump: { find: normSpace(h.text).slice(0, 60) } });
       for (const h of (st.pdfHighlights || [])) if (normSpace(h.text || '')) out.push({ id: h.id, book: b, text: normSpace(h.text), note: h.note || '', color: h.color, at: h.at || 0, page: h.page, jump: { page: h.page } });
     }
+    // مقتبسات مصوّرة من كتب ورقية
+    for (const b of books) for (const pq of (b.paper && b.paperQuotes) || []) if (normSpace(pq.text || '')) out.push({ id: pq.id, book: b, text: normSpace(pq.text), note: pq.note || '', color: '#4fb3a9', at: pq.at || 0, page: pq.page || undefined, jump: { find: normSpace(pq.text).slice(0, 60) } });
     return out;
   }
   // مقتبس اليوم: ثابت طوال اليوم، يتغيّر كل يوم (من المقتبسات المتوسّطة الطول)
@@ -4504,13 +4512,14 @@ create policy "midad_own_files" on storage.objects for all
         <button class="qt-rand" title="مقتبس عشوائي">🎲</button>
       </div>` : ''}
       <div class="qt-list" role="list"></div>
-      <div class="ud-actions">${all.length ? '<button class="qt-export">📝 تصدير</button>' : ''}<button class="ud-cancel">إغلاق</button></div></div>`;
+      <div class="ud-actions"><button class="qt-cap">📷 من كتاب ورقي</button>${all.length ? '<button class="qt-export">📝 تصدير</button>' : ''}<button class="ud-cancel">إغلاق</button></div></div>`;
     document.body.appendChild(o);
     const close = () => o.remove();
     o.querySelector('.ud-cancel').onclick = close;
     o.onclick = (e) => { if (e.target === o) close(); };
+    o.querySelector('.qt-cap').onclick = () => { close(); openCapture(); };
     const list = o.querySelector('.qt-list');
-    if (!all.length) { list.innerHTML = '<p class="cr-empty">لم تظلّل شيئاً بعد. حدّد عبارة أثناء القراءة واختر لوناً — تظهر هنا كل مقتبساتك من كل الكتب.</p>'; return; }
+    if (!all.length) { list.innerHTML = '<p class="cr-empty">لم تظلّل شيئاً بعد. حدّد عبارة أثناء القراءة واختر لوناً — تظهر هنا كل مقتبساتك من كل الكتب. ولكتبك الورقية: «📷 من كتاب ورقي».</p>'; return; }
     const draw = (onlyId) => {
       let items = all.filter((x) => (!bookF || x.book.id === bookF) && (!q || ArSearch.test(x.text + ' ' + x.note + ' ' + x.book.title, q)));
       if (onlyId) items = all.filter((x) => x.id === onlyId);
@@ -4537,6 +4546,207 @@ create policy "midad_own_files" on storage.objects for all
     o.querySelector('.qt-sort').onchange = (e) => { sortBy = e.target.value; draw(); };
     o.querySelector('.qt-rand').onclick = () => { const x = all[Math.floor(Math.random() * all.length)]; focusId = x.id; draw(x.id); };
     o.querySelector('.qt-export').onclick = () => { close(); exportNotes(null); };
+    draw();
+  }
+
+  /* ─── 📷 اقتباس من كتاب ورقي: صورة ← تحديد المقطع ← استخراج النص ← تحرير ← حفظ ───
+     يُحفظ في «كتاب ورقي» داخل المكتبة (نصّه مقتبساتك منه) فيُزامَن ويظهر في «مقتبساتي» والبحث. */
+  function paperText(b) {
+    const qs = (b.paperQuotes || []).slice().sort((x, y) => (x.page || 1e9) - (y.page || 1e9) || x.at - y.at);
+    let t = `# مقتبسات من «${b.title}»\n~ ${b.author ? b.author + ' · ' : ''}كتاب ورقي — ${qs.length} مقتبس\n\n`;
+    for (const q of qs) {
+      t += q.text.split(/\n+/).map((l) => '> ' + l.trim()).filter((l) => l.length > 2).join('\n') + '\n\n';
+      t += `~ ${q.page ? 'ص ' + q.page + ' · ' : ''}${new Date(q.at).toLocaleDateString('ar')}\n\n`;
+      if (q.note) t += `📝 ${q.note}\n\n`;
+      t += '***\n\n';
+    }
+    return t;
+  }
+  async function openCapture(preBookId) {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const o = document.createElement('div');
+    o.className = 'ui-dialog';
+    o.innerHTML = `<div class="ud-box cap-box" role="dialog" aria-modal="true" aria-labelledby="cap-title">
+      <h3 id="cap-title">📷 اقتباس من كتاب ورقي</h3><div class="cap-body"></div></div>`;
+    document.body.appendChild(o);
+    const body = o.querySelector('.cap-body');
+    const close = () => o.remove();
+    o.onclick = (e) => { if (e.target === o) close(); };
+    let img = null, sel = null; // sel: تحديد بنسب الصورة {x,y,w,h}
+
+    function pick() {
+      body.innerHTML = `<p>صوّر الصفحة، ثم حدّد بإصبعك المقطع الذي يعجبك — يُستخرج نصّه ويُحفظ في مكتبتك مع اسم الكتاب ورقم الصفحة.</p>
+        <div class="cap-pick"><label class="btn-gold">📷 صوّر الصفحة<input type="file" accept="image/*" capture="environment" hidden></label>
+        <label class="ud-cancel cap-gal">🖼 من الصور<input type="file" accept="image/*" hidden></label></div>
+        <div class="ud-actions"><button class="ud-cancel cap-close">إغلاق</button></div>`;
+      body.querySelector('.cap-close').onclick = close;
+      body.querySelectorAll('input[type=file]').forEach((inp) => (inp.onchange = async () => {
+        const f = inp.files && inp.files[0]; if (!f) return;
+        try {
+          const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(f));
+          img = bmp; sel = null; crop();
+        } catch { toast('تعذّر فتح الصورة'); }
+      }));
+    }
+
+    function crop() {
+      body.innerHTML = `<p class="cap-tip">اسحب لتحديد المقطع (أو استخرج نص الصورة كلها)</p>
+        <div class="cap-stage"><canvas class="cap-cv"></canvas><div class="cap-sel" hidden></div></div>
+        <div class="ud-actions"><button class="ud-cancel cap-back">↺ صورة أخرى</button><button class="btn-gold cap-ocr">✨ استخرج النص</button></div>`;
+      const cv = body.querySelector('.cap-cv'), box = body.querySelector('.cap-sel'), stage = body.querySelector('.cap-stage');
+      const maxW = Math.min(stage.clientWidth || 420, 560), sc = Math.min(1, maxW / img.width, (innerHeight * 0.5) / img.height);
+      cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      let start = null;
+      const pt = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; };
+      const show = () => {
+        if (!sel) { box.hidden = true; return; }
+        box.hidden = false;
+        Object.assign(box.style, { left: sel.x * cv.clientWidth + 'px', top: sel.y * cv.clientHeight + 'px', width: sel.w * cv.clientWidth + 'px', height: sel.h * cv.clientHeight + 'px' });
+      };
+      cv.style.touchAction = 'none';
+      cv.onpointerdown = (e) => { start = pt(e); cv.setPointerCapture(e.pointerId); sel = null; show(); };
+      cv.onpointermove = (e) => { if (!start) return; const p = pt(e); sel = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }; show(); };
+      cv.onpointerup = () => { start = null; if (sel && (sel.w < 0.03 || sel.h < 0.02)) { sel = null; show(); } };
+      body.querySelector('.cap-back').onclick = pick;
+      body.querySelector('.cap-ocr').onclick = () => extract();
+    }
+
+    async function extract() {
+      const s = sel || { x: 0, y: 0, w: 1, h: 1 };
+      const sx = s.x * img.width, sy = s.y * img.height, sw = s.w * img.width, sh = s.h * img.height;
+      const k = Math.min(1, 2000 / Math.max(sw, sh));
+      const c = document.createElement('canvas'); c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+      c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      body.innerHTML = '<p class="cap-wait">⏳ يجري استخراج النص…</p>';
+      let text = '';
+      try {
+        if (window.Cloud && Cloud.aiReady && Cloud.aiReady()) {
+          const b64 = c.toDataURL('image/jpeg', 0.9).split(',')[1];
+          text = String(await Cloud.aiInvoke({ action: 'ocr', image: b64, mimeType: 'image/jpeg' }) || '');
+          text = text.replace(/^#+\s*/gm, '').replace(/^>\s*/gm, '').replace(/^---$/gm, '').replace(/\*\*/g, '');
+        } else if (window.LocalOCR) {
+          const r = await LocalOCR.recognizeCanvas(c, (m) => { const w = body.querySelector('.cap-wait'); if (w) w.textContent = '⏳ ' + m; });
+          text = r.text; LocalOCR.release();
+        }
+      } catch (e) { toast((e && e.message) || 'تعذّر استخراج النص — يمكنك كتابته بنفسك'); }
+      text = text.replace(/\n{3,}/g, '\n\n').trim();
+      // رقم الصفحة: سطر قصير فيه رقم وحده (أول الصفحة أو آخرها)
+      let page = '';
+      const lines = text.split('\n');
+      for (const i of [lines.length - 1, 0]) { const m = (lines[i] || '').trim().match(/^[-—(]?\s*([0-9٠-٩]{1,4})\s*[-—)]?$/); if (m) { page = m[1].replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)); lines.splice(i, 1); break; } }
+      edit(lines.join('\n').trim(), page);
+    }
+
+    function edit(text, page) {
+      const papers = books.filter((b) => b.paper).sort((a, b) => (b.updatedAt || b.addedAt || 0) - (a.updatedAt || a.addedAt || 0));
+      const def = preBookId || (papers[0] && papers[0].id) || '';
+      body.innerHTML = `
+        <label class="cap-l">النص (عدّله أو اختصره كما تشاء)<textarea class="cap-text" rows="6" dir="rtl">${esc(text)}</textarea></label>
+        <div class="cap-row">
+          <label class="cap-l">من كتاب<select class="cap-book">${papers.map((b) => `<option value="${esc(b.id)}"${b.id === def ? ' selected' : ''}>${esc(b.title)}</option>`).join('')}<option value=""${def ? '' : ' selected'}>➕ كتاب ورقي جديد…</option></select></label>
+          <label class="cap-l cap-pg">الصفحة<input class="cap-page" inputmode="numeric" value="${esc(page)}" placeholder="—"></label>
+        </div>
+        <div class="cap-new"${def ? ' hidden' : ''}><input class="cap-title" placeholder="عنوان الكتاب"><input class="cap-author" placeholder="المؤلف (اختياري)"></div>
+        <label class="cap-l">تعليقك (اختياري)<input class="cap-note" placeholder="لماذا استوقفك؟"></label>
+        <div class="ud-actions"><button class="ud-cancel cap-again">📷 صورة أخرى</button><button class="btn-gold cap-save">✍️ احفظ المقتبس</button></div>`;
+      const selB = body.querySelector('.cap-book');
+      selB.onchange = () => { body.querySelector('.cap-new').hidden = !!selB.value; if (!selB.value) body.querySelector('.cap-title').focus(); };
+      body.querySelector('.cap-again').onclick = pick;
+      body.querySelector('.cap-save').onclick = async (e) => {
+        const btn = e.currentTarget;
+        const qt = body.querySelector('.cap-text').value.trim();
+        if (qt.length < 3) return toast('النص فارغ');
+        let id = selB.value;
+        const now = Date.now();
+        const pg = parseInt(body.querySelector('.cap-page').value, 10) || 0;
+        const quote = { id: 'pq' + now + Math.random().toString(36).slice(2, 6), text: qt, page: pg || undefined, note: body.querySelector('.cap-note').value.trim(), at: now };
+        btn.disabled = true;
+        try {
+          if (!id) {
+            const title = body.querySelector('.cap-title').value.trim();
+            if (!title) { btn.disabled = false; return toast('اكتب عنوان الكتاب'); }
+            const meta = { title, author: body.querySelector('.cap-author').value.trim(), category: 'أخرى', type: 'text', paper: true, paperQuotes: [quote], updatedAt: now };
+            id = await Store.addBook(meta, paperText(meta));
+          } else {
+            const b = await Store.getBook(id);
+            const pq = [...(b.paperQuotes || []), quote];
+            await Store.updateBook(id, { paperQuotes: pq, updatedAt: now });
+            await Store.updatePayload(id, paperText({ ...b, paperQuotes: pq }));
+          }
+          if (window.Cloud) Cloud.pushBook(id);
+          await refresh();
+          const b = books.find((x) => x.id === id);
+          body.innerHTML = `<p class="cap-done">✅ حُفظ المقتبس في «${esc(b ? b.title : '')}»</p>
+            <div class="ud-actions"><button class="ud-cancel cap-close">إغلاق</button><button class="cap-q">✍️ مقتبساتي</button><button class="btn-gold cap-more">📷 مقتبس آخر</button></div>`;
+          body.querySelector('.cap-close').onclick = close;
+          body.querySelector('.cap-q').onclick = () => { close(); openQuotes(quote.id); };
+          body.querySelector('.cap-more').onclick = () => { preBookId = id; pick(); };
+        } catch (err) { btn.disabled = false; toast((err && err.message) || 'تعذّر الحفظ'); }
+      };
+    }
+    pick();
+  }
+
+  /* ─── 📒 كلماتي: كل كلمة بحثتَ عن معناها، من كل الكتب (بطاقات «kind: word» في المراجعة) ─── */
+  async function openVocab() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const decks = await Store.getAllDecks();
+    const words = [];
+    for (const d of decks) for (const c of (d.cards || [])) if (c.kind === 'word' && !c.del) words.push({ c, bookId: d.bookId, book: books.find((x) => x.id === d.bookId) });
+    let q = '', sortBy = 'new';
+    const auto = (() => { try { return localStorage.getItem('midad-vocab-auto') !== '0'; } catch { return true; } })();
+    const due = words.filter((w) => (w.c.due || 0) <= Date.now()).length;
+    const o = document.createElement('div');
+    o.className = 'ui-dialog';
+    o.innerHTML = `<div class="ud-box qt-box vc-box" role="dialog" aria-modal="true" aria-labelledby="vc-title">
+      <h3 id="vc-title">📒 كلماتي <small>${words.length}</small></h3>
+      ${words.length ? `<div class="qt-tools">
+        <input type="search" class="vc-q" placeholder="ابحث في كلماتك ومعانيها…" aria-label="بحث في الكلمات">
+        <select class="vc-sort" aria-label="الترتيب"><option value="new">الأحدث</option><option value="az">أبجدياً</option><option value="weak">الأضعف حفظاً</option><option value="book">حسب الكتاب</option></select>
+      </div>` : ''}
+      <div class="qt-list vc-list" role="list"></div>
+      <label class="vc-auto"><input type="checkbox" ${auto ? 'checked' : ''}> أضِف كل كلمة أبحث عن معناها إلى «كلماتي» تلقائياً</label>
+      <div class="ud-actions">${due ? `<button class="btn-gold vc-review">🃏 راجع كلماتي (${due})</button>` : ''}<button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(o);
+    const close = () => o.remove();
+    o.querySelector('.ud-cancel').onclick = close;
+    o.onclick = (e) => { if (e.target === o) close(); };
+    o.querySelector('.vc-auto input').onchange = (e) => { try { localStorage.setItem('midad-vocab-auto', e.target.checked ? '1' : '0'); } catch {} };
+    { const rv = o.querySelector('.vc-review'); if (rv) rv.onclick = () => { close(); openReview({ words: true }); }; }
+    const list = o.querySelector('.vc-list');
+    if (!words.length) { list.innerHTML = '<p class="cr-empty">لا كلمات بعد. أثناء القراءة انقر نقراً مزدوجاً على أي كلمة (أو حدّدها واختر «📖 معنى») — تظهر بطاقتها بالتشكيل والجذر والمعنى، وتُحفظ هنا لتراجعها.</p>'; return; }
+    const say = (w) => { try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(w); u.lang = 'ar-SA'; u.rate = 0.85; speechSynthesis.speak(u); } catch {} };
+    const dots = (box) => '●'.repeat(Math.min(5, box || 1)) + '○'.repeat(5 - Math.min(5, box || 1));
+    const draw = () => {
+      let items = words.filter((w) => !q || ArSearch.test(w.c.q + ' ' + w.c.a + ' ' + (w.c.ctx || ''), q));
+      items.sort(sortBy === 'az' ? (a, b) => a.c.q.localeCompare(b.c.q, 'ar') : sortBy === 'weak' ? (a, b) => (a.c.box || 1) - (b.c.box || 1)
+        : sortBy === 'book' ? (a, b) => ((a.book && a.book.title) || '').localeCompare((b.book && b.book.title) || '', 'ar') : (a, b) => (b.c.mt || 0) - (a.c.mt || 0));
+      const shown = items.slice(0, 300);
+      list.innerHTML = shown.length ? shown.map((w, i) => `<div class="vc-item" role="listitem">
+          <div class="vc-head"><b class="vc-word">${esc(w.c.q)}</b><span class="vc-lvl" title="درجة الحفظ (${w.c.box || 1} من 5)">${dots(w.c.box)}</span></div>
+          <p class="vc-mean">${esc(w.c.a)}</p>
+          ${w.c.ctx ? `<p class="vc-ctx">«${esc(w.c.ctx)}»</p>` : ''}
+          <div class="vc-foot"><span>${w.book ? '📖 ' + esc(w.book.title) : ''}</span>
+            <span class="qt-acts"><button data-i="${i}" data-a="say" title="انطقها">🔊</button>${w.book ? `<button data-i="${i}" data-a="open" title="افتح الكتاب عندها">📖</button>` : ''}<button data-i="${i}" data-a="del" title="احذفها من كلماتي">🗑</button></span></div>
+        </div>`).join('') : '<p class="cr-empty">لا نتائج</p>';
+      list.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = async () => {
+        const w = shown[+btn.dataset.i];
+        if (btn.dataset.a === 'say') return say(w.c.q);
+        if (btn.dataset.a === 'open') { close(); openBook(w.bookId, w.c.ctx ? { find: normSpace(w.c.ctx).slice(0, 60) } : undefined); return; }
+        // نقرتان للتأكيد (لا نافذة فوق النافذة)
+        if (!btn.classList.contains('arm')) { btn.classList.add('arm'); btn.textContent = 'احذف؟'; setTimeout(() => { if (btn.isConnected) { btn.classList.remove('arm'); btn.textContent = '🗑'; } }, 2500); return; }
+        // حذف ناعم (شاهد بختم): دمج البطاقات بين الأجهزة اتحادٌ بالمعرّف، فالحذف الصريح يعود من السحابة
+        const d = await Store.getDeck(w.bookId);
+        if (d) { const now = Date.now(); await Store.saveDeck(w.bookId, (d.cards || []).map((c) => (c.id === w.c.id ? { ...c, del: true, mt: now } : c))); if (window.Cloud) Cloud.pushDeck(w.bookId); }
+        words.splice(words.indexOf(w), 1);
+        o.querySelector('#vc-title small').textContent = words.length;
+        draw();
+      }));
+    };
+    let t;
+    o.querySelector('.vc-q').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { q = e.target.value.trim(); draw(); }, 200); };
+    o.querySelector('.vc-sort').onchange = (e) => { sortBy = e.target.value; draw(); };
     draw();
   }
 

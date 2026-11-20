@@ -700,6 +700,12 @@
   color: #ffe9bd; border: 1px solid rgba(217,169,79,.35); background: rgba(217,169,79,.1); }
 .define-bubble .dw-save:hover { background: rgba(217,169,79,.2); }
 .define-bubble .dw-save:disabled { opacity: .7; }
+.define-bubble .dw-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.define-bubble .dw-acts .dw-save { margin-top: 0; flex: 1 1 100%; }
+.define-bubble .dw-say, .define-bubble .dw-key { padding: 5px 11px; border-radius: 10px; font-size: 13px; color: #e5deee; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+.define-bubble .dw-key { color: #ffe9bd; border-color: rgba(217,169,79,.35); }
+.define-bubble .dw-web { font-size: 13px; color: #e9c887; text-decoration: none; padding: 5px 4px; }
+.define-bubble .dw-web:hover { text-decoration: underline; }
 
 /* ═══════ شريط الجملة المقروءة (القراءة الصوتية لكتب PDF) ═══════ */
 .tts-caption { position: absolute; z-index: 90; inset-inline: 0; bottom: 74px; margin: 0 auto;
@@ -752,3 +758,60 @@
 /* اللمس: لا وميض رمادي عند النقر، ولا قائمة «حفظ الصورة» عند الضغط المطوّل على صفحة الـPDF */
 #reader { -webkit-tap-highlight-color: transparent; }
 #reader canvas, #reader .pf-img { -webkit-touch-callout: none; }
+
+/* ═══════ ملخّص الفصل + الخريطة الذهنية ═══════ */
+.ck-label { font-size: 12.5px; color: #e9c887; margin-bottom: 6px; }
+.ck-h { font-weight: 700; color: #ffe9bd; margin: 14px 0 8px; font-size: 14px; }
+.ck-map { overflow: auto; border-radius: 14px; border: 1px solid rgba(255,255,255,.08); background: #161126; max-height: 60vh; -webkit-overflow-scrolling: touch; }
+.ck-map svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.ck-btns { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+.ck-btns button { padding: 6px 12px; border-radius: 10px; font-size: 12.5px; color: #e5deee; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+.ck-overlay { position: fixed; inset: 0; z-index: 3000; background: rgba(10,8,18,.94); display: flex; align-items: center; justify-content: center; padding: 14px; padding-top: calc(14px + env(safe-area-inset-top)); }
+.ck-overlay .ck-map-full { max-height: 100%; width: 100%; height: 100%; display: flex; align-items: safe center; border: 0; background: transparent; }
+.ck-overlay .ck-map-full svg { min-width: 1100px; margin: auto; }
+.ck-overlay .ck-x { position: absolute; top: calc(12px + env(safe-area-inset-top)); inset-inline-start: 12px; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.1); color: #fff; font-size: 18px; }
+.ck-chip { position: absolute; z-index: 95; bottom: calc(84px + env(safe-area-inset-bottom)); inset-inline: 0; margin: 0 auto; width: max-content; max-width: calc(100% - 24px);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; padding: 8px 10px 8px 14px; border-radius: 16px;
+  background: rgba(30,22,48,.96); border: 1px solid rgba(217,169,79,.45); color: #f3ecd9; font-size: 13px; box-shadow: 0 10px 34px rgba(0,0,0,.45); animation: udPop .25s ease; }
+.ck-chip .ck-go { padding: 6px 12px; border-radius: 11px; background: linear-gradient(135deg, #e9c887, #d9a94f); color: #241a38; font-weight: 700; font-size: 13px; }
+.ck-chip .ck-no { width: 28px; height: 28px; border-radius: 50%; color: #9a92ad; }
+
+/* ═══════ 🎧 الكتاب المسموع ═══════ */
+.ui-dialog .ab-box { max-width: 560px; text-align: right; max-height: 88vh; display: flex; flex-direction: column; }
+.ui-dialog .ab-box h3 { text-align: center; }
+.ab-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.ui-dialog .ab-box .ab-sub { text-align: center; font-size: 12.5px; margin-bottom: 12px; }
+.ab-top { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 10px; }
+.ab-top button { padding: 10px 16px; border-radius: 13px; font-size: 14px; font-weight: 600; }
+.ui-dialog .ab-box .ab-status { font-size: 12.5px; color: #e9c887; text-align: center; margin: 0 0 8px; }
+.ui-dialog .ab-box .ab-err { font-size: 12.5px; color: #ff9b8f; text-align: center; margin: 0 0 8px; }
+.ab-list { overflow-y: auto; flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 6px; padding: 2px; }
+.ab-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 13px; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.07); }
+.ab-row.here { border-color: rgba(217,169,79,.35); }
+.ab-row.on { background: rgba(217,169,79,.12); border-color: rgba(217,169,79,.6); }
+.ab-ri { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ab-ri b { font-size: 14px; color: #f3ecd9; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-ri span { font-size: 11.5px; color: #9a92ad; }
+.ab-mini { height: 3px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 3px; }
+.ab-mini i { display: block; height: 100%; background: #d9a94f; }
+.ab-ra { display: flex; gap: 4px; }
+.ab-ra button { width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.07); color: #f3ecd9; font-size: 14px; }
+.ab-ra button[data-a=play] { background: linear-gradient(135deg, #e9c887, #d9a94f); color: #241a38; }
+.ui-dialog .ab-box .ab-note { font-size: 11.5px; line-height: 1.7; margin: 10px 0 12px; }
+.ab-box .ud-actions { flex-wrap: wrap; }
+.ab-box .ab-wipe.arm { color: #ff9b8f; border-color: rgba(255,120,110,.5); }
+.ab-bar { position: absolute; z-index: 96; inset-inline: 0; bottom: calc(10px + env(safe-area-inset-bottom)); margin: 0 auto; width: min(560px, calc(100% - 20px));
+  background: rgba(26,19,42,.97); border: 1px solid rgba(217,169,79,.4); border-radius: 18px; padding: 9px 12px 0; box-shadow: 0 14px 40px rgba(0,0,0,.5); overflow: hidden; color: #f3ecd9; }
+.ab-bar .ab-info { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12.5px; }
+.ab-bar .ab-ch { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-bar .ab-time { color: #9a92ad; font-size: 11.5px; white-space: nowrap; direction: ltr; }
+.ab-bar .ab-ctrl { display: flex; justify-content: center; align-items: center; gap: 2px; padding: 6px 0 8px; direction: ltr; flex-wrap: nowrap; }
+.ab-bar .ab-ctrl button { min-width: 34px; height: 36px; border-radius: 18px; color: #e5deee; font-size: 14px; padding: 0 5px; flex: 0 0 auto; }
+@media (max-width: 400px) { .ab-bar .ab-list { display: none; } .ab-bar .ab-ctrl button { min-width: 31px; padding: 0 3px; } }
+.ab-bar .ab-ctrl button:hover { background: rgba(255,255,255,.08); }
+.ab-bar .ab-pp { background: linear-gradient(135deg, #e9c887, #d9a94f) !important; color: #241a38 !important; min-width: 44px !important; height: 44px !important; border-radius: 50% !important; font-size: 17px !important; }
+.ab-bar .ab-prog { height: 3px; margin: 0 -12px; background: rgba(255,255,255,.08); }
+.ab-bar .ab-prog i { display: block; height: 100%; background: #d9a94f; transition: width .3s; }
+#reader .ab-bar ~ .tts-caption { bottom: 140px; }
+/* تسعة أزرار في سطر واحد على أضيق الجوالات */
+@media (max-width: 400px) { .r-tools { gap: 2px; } .r-top .icon-btn { width: 37px; height: 40px; } }

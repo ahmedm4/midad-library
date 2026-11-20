@@ -58,11 +58,17 @@ const LocalOCR = (() => {
     c.width = c.height = 0; // حرّر الذاكرة فوراً
     return { text: clean(data.text), confidence: data.confidence || 0 };
   }
+  // صورة جاهزة (لوحة/صورة) — لالتقاط اقتباس من كتاب ورقي
+  async function recognizeCanvas(c, onStatus) {
+    if (!scheduler) await init(onStatus);
+    const { data } = await scheduler.addJob('recognize', c);
+    return { text: clean(data.text), confidence: data.confidence || 0 };
+  }
   // أغلق العمّال بعد دقيقة خمول (كل عامل يحجز ذاكرة معتبرة)
   function release() {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(async () => { if (scheduler) { try { await scheduler.terminate(); } catch {} scheduler = null; nWorkers = 0; } }, 60000);
   }
-  return { init, recognizePage, release, workers: () => nWorkers || workerCount() };
+  return { init, recognizePage, recognizeCanvas, release, workers: () => nWorkers || workerCount() };
 })();
 window.LocalOCR = LocalOCR;
