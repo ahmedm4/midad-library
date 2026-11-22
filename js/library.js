@@ -2122,7 +2122,7 @@ create policy "midad_own_files" on storage.objects for all
   // كتاب PDF بلا نص حقيقي (صفحات مصوّرة)
   const isScannedText = (ft) => (ft.text || '').replace(/\s+/g, '').length < Math.max(1, (ft.pageStarts || []).length) * 25;
   // يستحق الاستخراج بالتعرّف الضوئي: مصوّر بلا نص، أو نصّه مشوّه من المصدر (أُصلح جزئياً فقط)
-  const needsOcr = (ft) => !!ft && !ft.ocr && (isScannedText(ft) || !!ft.garbled);
+  const needsOcr = (ft) => !!ft && (!ft.ocr || !!ft.live) && (isScannedText(ft) || !!ft.garbled); // live: قراءة حيّة جزئية
 
   async function localOcrRun(id, { fresh, cancelled, onProgress }) {
     let blob = await Store.getPayload(id);

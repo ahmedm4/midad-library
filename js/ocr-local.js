@@ -58,6 +58,29 @@ const LocalOCR = (() => {
     c.width = c.height = 0; // حرّر الذاكرة فوراً
     return { text: clean(data.text), confidence: data.confidence || 0 };
   }
+  /* صفحة مع مواضع كلماتها (للقراءة الحيّة: طبقة نص شفّافة قابلة للتحديد فوق الصفحة المصوّرة).
+     الإحداثيات نسبية (0–1) فتصلح لأي مقاس عرض. الكلمات مرتّبة سطراً سطراً، ومن اليمين في الأسطر العربية. */
+  async function recognizePageWords(pdf, n) {
+    if (!scheduler) await init();
+    const c = await renderPage(pdf, n);
+    const W = c.width, H = c.height;
+    const { data } = await scheduler.addJob('recognize', c);
+    c.width = c.height = 0;
+    const AR = /[؀-ۿ]/;
+    const src = (data.lines && data.lines.length) ? data.lines : [{ words: data.words || [] }];
+    const lines = [];
+    for (const ln of src) {
+      let ws = (ln.words || []).filter((w) => w && w.text && w.text.trim() && w.bbox && (w.confidence == null || w.confidence > 25))
+        .map((w) => ({ t: clean(w.text), b: [w.bbox.x0 / W, w.bbox.y0 / H, w.bbox.x1 / W, w.bbox.y1 / H].map((v) => Math.round(v * 1e4) / 1e4) }))
+        .filter((w) => w.t);
+      if (!ws.length) continue;
+      const ar = ws.filter((w) => AR.test(w.t)).length * 2 >= ws.length;
+      ws.sort((a, b) => (ar ? b.b[0] - a.b[0] : a.b[0] - b.b[0]));
+      lines.push(ws);
+    }
+    lines.sort((a, b) => a[0].b[1] - b[0].b[1]);
+    return { text: lines.map((l) => l.map((w) => w.t).join(' ')).join('\n'), lines, conf: data.confidence || 0 };
+  }
   // صورة جاهزة (لوحة/صورة) — لالتقاط اقتباس من كتاب ورقي
   async function recognizeCanvas(c, onStatus) {
     if (!scheduler) await init(onStatus);
@@ -69,6 +92,6 @@ const LocalOCR = (() => {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(async () => { if (scheduler) { try { await scheduler.terminate(); } catch {} scheduler = null; nWorkers = 0; } }, 60000);
   }
-  return { init, recognizePage, recognizeCanvas, release, workers: () => nWorkers || workerCount() };
+  return { init, recognizePage, recognizePageWords, recognizeCanvas, release, workers: () => nWorkers || workerCount() };
 })();
 window.LocalOCR = LocalOCR;

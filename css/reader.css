@@ -815,3 +815,8 @@
 #reader .ab-bar ~ .tts-caption { bottom: 140px; }
 /* تسعة أزرار في سطر واحد على أضيق الجوالات */
 @media (max-width: 400px) { .r-tools { gap: 2px; } .r-top .icon-btn { width: 37px; height: 40px; } }
+
+/* 🔎 القراءة الحيّة للصفحات المصوّرة */
+.lo-pill { position: absolute; z-index: 94; top: calc(64px + env(safe-area-inset-top)); inset-inline-start: 12px; padding: 6px 12px; border-radius: 14px;
+  background: rgba(26,19,42,.92); border: 1px solid rgba(217,169,79,.35); color: #f3ecd9; font-size: 12px; pointer-events: none; animation: udFade .2s ease; }
+#reader.ui-hidden .lo-pill { top: calc(12px + env(safe-area-inset-top)); }

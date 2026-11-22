@@ -57,6 +57,7 @@ const Reader = (() => {
     celebrated = state.finished;
     chapNow = null; { const cc = $('#ck-chip'); if (cc) cc.hidden = true; }
     abReset(); // عناصر النص تُبنى من جديد مع كل فتح
+    loReset();
     lastActivity = Date.now();
 
     contentEl = $('#r-content');
@@ -178,6 +179,7 @@ const Reader = (() => {
     setDrawMode(false);
     ttsStop();
     abStop();
+    await loFlush(); loReset();
     stopAuto();
     teardownPdfScroll();
     teardownPageFlip();
@@ -328,6 +330,8 @@ const Reader = (() => {
     schedulePersist();
     bump();
     trackChapter();
+    // القلب الواقعي بلا طبقة نص: نقرأ نص الصفحة المصوّرة في الخلفية للصوت والبحث
+    if (isPdf && pdfFlipBookActive() && liveOcrOn()) { clearTimeout(LO.navT); LO.navT = setTimeout(() => { loWant(pdfPage, true); loWant(pdfPage + 1, false); }, 900); }
   }
 
   // تهنئة الإنهاء: جزء من سلسلة يُشير إلى الجزء التالي بدل «أنهيت الكتاب»
@@ -815,11 +819,15 @@ const Reader = (() => {
     tl.style.width = cssVp.width + 'px';
     tl.style.height = cssVp.height + 'px';
     tl.style.setProperty('--scale-factor', cssScale);
+    tl.classList.remove('lo'); delete tl.dataset.lo;
+    let hasText = false;
     try {
       const tc = await page.getTextContent();
       if (myToken !== renderToken) return; // انتقلت الصفحة أثناء الجلب
+      hasText = tc.items.map((i) => i.str).join('').replace(/\s+/g, '').length > 15;
       await pdfjsLib.renderTextLayer({ textContentSource: tc, container: tl, viewport: cssVp, textDivs: [] }).promise;
     } catch (e) { /* بعض الصفحات بلا نص */ }
+    if (myToken === renderToken) loAttach(tl, page.pageNumber, cssVp.width, cssVp.height, hasText);
   }
 
   // رسم مستطيلات التظليل المحفوظة للصفحة الحالية فوق الكنفا
@@ -1017,10 +1025,13 @@ const Reader = (() => {
     tl.innerHTML = '';
     tl.style.width = w + 'px'; tl.style.height = h + 'px';
     tl.style.setProperty('--scale-factor', cssScale);
+    let hasText = false;
     try {
       const tc = await page.getTextContent();
+      hasText = tc.items.map((i) => i.str).join('').replace(/\s+/g, '').length > 15;
       await pdfjsLib.renderTextLayer({ textContentSource: tc, container: tl, viewport: page.getViewport({ scale: cssScale }), textDivs: [] }).promise;
     } catch (e) { /* صفحة بلا نص */ }
+    loAttach(tl, page.pageNumber, w, h, hasText);
   }
 
   function renderVisibleSlots() {
@@ -1262,6 +1273,7 @@ const Reader = (() => {
 
   async function pdfHasReadableText() {
     if (ocrFull && ocrFull.text && ocrFull.text.trim().length > 15) return true; // نص مُستخرَج متاح
+    if (liveOcrOn()) return true; // الصفحات المصوّرة تُقرأ على الجهاز عند الحاجة
     for (let p = pdfPage; p <= Math.min(pageCount, pdfPage + 4); p++) {
       try {
         const page = await pdfDoc.getPage(p);
@@ -1270,6 +1282,132 @@ const Reader = (() => {
       } catch {}
     }
     return false;
+  }
+
+  /* ═══════ 🔎 القراءة الحيّة للصفحات المصوّرة (Tesseract على الجهاز) ═══════
+     الصفحة المصوّرة التي أمامك (بلا طبقة نص) يُتعرّف على نصّها في الخلفية، ثم الصفحتان التاليتان.
+     مواضع الكلمات ⇒ طبقة نص شفّافة قابلة للتحديد (تظليل، نسخ، معجم)؛ والنص يُضاف إلى نص الكتاب
+     المحفوظ صفحةً صفحة (بحث، قراءة صوتية، كتاب مسموع، ملخّص). كل صفحة تُقرأ مرة واحدة فقط. */
+  const LO = { bookId: null, words: null, q: [], busy: false, waiters: new Map(), ft: null, saveT: 0, dirtyW: false, dirtyT: false };
+  function liveOcrOn() { try { return !!window.LocalOCR && localStorage.getItem('midad-live-ocr') !== '0'; } catch { return !!window.LocalOCR; } }
+  async function loLoad() {
+    if (LO.bookId === book.id && LO.words) return;
+    LO.bookId = book.id; LO.q = []; LO.ft = null;
+    LO.words = (await Store.getMisc(book.id, 'ocrw').catch(() => null)) || {};
+  }
+  async function loFlush() {
+    clearTimeout(LO.saveT);
+    const bid = LO.bookId; if (!bid || !LO.words) return;
+    try {
+      if (LO.dirtyW) { LO.dirtyW = false; await Store.putMisc(bid, 'ocrw', LO.words); }
+      if (LO.dirtyT && LO.ft) { LO.dirtyT = false; await Store.saveFulltext(bid, LO.ft); }
+    } catch (e) { console.warn('live ocr save', e); }
+  }
+  function loReset() {
+    loFlush();
+    LO.waiters.forEach((ws) => ws.forEach((w) => w(null))); LO.waiters.clear();
+    LO.bookId = null; LO.words = null; LO.q = []; LO.ft = null; loPill('');
+  }
+  function loPill(msg) {
+    let p0 = $('#lo-pill');
+    if (!msg) { if (p0) p0.hidden = true; return; }
+    if (!p0) { p0 = document.createElement('div'); p0.id = 'lo-pill'; p0.className = 'lo-pill'; p0.setAttribute('role', 'status'); $('#reader').appendChild(p0); }
+    p0.textContent = msg; p0.hidden = false;
+  }
+  // نص الصفحة n إلى نص الكتاب المحفوظ (لا يمسّ صفحة لها نص سابق: أصلي أو من Gemini)
+  async function loMergeText(n, text) {
+    if (!text || !book) return;
+    if (!LO.ft) LO.ft = (await Store.getFulltext(book.id).catch(() => null)) || null;
+    const ft = LO.ft, N = pageCount;
+    const pages = new Array(N).fill('');
+    if (ft && ft.text != null && Array.isArray(ft.pageStarts)) {
+      const ps = ft.pageStarts;
+      for (let i = 0; i < N && i < ps.length; i++) pages[i] = (ft.text.slice(ps[i] ?? 0, ps[i + 1] ?? ft.text.length) || '').trim();
+    }
+    if ((pages[n - 1] || '').replace(/\s+/g, '').length > 15) return;
+    pages[n - 1] = text;
+    let t = ''; const pageStarts = [];
+    for (let i = 0; i < N; i++) { pageStarts.push(t.length); t += pages[i] + '\n\n'; }
+    LO.ft = { ...(ft || {}), text: t, pageStarts, ocr: true, engine: (ft && ft.ocr && ft.engine) || 'tesseract', live: !(ft && ft.ocr && !ft.live) };
+    ocrFull = LO.ft; // القراءة الصوتية والملخّص يجدان النص فوراً
+    LO.dirtyT = true;
+  }
+  // اطلب نص صفحة (prio: الصفحة المعروضة الآن ⇒ أول الطابور). يعيد بياناتها أو null
+  function loWant(n, prio) {
+    if (!book || !isPdf || !liveOcrOn() || n < 1 || n > pageCount) return Promise.resolve(null);
+    if (LO.words && LO.words[n]) return Promise.resolve(LO.words[n]);
+    const pr = new Promise((res) => { const ws = LO.waiters.get(n) || []; ws.push(res); LO.waiters.set(n, ws); });
+    LO.q = LO.q.filter((x) => x !== n);
+    if (prio) { LO.q.unshift(n); LO.q = LO.q.filter((x) => x === n || Math.abs(x - n) <= 4); } // قفزة بعيدة ⇒ أسقط القديم
+    else LO.q.push(n);
+    loPump();
+    return pr;
+  }
+  async function loPump() {
+    if (LO.busy) return;
+    LO.busy = true; const bid = book && book.id, doc = pdfDoc;
+    try {
+      await loLoad();
+      while (LO.q.length && book && book.id === bid && pdfDoc === doc && liveOcrOn()) {
+        const n = LO.q.shift();
+        if (LO.words[n]) { loDone(n, LO.words[n]); continue; }
+        // صفحة لها طبقة نص أصلية ⇒ لا حاجة (قد تصل هنا من الجلب المسبق)
+        let has = false;
+        try { const pg = await doc.getPage(n); const tc = await pg.getTextContent(); has = tc.items.map((i) => i.str).join('').replace(/\s+/g, '').length > 15; } catch {}
+        if (has) { loDone(n, null); continue; }
+        const first = !LocalOCR.workers || !localStorage.getItem('midad-lo-ready');
+        loPill(first ? '🔎 تجهيز التعرّف على النص (أول مرة فقط)…' : `🔎 قراءة نص الصفحة ${n}…`);
+        let d = null;
+        try {
+          const r = await LocalOCR.recognizePageWords(doc, n);
+          d = { lines: r.lines, c: Math.round(r.conf) };
+          try { localStorage.setItem('midad-lo-ready', '1'); } catch {}
+          if (!book || book.id !== bid) return;
+          LO.words[n] = d; LO.dirtyW = true;
+          await loMergeText(n, r.text);
+          clearTimeout(LO.saveT); LO.saveT = setTimeout(loFlush, 3000);
+        } catch (e) { console.warn('live ocr', n, e); if (/تحميل/.test((e && e.message) || '')) { loPill(''); LO.q = []; Library.toast(e.message); } }
+        loDone(n, d);
+      }
+    } finally { LO.busy = false; loPill(''); try { LocalOCR.release(); } catch {} }
+  }
+  function loDone(n, d) { const ws = LO.waiters.get(n); LO.waiters.delete(n); if (ws) ws.forEach((w) => w(d)); }
+  // طبقة النص الشفّافة من مواضع الكلمات (كما تفعل pdf.js مع النص الأصلي)
+  let loCtx = null;
+  function loRender(tl, d, w, h) {
+    if (!d || !d.lines || !d.lines.length || !tl.isConnected) return;
+    loCtx = loCtx || document.createElement('canvas').getContext('2d');
+    const frag = document.createDocumentFragment();
+    for (const line of d.lines) {
+      for (const wd of line) {
+        const [x0, y0, x1, y1] = wd.b;
+        const bw = Math.max(1, (x1 - x0) * w), bh = Math.max(4, (y1 - y0) * h);
+        const fs = bh * 0.92;
+        loCtx.font = `${fs}px sans-serif`;
+        const mw = loCtx.measureText(wd.t).width || bw;
+        const s = document.createElement('span');
+        s.textContent = wd.t + ' ';
+        s.dir = 'auto';
+        s.style.cssText = `left:${(x0 * w).toFixed(1)}px;top:${(y0 * h).toFixed(1)}px;font-size:${fs.toFixed(1)}px;font-family:sans-serif;transform:scaleX(${(bw / mw).toFixed(3)});transform-origin:0 0`;
+        frag.appendChild(s);
+      }
+      frag.appendChild(document.createElement('br'));
+    }
+    tl.innerHTML = '';
+    tl.appendChild(frag);
+    tl.classList.add('lo');
+  }
+  // يُستدعى بعد بناء طبقة النص: صفحة بلا نص ⇒ القراءة الحيّة
+  async function loAttach(tl, n, w, h, hasText) {
+    if (hasText || !liveOcrOn() || !book || !isPdf) return;
+    await loLoad();
+    tl.dataset.lo = n;
+    if (LO.words[n]) loRender(tl, LO.words[n], w, h);
+    else {
+      if (!localStorage.getItem('midad-lo-intro')) { try { localStorage.setItem('midad-lo-intro', '1'); } catch {} Library.toast('🔎 صفحة مصوّرة: يُقرأ نصّها على جهازك لتحدّده وتسمعه وتبحث فيه — يمكنك إيقاف ذلك من إعدادات القراءة «ع»'); }
+      loWant(n, true).then((d) => { if (d && tl.isConnected && +tl.dataset.lo === n) loRender(tl, d, w, h); });
+    }
+    for (let k = 1; k <= 2; k++) if (!LO.words[n + k]) loWant(n + k, false);
   }
 
   // نص صفحة من نتيجة الـOCR (1-based) عند غياب النص الأصلي
@@ -1469,6 +1607,7 @@ const Reader = (() => {
       const rp = readingPage();
       try { const page = await pdfDoc.getPage(rp); const tc = await page.getTextContent(); text = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim(); } catch {}
       if (!text) text = ocrPageText(rp);
+      if (!text && liveOcrOn()) { const d = await loWant(rp, true); if (d) text = ocrPageText(rp); } // صفحة مصوّرة: اقرأها الآن
       return { text, el: null };
     }
     if (ttsIdx >= ttsEls.length) return null;
@@ -2804,6 +2943,16 @@ ${ch.text.slice(0, 120000)}`;
     }); }
     { const fr = $('#focus-row'); if (fr) fr.querySelectorAll('button').forEach((b) => {
       b.onclick = () => { settings.focusMode = b.dataset.focus === '1'; Store.saveSettings(settings); applySettings(); };
+    }); }
+    // القراءة الحيّة للصفحات المصوّرة (Tesseract على الجهاز)
+    { const lr = $('#liveocr-row'); if (lr) lr.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', (b.dataset.lo === '1') === liveOcrOn());
+      b.onclick = async () => {
+        try { localStorage.setItem('midad-live-ocr', b.dataset.lo); } catch {}
+        lr.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+        if (isPdf && b.dataset.lo === '1') { if (pdfScrollActive()) { pdfSlots.forEach((s) => clearSlot(s)); renderVisibleSlots(); } else await renderPdf(pdfPage); }
+        if (b.dataset.lo === '0') { LO.q = []; loPill(''); }
+      };
     }); }
     // تنقية الصفحة المصوّرة (تسوية الخلفية وإزالة الشرائط الفاتحة)
     const enhanceRow = $('#enhance-row');
