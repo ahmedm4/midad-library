@@ -4219,6 +4219,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="libai">🔍 اسأل مكتبتك</button>
         <button data-act="review">🃏 مراجعة البطاقات${reviewDueCount ? ` <i class="menu-badge">${reviewDueCount}</i>` : ''}</button>
         <button data-act="stats">📊 إحصائيات قراءتك</button>
+        <button data-act="wrapped">🎁 سنتي في القراءة</button>
         <button data-act="quotes">✍️ مقتبساتي</button>
         <button data-act="vocab">📒 كلماتي</button>
         <button data-act="capture">📷 اقتباس من كتاب ورقي</button>
@@ -4238,6 +4239,7 @@ create policy "midad_own_files" on storage.objects for all
         closeCardMenu();
         if (act === 'stats') openStats();
         else if (act === 'quotes') openQuotes();
+        else if (act === 'wrapped') openWrapped();
         else if (act === 'vocab') openVocab();
         else if (act === 'capture') openCapture();
         else if (act === 'enrich') openEnrich();
@@ -4476,6 +4478,22 @@ create policy "midad_own_files" on storage.objects for all
   // يُزامَن مع حزمة الإعدادات (Store.getSyncedSettings) — التعديل يختم الحزمة ويدفعها
   const setYearGoal = (n) => { try { localStorage.setItem('midad-year-goal', String(n)); } catch {} if (Store.markSettingsChanged) Store.markSettingsChanged(); };
 
+  /* ─── 🎁 سنتي في القراءة: قصّة عامك في شرائح مصوّرة (js/studio.js) ─── */
+  async function openWrapped() {
+    if (!window.Studio) return toast('تعذّر التحميل — أعد فتح التطبيق');
+    toast('🎁 تُجهَّز حكاية عامك…');
+    // كلمات «كلماتي» المضافة هذا العام (من رزم البطاقات)
+    let words = 0;
+    try {
+      const yS = new Date(new Date().getFullYear(), 0, 1).getTime();
+      const decks = await Promise.all(books.map((b) => Store.getDeck(b.id).catch(() => null)));
+      for (const d of decks) for (const c of (d && d.cards) || []) if (c.kind === 'word' && !c.del && (parseInt(String(c.id).slice(2), 10) || c.mt || 0) >= yS) words++;
+    } catch {}
+    const log = Store.getCombinedLog ? Store.getCombinedLog() : Store.getLog();
+    try { await Studio.wrapped({ books, states, log, quotes: allQuotes(), yearGoal: getYearGoal(), words }); }
+    catch (e) { toast('تعذّر إنشاء الحكاية: ' + ((e && e.message) || '')); }
+  }
+
   /* ─── مقتبساتي: كل ما ظلّلته في كل الكتب، في مكان واحد ─── */
   function allQuotes() {
     const out = [];
@@ -4529,12 +4547,13 @@ create policy "midad_own_files" on storage.objects for all
           <blockquote>${esc(x.text)}</blockquote>
           ${x.note ? `<p class="qt-note">📝 ${esc(x.note)}</p>` : ''}
           <figcaption><span>— ${esc(x.book.title)}${x.book.author ? '، ' + esc(x.book.author) : ''}${x.page ? ` · ص ${x.page}` : ''}</span>
-            <span class="qt-acts"><button data-i="${i}" data-a="copy" title="نسخ">📋</button><button data-i="${i}" data-a="open" title="افتح في الكتاب">📖</button></span></figcaption>
+            <span class="qt-acts"><button data-i="${i}" data-a="card" title="بطاقة صورة">🖼</button><button data-i="${i}" data-a="copy" title="نسخ">📋</button><button data-i="${i}" data-a="open" title="افتح في الكتاب">📖</button></span></figcaption>
         </figure>`).join('') + (items.length > shown.length ? `<p class="cr-empty">تُعرض ${shown.length} من ${items.length} — ضيّق البحث</p>` : '')
         : '<p class="cr-empty">لا نتائج</p>';
       list.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = async () => {
         const x = shown[+btn.dataset.i];
         if (btn.dataset.a === 'open') { close(); openBook(x.book.id, x.jump); return; }
+        if (btn.dataset.a === 'card') { if (window.Studio) Studio.quoteCard({ text: x.text, title: x.book.title, author: x.book.author, cover: x.book.cover, page: x.page }); return; }
         const txt = `«${x.text}»\n— ${x.book.title}${x.book.author ? '، ' + x.book.author : ''}`;
         try { await navigator.clipboard.writeText(txt); toast('✓ نُسخ المقتبس', 'gold'); } catch { toast('تعذّر النسخ'); }
       }));
@@ -4843,6 +4862,7 @@ create policy "midad_own_files" on storage.objects for all
         <h4>دقائق القراءة شهرياً</h4>
         <div class="month-bars">${months.map((x) => `<i class="${x.cur ? 'cur' : ''}${x.future ? ' fut' : ''}" title="${x.label}: ${x.min} د${x.fin ? ` · ${x.fin} كتاب` : ''}"><u style="height:${Math.round(x.min * 100 / moMax)}%">${x.fin ? `<b>${x.fin}</b>` : ''}</u><s>${x.label}</s></i>`).join('')}</div>
         <small class="yc-note">الرقم فوق العمود = كتب أنهيتها في ذلك الشهر</small>
+        <button class="yc-wrapped" id="yc-wrapped">🎁 سنتي في القراءة — حكاية عامك في صور</button>
       </div>`;
 
     const ring = (pct) => {
@@ -4902,6 +4922,7 @@ create policy "midad_own_files" on storage.objects for all
 
     const setG = (v) => { Store.setGoal(v); openStats(); };
     $('#ygoal-minus').onclick = () => { setYearGoal(Math.max(1, yGoal - 1)); openStats(); };
+    { const w = $('#yc-wrapped'); if (w) w.onclick = () => { $('#stats-modal').hidden = true; openWrapped(); }; }
     $('#ygoal-plus').onclick = () => { setYearGoal(yGoal + 1); openStats(); };
     $('#goal-minus').onclick = () => setG(Math.max(1, goal - 5));
     $('#goal-plus').onclick = () => setG(goal + 5);

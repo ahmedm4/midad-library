@@ -96,7 +96,9 @@ const AIDirect = (() => {
       if (!text) throw new Error('لا يوجد نص للنطق');
       const { res, data } = await post(TTS_MODEL, {
         contents: [{ parts: [{ text }] }],
-        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: b.voice || 'Kore' } } } },
+        generationConfig: { responseModalities: ['AUDIO'], speechConfig: (Array.isArray(b.speakers) && b.speakers.length === 2)
+          ? { multiSpeakerVoiceConfig: { speakerVoiceConfigs: b.speakers.map((x) => ({ speaker: String(x.speaker), voiceConfig: { prebuiltVoiceConfig: { voiceName: x.voice || 'Kore' } } })) } }
+          : { voiceConfig: { prebuiltVoiceConfig: { voiceName: b.voice || 'Kore' } } } },
       });
       if (!res.ok) throw new Error(friendly(res.status, data?.error?.message || ''));
       const part = (data?.candidates?.[0]?.content?.parts || []).find((x) => x.inlineData);

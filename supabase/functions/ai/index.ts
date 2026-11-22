@@ -153,7 +153,12 @@ function pcmToWavBase64(b64pcm: string, sampleRate: number): string {
 }
 
 // تحويل نص إلى كلام عبر نموذج Gemini TTS مع تدوير المفاتيح
-async function geminiTTS(model: string, keys: string[], text: string, voice: string) {
+// صوت واحد، أو حوار بين متحدّثَين (بودكاست الفصل): speakers = [{speaker, voice}] ×2
+function speechCfg(voice: string, speakers: { speaker: string; voice: string }[] | null) {
+  if (speakers && speakers.length === 2) return { multiSpeakerVoiceConfig: { speakerVoiceConfigs: speakers.map((x) => ({ speaker: x.speaker, voiceConfig: { prebuiltVoiceConfig: { voiceName: x.voice } } })) } };
+  return { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } };
+}
+async function geminiTTS(model: string, keys: string[], text: string, voice: string, speakers: { speaker: string; voice: string }[] | null = null) {
   let lastErr = "خطأ من Gemini TTS", lastStatus = 500;
   const start = Math.floor(Math.random() * keys.length);
   for (let i = 0; i < keys.length; i++) {
@@ -166,7 +171,7 @@ async function geminiTTS(model: string, keys: string[], text: string, voice: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text }] }],
-          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+          generationConfig: { responseModalities: ["AUDIO"], speechConfig: speechCfg(voice, speakers) },
         }),
       });
       data = await res.json();
@@ -189,7 +194,7 @@ Deno.serve(async (req) => {
   try {
     // مفاتيح Gemini في هذا الخادم لصاحب المشروع ومن يأذن لهم فقط — لا لكل من يحمل المفتاح العام
     const body0 = await req.clone().json().catch(() => ({}));
-    if (body0 && body0.action === "version") return json({ fn: "ai", fnVersion: "2026.11.9" });
+    if (body0 && body0.action === "version") return json({ fn: "ai", fnVersion: "2026.11.22" });
     const who = await callerUser(req);
     if (!who) return json({ error: "المساعد الذكي في هذا الخادم خاص بأصحاب الحسابات — أضِف مفتاح Gemini الخاص بك من إعدادات التطبيق (🤖 الذكاء الاصطناعي)", code: "auth" }, 401);
     const perm = await aiAllowed(who);
@@ -225,7 +230,8 @@ Deno.serve(async (req) => {
       if (!KEYS.length) return json({ error: "الصوت الطبيعي يحتاج Gemini مضبوطاً في الخادم" }, 400);
       const voice = String(b.voice || Deno.env.get("GEMINI_TTS_VOICE") || "Kore");
       const ttsModel = Deno.env.get("GEMINI_TTS_MODEL") || "gemini-2.5-flash-preview-tts";
-      const r = await geminiTTS(ttsModel, KEYS, text, voice);
+      const sp = Array.isArray(b.speakers) ? b.speakers.slice(0, 2).map((x: any) => ({ speaker: String(x?.speaker || "").slice(0, 30), voice: String(x?.voice || "Kore").slice(0, 30) })).filter((x: any) => x.speaker) : null;
+      const r = await geminiTTS(ttsModel, KEYS, text, voice, sp && sp.length === 2 ? sp : null);
       if (!r.ok) return json({ error: r.error }, isQuota(r.status, r.error || "") ? 429 : (r.status || 500));
       return json({ audio: r.wav, mime: "audio/wav" });
     }

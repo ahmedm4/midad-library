@@ -179,6 +179,7 @@ const Reader = (() => {
     setDrawMode(false);
     ttsStop();
     abStop();
+    podStop();
     await loFlush(); loReset();
     stopAuto();
     teardownPdfScroll();
@@ -1512,6 +1513,7 @@ const Reader = (() => {
     const wantNatural = engineSetting() === 'natural' && window.Cloud && Cloud.aiReady && Cloud.aiReady();
     ttsEngine = wantNatural ? 'natural' : 'device';
     if (AB.play) abStop(); // لا صوتان معاً
+    podStop();
     ttsOn = true; ttsPaused = false;
     $('#r-btn-tts').classList.add('on');
     setupMediaSession();
@@ -2125,7 +2127,7 @@ ${ch.text.slice(0, 120000)}`;
 
   async function runAI(action, extra = {}) {
     if (aiBusy) return;
-    const labels = { summarize: '📄 لخّص الكتاب', chapter: '🧠 ملخّص الفصل وخريطته', keypoints: '💡 أبرز نقاط الكتاب', flashcards: '🃏 بطاقات من الكتاب', hlcards: '🖍 بطاقات من تظليلاتي', quiz: '📝 اختبرني' };
+    const labels = { summarize: '📄 لخّص الكتاب', chapter: '🧠 ملخّص الفصل وخريطته', keypoints: '💡 أبرز نقاط الكتاب', flashcards: '🃏 بطاقات من الكتاب', hlcards: '🖍 بطاقات من تظليلاتي', quiz: '📝 اختبرني', podcast: '🎙 بودكاست الفصل', timeline: '🗺 الأعلام والخط الزمني' };
     if (action === 'ask') {
       const q = $('#ai-input').value.trim();
       if (!q) return;
@@ -2140,7 +2142,12 @@ ${ch.text.slice(0, 120000)}`;
     try {
       let body;
       if (action === 'explain') body = { action, title: book.title, text: extra.selection || '' };
-      else if (action === 'chapter') {
+      else if (action === 'podcast' || action === 'timeline') {
+        loading.classList.remove('loading');
+        if (action === 'podcast') await runPodcast(loading, extra.chapterIdx);
+        else await runTimeline(loading);
+        return;
+      } else if (action === 'chapter') {
         const ch = await currentChapterText(extra.chapterIdx);
         if (!ch || !ch.text.trim()) { loading.classList.remove('loading'); loading.innerHTML = 'تعذّر تحديد نصّ الفصل الحالي — إن كان الكتاب مصوّراً فاستخرج نصّه أولاً.'; return; }
         // ملخّص + خريطة ذهنية + بطاقات في نداء واحد؛ النتيجة تُحفظ فلا يُعاد طلبها للفصل نفسه
@@ -2171,71 +2178,498 @@ ${ch.text.slice(0, 120000)}`;
     } finally { aiBusy = false; $('#ai-body').scrollTop = $('#ai-body').scrollHeight; }
   }
 
+  /* ═══════ أدوات مشتركة للاستوديو ═══════ */
+  const hashS = (s) => { let h = 5381; s = String(s); for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+  const arDigits = (s) => String(s || '').replace(/[٠-٩]/g, (d) => d.charCodeAt(0) - 0x660).replace(/[۰-۹]/g, (d) => d.charCodeAt(0) - 0x6f0);
+  const lsMap = (k) => { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch { return {}; } };
+  function lsMapPut(k, key, val, max = 40) {
+    const m = lsMap(k); m[key] = { v: val, at: Date.now() };
+    const ks = Object.keys(m).sort((a, b) => (m[b].at || 0) - (m[a].at || 0));
+    for (const x of ks.slice(max)) delete m[x];
+    try { localStorage.setItem(k, JSON.stringify(m)); } catch {}
+  }
+  const lsMapGet = (k, key) => { const e = lsMap(k)[key]; return e ? e.v : null; };
+  // أقسام الرد بصيغة «## عنوان» (أصمد من JSON حين يُقطع الرد عند حدّ الطول)
+  function mdSections(res) {
+    const out = {}; let cur = '_';
+    for (const ln of String(res || '').split(/\r?\n/)) {
+      const m = ln.match(/^\s*#{1,4}\s*(.+?)\s*$/);
+      if (m) { cur = m[1].replace(/[*:：]/g, '').trim(); out[cur] = out[cur] || []; continue; }
+      (out[cur] = out[cur] || []).push(ln);
+    }
+    return out;
+  }
+  const secGet = (S, ...names) => { for (const n of names) for (const k of Object.keys(S)) if (k.includes(n)) return S[k]; return []; };
+  const bullets = (lines) => lines.map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/\*\*/g, '').trim()).filter((l) => l && !/^لا يوجد/.test(l));
+  // الانتقال إلى موضع: صفحة PDF إن عُرفت، وإلا بحث في الكتاب
+  // أفضل عبارة للبحث: النص كاملاً إن وُجد، وإلا أطول كلماته التي ترد فعلاً في الكتاب
+  function bestQuery(hay, q) {
+    q = String(q || '').trim(); if (!q || !hay) return q;
+    if (ArSearch.find(hay, q, 0)) return q;
+    const ws = q.split(/\s+/), pairs = ws.slice(0, -1).map((w, i) => w + ' ' + ws[i + 1]);
+    const STOP = /^(في|من|على|إلى|عن|مع|بين|ثم|بعد|قبل|التي|الذي|هذا|هذه|كان|بدء|بداية)$/;
+    for (const c of [...pairs, ...ws.filter((w) => w.length >= 3 && !STOP.test(w)).sort((a, b2) => b2.length - a.length)]) if (ArSearch.find(hay, c, 0)) return c;
+    return q;
+  }
+  async function goToMention(q, page) {
+    $('#ai-modal').hidden = true; $('#r-btn-ai').classList.remove('on');
+    document.querySelectorAll('.st-ov').forEach((o) => o.remove());
+    if (isPdf) {
+      let p = parseInt(page, 10);
+      if (!(p > 0) && q) { // ابحث في النص المفهرس عن أول ورود
+        try {
+          const s = await Store.getFulltext(book.id);
+          if (s && s.text) { const m = ArSearch.find(s.text, bestQuery(s.text, q), 0); if (m && s.pageStarts) { let lo = 0; while (lo + 1 < s.pageStarts.length && s.pageStarts[lo + 1] <= m.index) lo++; p = lo + 1; } }
+        } catch {}
+      }
+      if (p > 0) { jumpTo(Math.min(p, pageCount)); return; }
+      Library.toast('لم أجد موضعه في الكتاب');
+      return;
+    }
+    q = bestQuery(contentEl.textContent, q);
+    const s = $('#r-search'); s.hidden = false;
+    $('#r-search-input').value = q; doSearch(q);
+  }
+
+  /* ═══════ 🎙 بودكاست الفصل: حوار بصوتين (مقدّم وضيفة) يُولَّد ويُحفظ على الجهاز ═══════ */
+  const POD_SPK = [{ id: 'Samer', ar: 'سامر', voice: 'Charon' }, { id: 'Layla', ar: 'ليلى', voice: 'Aoede' }];
+  const POD = { audio: null, url: null, el: null, tok: 0 };
+  function podPrompt(ch) {
+    return `اكتب نصّ حلقة بودكاست صوتية قصيرة بالعربية الفصحى السلسة القريبة من لغة الحديث، عن القسم${ch.label ? ` «${ch.label}»` : ''} من كتاب «${book.title}»${book.author ? ` لـ${book.author}` : ''}.
+المتحدّثان:
+- سامر: المقدّم، فضوليّ ودود، يطرح الأسئلة التي تخطر للمستمع ويلخّص ما قيل.
+- ليلى: ضيفة قرأت القسم بعمق، تشرح بوضوح وتضرب أمثلة من الحياة، وتقتبس من النص عبارة أو اثنتين.
+القواعد:
+- ابدأ بترحيب قصير وتعريف بالموضوع، ثم ناقشا أهم ٣ إلى ٥ أفكار في حوار طبيعي حيّ فيه تساؤل وتعقيب واختلاف لطيف، واختما بخلاصة وسؤال يتأمّله المستمع.
+- الطول بين ٦٠٠ و٨٥٠ كلمة. الجمل قصيرة سهلة النطق، والأرقام مكتوبة بالحروف.
+- كل سطر يبدأ باسم المتحدّث ثم نقطتين: «سامر: …» أو «ليلى: …». لا عناوين ولا شرح ولا رموز تنسيق ولا وصف للأصوات.
+- التزم بما في النص، ولا تنسب إلى الكتاب ما ليس فيه.
+
+=== نص القسم ===
+${ch.text.slice(0, 100000)}`;
+  }
+  function parsePod(res) {
+    const turns = [];
+    for (let ln of String(res || '').split(/\r?\n/)) {
+      ln = ln.replace(/\*\*/g, '').trim(); if (!ln || /^#/.test(ln)) continue;
+      const m = ln.match(/^[«"]?\s*(سامر|ليلى|المقدم|المقدّم|الضيفة)\s*[:：]\s*(.+)$/);
+      if (m) turns.push({ s: /ليلى|الضيفة/.test(m[1]) ? 1 : 0, t: m[2].replace(/^[«"]|[»"]$/g, '').trim() });
+      else if (turns.length) turns[turns.length - 1].t += ' ' + ln;
+    }
+    return turns.filter((x) => x.t);
+  }
+  function podChunks(turns) { // مجموعات أدوار ≤ ١٨٠٠ حرف لكل نداء صوت
+    const out = []; let cur = null;
+    turns.forEach((tu, i) => {
+      if (!cur || cur.len + tu.t.length > 1800) { cur = { from: i, to: i, len: 0 }; out.push(cur); }
+      cur.to = i; cur.len += tu.t.length + 8;
+    });
+    return out.map(({ from, to }) => ({ from, to }));
+  }
+  async function podTts(turns, c) {
+    const part = turns.slice(c.from, c.to + 1);
+    const two = new Set(part.map((x) => x.s)).size === 2;
+    if (two) {
+      const text = 'Read this Arabic podcast conversation between Samer (host) and Layla (guest) in a warm, lively, natural tone:\n' + part.map((x) => `${POD_SPK[x.s].id}: ${x.t}`).join('\n');
+      const data = await Cloud.invokeFn('ai', { action: 'tts', text, speakers: POD_SPK.map((x) => ({ speaker: x.id, voice: x.voice })) });
+      if (data && data.audio) return [wavToPcm(data.audio)];
+      throw new Error('لم يصل صوت');
+    }
+    const out = []; // متحدّث واحد في هذه المجموعة ⇒ صوته وحده
+    for (const x of part) { const d = await Cloud.invokeFn('ai', { action: 'tts', text: x.t, voice: POD_SPK[x.s].voice }); if (!d || !d.audio) throw new Error('لم يصل صوت'); out.push(wavToPcm(d.audio)); }
+    return out;
+  }
+  const joinPcm = (arr) => { const n = arr.reduce((a, x) => a + x.pcm.length, 0), o = new Int16Array(n); let k = 0; for (const x of arr) { o.set(x.pcm, k); k += x.pcm.length; } return { pcm: o, sr: arr[0].sr }; };
+  async function podPlayable(blob) { return blob && blob.type === 'application/x-midad-opus' ? opusDecodeToWav(blob) : blob; }
+  function podStop() {
+    POD.tok++;
+    if (POD.audio) { try { POD.audio.pause(); } catch {} POD.audio.removeAttribute('src'); }
+    if (POD.url) { URL.revokeObjectURL(POD.url); POD.url = null; }
+    if (POD.el) POD.el.classList.remove('playing');
+  }
+
+  async function runPodcast(el, forceIdx) {
+    const ch = await currentChapterText(forceIdx);
+    if (!ch || ch.text.trim().length < 400) { el.innerHTML = 'تعذّر تحديد نصّ الفصل الحالي — إن كان الكتاب مصوّراً فاستخرج نصّه أولاً.'; return; }
+    const pk = 'pod' + hashS(`${ch.label}|${ch.text.length}`);
+    const bid = book.id;
+    let meta = await Store.getAudio(bid, pk + '::meta');
+    if (!meta || !meta.turns || !meta.turns.length) {
+      el.innerHTML = `<div class="pod-gen"><span class="ai-typing"><i></i><i></i><i></i></span> يُكتب حوار الحلقة…</div>`;
+      const res = await Cloud.aiInvoke({ action: 'sumtext', title: book.title, text: podPrompt(ch) });
+      const turns = parsePod(res);
+      if (turns.length < 4) { el.innerHTML = mdToHtml(res); return; }
+      meta = { label: ch.label || book.title, turns, chunks: podChunks(turns), durs: [], at: Date.now() };
+      await Store.putAudio(bid, pk + '::meta', meta);
+    }
+    podUI(el, meta, pk, bid);
+  }
+
+  function podUI(el, meta, pk, bid) {
+    const N = meta.chunks.length;
+    el.classList.add('pod');
+    el.innerHTML = `<div class="pod-card">
+        <div class="pod-head"><div class="pod-art" aria-hidden="true">🎙</div><div><b>بودكاست الفصل</b><small>${esc(meta.label)}</small><small class="pod-who">🎤 ${POD_SPK[0].ar} · ${POD_SPK[1].ar}</small></div></div>
+        <div class="pod-ctrl" dir="ltr"><button class="pod-play" aria-label="تشغيل">▶</button>
+          <div class="pod-bar" role="slider" aria-label="موضع الاستماع" tabindex="0"><i></i></div>
+          <span class="pod-time">0:00</span><button class="pod-rate" title="السرعة">1×</button></div>
+        <div class="pod-status" role="status"></div>
+        <details class="pod-tr"><summary>📜 نصّ الحوار</summary><div class="pod-lines">${meta.turns.map((x, i) => `<p data-i="${i}" class="s${x.s}"><b>${POD_SPK[x.s].ar}:</b> ${esc(x.t)}</p>`).join('')}</div></details>
+        <div class="pod-acts"><button class="pod-dl">⬇ احفظ الحلقة صوتاً</button><button class="pod-redo">↻ حلقة جديدة</button></div>
+      </div>`;
+    const $e = (s) => el.querySelector(s);
+    const st = $e('.pod-status'), playB = $e('.pod-play'), bar = $e('.pod-bar'), fill = bar.firstChild, tm = $e('.pod-time');
+    const chars = meta.chunks.map((c) => meta.turns.slice(c.from, c.to + 1).reduce((a, x) => a + x.t.length, 0));
+    const estDur = (i) => meta.durs[i] || chars[i] * 0.075; // تقدير قبل التوليد
+    const total = () => meta.chunks.reduce((a, _, i) => a + estDur(i), 0);
+    const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    let cur = 0, gen = false, rate = 1, want = null;
+    const has = (i) => !!meta.durs[i];
+    // ── التوليد: مجموعة بعد مجموعة، مع إعادة المحاولة عند حدّ الحصّة ──
+    async function generate() {
+      if (gen) return; gen = true;
+      try {
+        for (let i = 0; i < N; i++) {
+          if (has(i)) continue;
+          if (!book || book.id !== bid) return;
+          st.textContent = `🎧 يُسجَّل الصوت… ${i + 1} من ${N}`;
+          let tries = 0, pcm = null;
+          while (!pcm) {
+            try { pcm = joinPcm(await podTts(meta.turns, meta.chunks[i])); }
+            catch (e) {
+              const msg = (e && e.message) || '', quota = /quota|429|حصّ?ة|exhausted|rate/i.test(msg);
+              if (quota && tries < 5) { tries++; st.textContent = `⏳ بلغتَ حدّ الصوت المؤقّت — إعادة المحاولة بعد ${20 * tries} ث`; await sleepMs(20000 * tries); continue; }
+              if (!quota && tries < 2) { tries++; await sleepMs(2500); continue; }
+              st.textContent = quota ? '⚠ نفدت حصّة الصوت الطبيعي اليوم — افتح الحلقة لاحقاً فيكمل التسجيل من حيث وقف' : '⚠ ' + (msg || 'تعذّر توليد الصوت');
+              return;
+            }
+          }
+          const blob = abCanCompress() ? await opusEncode(pcm.pcm, pcm.sr) : wavBlob(pcm.pcm, pcm.sr);
+          await Store.putAudio(bid, `${pk}::${i}`, blob);
+          meta.durs[i] = Math.round(pcm.pcm.length / pcm.sr * 10) / 10;
+          await Store.putAudio(bid, pk + '::meta', meta);
+          paint();
+          if (want === i) { want = null; playChunk(i, 0); }
+        }
+        st.textContent = '';
+      } finally { gen = false; }
+    }
+    function paint() {
+      const a = POD.el === el && POD.audio ? POD.audio : null;
+      let t = 0; for (let i = 0; i < cur; i++) t += estDur(i);
+      if (a && a.duration) t += a.currentTime;
+      const T = total();
+      fill.style.width = (T ? Math.min(100, t * 100 / T) : 0) + '%';
+      tm.textContent = `${fmt(t)} / ${fmt(T)}${meta.durs.filter(Boolean).length < N ? '~' : ''}`;
+      // السطر الحالي (تقدير بنسبة الحروف داخل المجموعة)
+      if (a && a.duration) {
+        const c = meta.chunks[cur], p = a.currentTime / a.duration;
+        let acc = 0, now = c.from;
+        for (let k = c.from; k <= c.to; k++) { acc += meta.turns[k].t.length; if (acc / chars[cur] >= p) { now = k; break; } now = k; }
+        el.querySelectorAll('.pod-lines p').forEach((p2) => p2.classList.toggle('now', +p2.dataset.i === now));
+      }
+    }
+    async function playChunk(i, off) {
+      if (i >= N) { podStop(); playB.textContent = '▶'; cur = 0; paint(); return; }
+      cur = i;
+      if (!has(i)) { want = i; st.textContent = '⏳ يُجهَّز هذا الجزء…'; generate(); return; }
+      const tok = ++POD.tok;
+      const blob = await Store.getAudio(bid, `${pk}::${i}`);
+      const wav = await podPlayable(blob);
+      if (tok !== POD.tok) return;
+      if (!POD.audio) POD.audio = new Audio();
+      if (POD.url) URL.revokeObjectURL(POD.url);
+      POD.url = URL.createObjectURL(wav);
+      const a = POD.audio; POD.el = el; el.classList.add('playing');
+      a.src = POD.url; a.playbackRate = rate;
+      a.onloadedmetadata = () => { if (off) a.currentTime = Math.min(off, a.duration - 0.2); };
+      a.ontimeupdate = () => { if (POD.el === el) paint(); };
+      a.onended = () => { if (POD.el === el) playChunk(cur + 1, 0); };
+      a.onplay = () => { playB.textContent = '⏸'; };
+      a.onpause = () => { playB.textContent = '▶'; };
+      try { await a.play(); } catch {}
+      if ('mediaSession' in navigator) try { navigator.mediaSession.metadata = new MediaMetadata({ title: 'بودكاست: ' + meta.label, artist: book.title, album: 'مِداد' }); } catch {}
+      st.textContent = gen ? st.textContent : '';
+      if (!has(i + 1) && i + 1 < N) generate();
+    }
+    playB.onclick = () => {
+      if (POD.el === el && POD.audio && POD.audio.src) { if (POD.audio.paused) POD.audio.play().catch(() => {}); else POD.audio.pause(); return; }
+      if (ttsOn) ttsStop(); if (AB.play) abStop();
+      if (POD.el && POD.el !== el) podStop();
+      playChunk(cur, 0);
+    };
+    const seek = (ev) => {
+      const r = bar.getBoundingClientRect(), p = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+      let t = p * total(), i = 0;
+      while (i < N - 1 && t > estDur(i)) { t -= estDur(i); i++; }
+      if (ttsOn) ttsStop(); if (AB.play) abStop();
+      playChunk(i, t);
+    };
+    bar.onclick = seek;
+    bar.onkeydown = (e) => { if (POD.el === el && POD.audio && /Arrow(Left|Right)/.test(e.key)) POD.audio.currentTime += e.key === 'ArrowRight' ? 10 : -10; };
+    $e('.pod-rate').onclick = (e) => { const R = [1, 1.15, 1.3, 1.5, 0.9]; rate = R[(R.indexOf(rate) + 1) % R.length]; e.target.textContent = rate + '×'; if (POD.el === el && POD.audio) POD.audio.playbackRate = rate; };
+    el.querySelectorAll('.pod-lines p').forEach((p) => (p.onclick = () => { const k = +p.dataset.i, i = meta.chunks.findIndex((c) => k >= c.from && k <= c.to); if (i >= 0) { if (ttsOn) ttsStop(); if (AB.play) abStop(); playChunk(i, 0); } }));
+    $e('.pod-dl').onclick = async () => {
+      if (meta.durs.filter(Boolean).length < N) { Library.toast('انتظر حتى يكتمل تسجيل الحلقة'); generate(); return; }
+      Library.toast('⬇ تُجهَّز الحلقة…');
+      try {
+        const parts = [];
+        for (let i = 0; i < N; i++) {
+          const w = await podPlayable(await Store.getAudio(bid, `${pk}::${i}`));
+          const u8 = new Uint8Array(await w.arrayBuffer()); let bin = ''; for (let k = 0; k < u8.length; k += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(k, k + 0x8000));
+          parts.push(wavToPcm(btoa(bin)));
+        }
+        const all = joinPcm(parts), blob = wavBlob(all.pcm, all.sr);
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `بودكاست - ${meta.label}.wav`; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      } catch { Library.toast('تعذّر حفظ الحلقة'); }
+    };
+    $e('.pod-redo').onclick = async () => {
+      if (!confirm('أُنشئ حلقة جديدة بحوار مختلف؟ ستُحذف الحالية من الجهاز.')) return;
+      if (POD.el === el) podStop();
+      for (let i = 0; i < N; i++) await Store.deleteAudio(bid, `${pk}::${i}`).catch(() => {});
+      await Store.deleteAudio(bid, pk + '::meta').catch(() => {});
+      el.classList.remove('pod');
+      runPodcast(el).catch((e) => { el.innerHTML = '⚠ ' + esc((e && e.message) || 'تعذّر'); });
+    };
+    paint();
+    generate();
+  }
+
+  /* ═══════ ✒️ الإعراب والتشكيل عند الطلب ═══════ */
+  const AR_HARAKAT = /[ً-ٰٟـ]/g;
+  const skel = (s) => String(s || '').replace(AR_HARAKAT, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^ء-يa-zA-Z0-9]/g, '');
+  function irabPrompt(text, full) {
+    return `أنت أستاذ متمكّن من النحو والصرف والبلاغة العربية. النص التالي من كتاب «${book.title}». أعد الأقسام الأربعة بهذه الصيغة حرفياً، دون أي مقدمة:
+## التشكيل
+(النص نفسه بكلماته وترتيبه دون أي تغيير أو حذف، مشكولاً شكلاً تاماً صحيحاً: حركات أواخر الكلمات وما يلزم في أوساطها)
+## المفردات
+(من ٠ إلى ٥ كلمات غريبة أو مهمّة، كل واحدة في سطر: «- الكلمة | معناها في هذا السياق»)
+## لفتة
+(سطر واحد عن ظاهرة نحوية أو بلاغية لافتة في النص)
+## الإعراب
+(${full ? 'كل كلمة' : 'كل كلمة من أول ثلاثين كلمة فقط'} في سطر بترتيب ورودها: «- الكلمة مشكولة | إعرابها الموجز الدقيق في سطر واحد: الموقع، وعلامة الإعراب أو البناء». حرف العطف أو الجر المتصل يُعرب مع كلمته في السطر نفسه. لا تُعرب علامات الترقيم)
+
+=== النص ===
+${text}`;
+  }
+  async function openIrab(text) {
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    if (!/[ء-ي]/.test(text)) { Library.toast('الإعراب للنصوص العربية'); return; }
+    if (Library.needAI && Library.needAI('الإعراب والتشكيل')) return;
+    if (text.length > 1400) text = text.slice(0, 1400).replace(/\s+\S*$/, '') + '…';
+    const full = text.split(' ').length <= 30;
+    document.querySelectorAll('.ir-dialog').forEach((o) => o.remove());
+    const o = document.createElement('div');
+    o.className = 'ui-dialog ir-dialog';
+    o.innerHTML = `<div class="ud-box ir-box" role="dialog" aria-modal="true" aria-label="الإعراب والتشكيل">
+      <h3>✒️ الإعراب والتشكيل</h3><div class="ir-body"><div class="ir-orig">${esc(text)}</div><p class="ir-wait"><span class="ai-typing"><i></i><i></i><i></i></span> يُشكَّل النص ويُعرَب…</p></div>
+      <div class="ud-actions"><button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(o);
+    const close = () => { o.remove(); };
+    o.querySelector('.ud-cancel').onclick = close;
+    o.onclick = (e) => { if (e.target === o) close(); };
+    const key = hashS(text);
+    let res = lsMapGet('midad-irab', key);
+    try {
+      if (!res) {
+        res = await Cloud.aiInvoke({ action: 'sumtext', title: book.title, text: irabPrompt(text, full) });
+        if (/##\s*التشكيل/.test(res)) lsMapPut('midad-irab', key, res, 60);
+      }
+    } catch (e) { o.querySelector('.ir-body').innerHTML = `<p class="ir-err">⚠ ${esc((e && e.message) || 'تعذّر الحصول على رد')}</p>`; return; }
+    if (!document.body.contains(o)) return;
+    renderIrab(o, res, full);
+  }
+  function renderIrab(o, res, full) {
+    const S = mdSections(res);
+    const tash = secGet(S, 'التشكيل').join(' ').replace(/^[(«]|[)»]$/g, '').replace(/\s+/g, ' ').trim();
+    const ent = bullets(secGet(S, 'الإعراب')).map((l) => { const i = l.indexOf('|'); return i > 0 ? { w: l.slice(0, i).trim(), r: l.slice(i + 1).trim() } : null; }).filter(Boolean);
+    const voc = bullets(secGet(S, 'المفردات')).map((l) => { const i = l.indexOf('|'); return i > 0 ? { w: l.slice(0, i).trim(), r: l.slice(i + 1).trim() } : null; }).filter(Boolean);
+    const lafta = bullets(secGet(S, 'لفتة')).join(' ').replace(/^[(]|[)]$/g, '');
+    const body = o.querySelector('.ir-body');
+    if (!tash) { body.innerHTML = mdToHtml(res); return; }
+    // اربط كلمات النص المشكول بأسطر الإعراب بالترتيب (بمقارنة الهيكل دون حركات)
+    const toks = tash.split(' '), map = new Array(toks.length).fill(-1);
+    let j = 0;
+    toks.forEach((tk, ti) => {
+      const k = skel(tk); if (!k) return;
+      for (let look = 0; look < 4 && j + look < ent.length; look++) {
+        const e = skel(ent[j + look].w);
+        if (e === k) { map[ti] = j + look; j = j + look + 1; return; }
+        if (e.length > k.length && e.includes(k)) { map[ti] = j + look; if (e.endsWith(k)) j = j + look + 1; else j = j + look; return; }
+      }
+    });
+    body.innerHTML = `<div class="ir-tash" dir="rtl">${toks.map((tk, i) => map[i] >= 0 ? `<button class="ir-w" data-e="${map[i]}">${esc(tk)}</button>` : `<span>${esc(tk)}</span>`).join(' ')}</div>
+      <div class="ir-acts"><button class="ir-copy">📋 انسخ المشكول</button><button class="ir-say">🔊 استمع</button>${voc.length ? '<button class="ir-vocab">📒 المفردات إلى كلماتي</button>' : ''}</div>
+      ${ent.length ? `<div class="ir-detail" role="status"><span class="ir-hint">اضغط أي كلمة لترى إعرابها 👆</span></div>` : ''}
+      ${voc.length ? `<div class="ir-h">📖 المفردات</div><dl class="ir-voc">${voc.map((v) => `<dt>${esc(v.w)}</dt><dd>${esc(v.r)}</dd>`).join('')}</dl>` : ''}
+      ${lafta ? `<div class="ir-h">✨ لفتة</div><p class="ir-lafta">${esc(lafta)}</p>` : ''}
+      ${ent.length ? `<details class="ir-all"><summary>الإعراب كاملاً (${ent.length})${full ? '' : ' — لأول ثلاثين كلمة'}</summary><ol>${ent.map((e, i) => `<li data-e="${i}"><b>${esc(e.w)}</b>: ${esc(e.r)}</li>`).join('')}</ol></details>` : ''}`;
+    const det = body.querySelector('.ir-detail');
+    const pick = (ei) => {
+      body.querySelectorAll('.ir-w').forEach((b) => b.classList.toggle('on', +b.dataset.e === ei));
+      body.querySelectorAll('.ir-all li').forEach((li) => li.classList.toggle('on', +li.dataset.e === ei));
+      const e = ent[ei]; if (det && e) det.innerHTML = `<b class="ir-dw">${esc(e.w)}</b><span>${esc(e.r)}</span>`;
+    };
+    body.querySelectorAll('.ir-w').forEach((b) => (b.onclick = () => pick(+b.dataset.e)));
+    body.querySelectorAll('.ir-all li').forEach((li) => (li.onclick = () => pick(+li.dataset.e)));
+    body.querySelector('.ir-copy').onclick = async () => { try { await navigator.clipboard.writeText(tash); Library.toast('✓ نُسخ النص المشكول', 'gold'); } catch { Library.toast('تعذّر النسخ'); } };
+    body.querySelector('.ir-say').onclick = async (ev) => {
+      const b = ev.currentTarget; b.disabled = true; b.textContent = '⏳';
+      try {
+        const d = await Cloud.invokeFn('ai', { action: 'tts', text: tash.slice(0, 2500), voice: settings.ttsVoice || 'Kore' });
+        if (!d || !d.audio) throw 0;
+        const a = new Audio('data:audio/wav;base64,' + d.audio); await a.play();
+      } catch { sayWord(tash); }
+      finally { b.disabled = false; b.textContent = '🔊 استمع'; }
+    };
+    const vb = body.querySelector('.ir-vocab');
+    if (vb) vb.onclick = async () => {
+      try {
+        const existing = (await Store.getDeck(book.id)) || { cards: [] };
+        const now = Date.now(), cards = (existing.cards || []).slice(); let n = 0;
+        for (const v of voc) {
+          const ex = cards.find((c) => skel(c.q) === skel(v.w));
+          if (ex && !ex.del) continue;
+          if (ex) { Object.assign(ex, { del: false, kind: 'word', box: 1, due: now, mt: now }); n++; continue; }
+          cards.push({ id: 'fc' + (now + n) + Math.random().toString(36).slice(2, 6), q: v.w, a: v.r, kind: 'word', ctx: tash.slice(0, 220), box: 1, due: now, mt: now }); n++;
+        }
+        await Store.saveDeck(book.id, cards);
+        if (window.Cloud) Cloud.pushDeck(book.id);
+        vb.disabled = true; vb.textContent = n ? `✓ أُضيفت ${n === 1 ? 'كلمة' : n === 2 ? 'كلمتان' : n + ' كلمات'} إلى كلماتي` : '✓ كلها في كلماتي';
+      } catch { Library.toast('تعذّر الحفظ'); }
+    };
+  }
+
+  /* ═══════ 🗺 خط الزمن والأعلام والأماكن ═══════ */
+  async function bookTextPaged(max = 260000) {
+    if (isPdf) {
+      try { await Library.getBookText(book.id); } catch {}
+      const s = await Store.getFulltext(book.id);
+      if (s && s.text) {
+        const ps = s.pageStarts || [];
+        if (!ps.length) return s.text.slice(0, max);
+        const pages = ps.map((a, i) => ({ n: i + 1, t: s.text.slice(a, ps[i + 1] != null ? ps[i + 1] : s.text.length) }));
+        const tot = pages.reduce((a, p) => a + p.t.length + 10, 0);
+        // كتاب طويل ⇒ عيّنات موزّعة على الكتاب كله (لا أوله فقط)
+        const keep = tot <= max ? pages : pages.filter((_, i) => i % Math.ceil(tot / max) === 0);
+        return keep.map((p) => `⟦ص ${p.n}⟧\n${p.t}`).join('\n').slice(0, max + 20000);
+      }
+    }
+    const t = (await Library.getBookText(book.id)) || '';
+    if (t.length <= max) return t;
+    const k = Math.ceil(t.length / max), step = 4000; let out = '';
+    for (let i = 0; i < t.length; i += step * k) out += t.slice(i, i + step) + '\n…\n';
+    return out;
+  }
+  function timelinePrompt(text) {
+    return `أنت باحث يستخرج من كتاب «${book.title}»${book.author ? ` لـ${book.author}` : ''} مادةً لخط زمني ودليل أعلام وخريطة. أعد الأقسام الثلاثة بهذه الصيغة حرفياً، دون أي مقدمة، كل عنصر في سطر يبدأ بـ «- » والحقول مفصولة بـ « | »:
+## الأحداث
+- السنة الميلادية رقماً (سالبة لما قبل الميلاد، تقريبية إن لزم) | التاريخ كما يُكتب للقارئ (مثل: ٦٢٢م / ١هـ) | الحدث في جملة قصيرة | رقم الصفحة أو -
+## الأعلام
+- الاسم | تعريف موجز ودوره في الكتاب في جملة | سنة الوفاة الميلادية رقماً أو - | رقم الصفحة أو -
+## الأماكن
+- اسم المكان | دوره في الكتاب في جملة قصيرة | خط العرض | خط الطول | رقم الصفحة أو -
+القواعد: من ١٠ إلى ٢٥ حدثاً مرتّبة زمنياً، ومن ٦ إلى ١٨ علماً بحسب أهميتهم في الكتاب، ومن ٠ إلى ١٢ مكاناً حقيقياً بإحداثيات صحيحة. أرقام الصفحات من العلامات ⟦ص N⟧ في النص إن وُجدت، وإلا فاكتب -. إن لم يكن في الكتاب أحداث تاريخية فاكتب تحت «الأحداث» سطراً واحداً: - لا يوجد. لا تضف ما ليس في الكتاب.
+
+=== نص الكتاب ===
+${text}`;
+  }
+  function parseTimeline(res) {
+    const S = mdSections(arDigits(res));
+    const split = (l) => l.split('|').map((x) => x.trim());
+    const num = (x) => { const m = String(x || '').replace(/[٫,]/g, '.').match(/-?\d+(?:\.\d+)?/); return m ? +m[0] : null; };
+    const pg = (x) => { const n = num(x); return n > 0 ? Math.round(n) : null; };
+    const ev = bullets(secGet(S, 'الأحداث')).map(split).filter((f) => f.length >= 3).map((f) => ({ y: num(f[0]), d: f[1], t: f[2], p: pg(f[3]) })).filter((e) => e.t && e.y != null).sort((a, b) => a.y - b.y);
+    const pe = bullets(secGet(S, 'الأعلام')).map(split).filter((f) => f.length >= 2).map((f) => ({ n: f[0], d: f[1], y: num(f[2]), p: pg(f[3]) })).filter((x) => x.n);
+    const pl = bullets(secGet(S, 'الأماكن')).map(split).filter((f) => f.length >= 4).map((f) => ({ n: f[0], d: f[1], lat: num(f[2]), lng: num(f[3]), p: pg(f[4]) })).filter((x) => x.n && x.lat != null && x.lng != null && Math.abs(x.lat) <= 90 && Math.abs(x.lng) <= 180);
+    return { ev, pe, pl };
+  }
+  async function runTimeline(el) {
+    let res = lsMapGet('midad-tl', book.id);
+    if (!res) {
+      const text = await bookTextPaged();
+      if (!text || text.trim().length < 800) { el.innerHTML = 'لا يوجد نص كافٍ — إن كان الكتاب مصوّراً فاستخرج نصّه أولاً.'; return; }
+      el.innerHTML = '<span class="ai-typing"><i></i><i></i><i></i></span> يُقرأ الكتاب وتُستخرج أحداثه وأعلامه…';
+      res = await Cloud.aiInvoke({ action: 'sumtext', title: book.title, text: timelinePrompt(text) });
+      const d0 = parseTimeline(res);
+      if (d0.ev.length + d0.pe.length + d0.pl.length >= 3) lsMapPut('midad-tl', book.id, res, 30);
+    }
+    const d = parseTimeline(res);
+    if (d.ev.length + d.pe.length + d.pl.length < 2) { el.innerHTML = mdToHtml(res); return; }
+    renderTimeline(el, d, false);
+  }
+  const avatarCol = (s) => `hsl(${parseInt(hashS(s), 36) % 360} 45% 42%)`;
+  const yLabel = (y) => (y < 0 ? `${-y} ق.م` : `${y}م`);
+  function renderTimeline(el, d, big) {
+    const tabs = [d.ev.length && ['ev', `⏳ الخط الزمني (${d.ev.length})`], d.pe.length && ['pe', `👤 الأعلام (${d.pe.length})`], d.pl.length && ['pl', `📍 الخريطة (${d.pl.length})`]].filter(Boolean);
+    el.innerHTML = `<div class="tl${big ? ' tl-big' : ''}">
+      <div class="tl-tabs" role="tablist">${tabs.map(([k, l], i) => `<button role="tab" data-t="${k}" class="${i ? '' : 'on'}">${l}</button>`).join('')}${big ? '' : '<button class="tl-full" title="ملء الشاشة">⛶</button>'}</div>
+      <div class="tl-pane"></div><div class="tl-note">مستخرج بالذكاء الاصطناعي — اضغط أي عنصر لتنتقل إلى موضعه في الكتاب.</div></div>`;
+    const pane = el.querySelector('.tl-pane');
+    const pgBtn = (x, q) => `<button class="tl-go" data-q="${esc(q)}" data-p="${x.p || ''}">${x.p ? 'ص ' + x.p + ' ←' : '🔍'}</button>`;
+    const wire = () => pane.querySelectorAll('.tl-go').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); goToMention(b.dataset.q, b.dataset.p); }));
+    const show = async (k) => {
+      el.querySelectorAll('.tl-tabs [data-t]').forEach((b) => b.classList.toggle('on', b.dataset.t === k));
+      if (k === 'ev') {
+        let prev = null, html = '<ol class="tl-line">';
+        for (const e of d.ev) {
+          if (prev != null && e.y - prev >= 150) { const c = Math.round((e.y - prev) / 100); html += `<li class="tl-gap">⋯ ${c === 1 ? 'قرن' : c === 2 ? 'قرنان' : c <= 10 ? c + ' قرون' : c + ' قرناً'} ⋯</li>`; }
+          html += `<li class="tl-ev"><span class="tl-d">${esc(e.d || yLabel(e.y))}</span><p>${esc(e.t)}</p>${pgBtn(e, e.t)}</li>`;
+          prev = e.y;
+        }
+        pane.innerHTML = html + '</ol>';
+      } else if (k === 'pe') {
+        pane.innerHTML = `<div class="tl-people">${d.pe.map((x) => `<div class="tl-p"><span class="tl-av" style="background:${avatarCol(x.n)}">${esc(x.n.replace(/^(ال|أبو |ابن )/, '').trim().charAt(0))}</span>
+          <div><b>${esc(x.n)}</b>${x.y ? `<small> · ت ${esc(yLabel(x.y))}</small>` : ''}<p>${esc(x.d)}</p></div>${pgBtn(x, x.n)}</div>`).join('')}</div>`;
+      } else if (k === 'pl') {
+        pane.innerHTML = '<div class="tl-map" dir="ltr"><p class="tl-load">🗺 تُحمَّل الخريطة…</p></div><ul class="tl-places"></ul>';
+        pane.querySelector('.tl-places').innerHTML = d.pl.map((x, i) => `<li data-i="${i}"><b>📍 ${esc(x.n)}</b> — ${esc(x.d)} ${pgBtn(x, x.n)}</li>`).join('');
+        try {
+          const L = await loadLeaflet();
+          const box = pane.querySelector('.tl-map'); box.innerHTML = '';
+          const map = L.map(box, { zoomControl: true, attributionControl: true });
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 12, attribution: '© OpenStreetMap' }).addTo(map);
+          const ms = d.pl.map((x) => L.circleMarker([x.lat, x.lng], { radius: 8, color: '#d9a94f', weight: 2, fillColor: '#4b2d7f', fillOpacity: 0.85 }).addTo(map)
+            .bindPopup(`<div dir="rtl" style="font-family:Tajawal,sans-serif"><b>${esc(x.n)}</b><br>${esc(x.d)}</div>`));
+          map.fitBounds(L.latLngBounds(d.pl.map((x) => [x.lat, x.lng])).pad(0.3), { maxZoom: 7 });
+          pane.querySelectorAll('.tl-places li').forEach((li) => (li.onclick = () => { const x = d.pl[+li.dataset.i]; map.setView([x.lat, x.lng], 7); ms[+li.dataset.i].openPopup(); box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }));
+          setTimeout(() => map.invalidateSize(), 200);
+        } catch { pane.querySelector('.tl-map').innerHTML = '<p class="tl-load">تعذّر تحميل الخريطة — تحقّق من الاتصال. الأماكن مدرجة أدناه.</p>'; }
+      }
+      wire();
+    };
+    el.querySelectorAll('.tl-tabs [data-t]').forEach((b) => (b.onclick = () => show(b.dataset.t)));
+    const fb = el.querySelector('.tl-full');
+    if (fb) fb.onclick = () => {
+      const o = document.createElement('div'); o.className = 'st-ov';
+      o.innerHTML = `<div class="st-ov-box"><button class="st-x" aria-label="إغلاق">✕</button><h3>🗺 ${esc(book.title)}</h3><div class="st-ov-body"></div></div>`;
+      document.body.appendChild(o);
+      o.querySelector('.st-x').onclick = () => o.remove();
+      renderTimeline(o.querySelector('.st-ov-body'), d, true);
+    };
+    if (tabs.length) show(tabs[0][0]);
+  }
+  let leafletP = null;
+  function loadLeaflet() {
+    if (window.L && window.L.map) return Promise.resolve(window.L);
+    if (!leafletP) leafletP = new Promise((res, rej) => {
+      const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'; document.head.appendChild(css);
+      const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+      s.onload = () => res(window.L); s.onerror = () => { leafletP = null; rej(new Error('leaflet')); };
+      document.head.appendChild(s);
+    });
+    return leafletP;
+  }
+
   /* ═══════ مشاركة الاقتباس كبطاقة صورة ═══════ */
-  async function shareQuote(text) {
+  async function shareQuote(text, page) {
     text = (text || '').trim();
     if (!text) return;
-    if (text.length > 320) text = text.slice(0, 317).trim() + '…';
-    Library.toast('🖼 جارٍ إنشاء البطاقة…');
-    try { await document.fonts.load("700 60px 'Amiri'"); await document.fonts.load("400 30px 'Tajawal'"); } catch {}
-    const W = 1080, H = 1350, dpr = 1;
-    const c = document.createElement('canvas');
-    c.width = W * dpr; c.height = H * dpr;
-    const x = c.getContext('2d');
-    x.scale(dpr, dpr);
-    // خلفية متدرجة فاخرة
-    const g = x.createLinearGradient(0, 0, W, H);
-    g.addColorStop(0, '#241a38'); g.addColorStop(0.55, '#171226'); g.addColorStop(1, '#0e0b16');
-    x.fillStyle = g; x.fillRect(0, 0, W, H);
-    // توهّج علوي
-    const rg = x.createRadialGradient(W / 2, 120, 40, W / 2, 120, 600);
-    rg.addColorStop(0, 'rgba(75,45,127,.5)'); rg.addColorStop(1, 'rgba(75,45,127,0)');
-    x.fillStyle = rg; x.fillRect(0, 0, W, H);
-    // إطار ذهبي
-    x.strokeStyle = 'rgba(217,169,79,.5)'; x.lineWidth = 3;
-    x.strokeRect(46, 46, W - 92, H - 92);
-    x.direction = 'rtl'; x.textAlign = 'center';
-    // زخرفة
-    x.fillStyle = '#d9a94f'; x.font = "60px 'Amiri', serif";
-    x.fillText('❝', W / 2, 250);
-    // نص الاقتباس مع لفّ الأسطر
-    x.fillStyle = '#f3ecd9';
-    let fs = text.length > 180 ? 46 : text.length > 90 ? 56 : 64;
-    x.font = `700 ${fs}px 'Amiri', serif`;
-    const maxW = W - 260, lh = fs * 1.65, words = text.split(/\s+/);
-    const lines = []; let line = '';
-    for (const w of words) {
-      const t = line ? line + ' ' + w : w;
-      if (x.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
-    }
-    if (line) lines.push(line);
-    const blockH = lines.length * lh;
-    let y = Math.max(360, H / 2 - blockH / 2);
-    for (const ln of lines) { x.fillText(ln, W / 2, y); y += lh; }
-    // فاصل
-    x.strokeStyle = 'rgba(217,169,79,.6)'; x.lineWidth = 2;
-    x.beginPath(); x.moveTo(W / 2 - 60, y + 24); x.lineTo(W / 2 + 60, y + 24); x.stroke();
-    // الكتاب والمؤلف
-    x.fillStyle = '#e9c887'; x.font = "600 40px 'Amiri', serif";
-    x.fillText(book.title, W / 2, y + 90);
-    if (book.author) { x.fillStyle = '#9a92ad'; x.font = "400 30px 'Tajawal', sans-serif"; x.fillText(book.author, W / 2, y + 140); }
-    // العلامة السفلية
-    x.fillStyle = '#d9a94f'; x.font = "700 44px 'Aref Ruqaa', 'Amiri', serif";
-    x.fillText('مِداد', W / 2, H - 90);
-    x.fillStyle = 'rgba(154,146,173,.7)'; x.font = "400 22px 'Tajawal', sans-serif";
-    x.fillText('مكتبتي الرقمية', W / 2, H - 55);
-
-    const blob = await new Promise((res) => c.toBlob(res, 'image/png', 0.95));
-    const file = new File([blob], `اقتباس - ${book.title}.png`, { type: 'image/png' });
-    // مشاركة أصلية إن دعمها الجهاز، وإلا تنزيل
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: 'اقتباس من ' + book.title }); return; } catch {}
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = file.name; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    Library.toast('حُفظت بطاقة الاقتباس 🖼', 'gold');
+    // مصمّم البطاقات (js/studio.js): قوالب وخطوط ومقاسات مع معاينة حيّة
+    if (window.Studio) return Studio.quoteCard({ text, title: book.title, author: book.author, cover: book.cover, page: page || (isPdf ? pdfPage : '') });
+    Library.toast('تعذّر فتح مصمّم البطاقات');
   }
 
   /* ═══════ القاموس الفوري (معنى بالذكاء الاصطناعي) ═══════ */
@@ -2609,6 +3043,7 @@ ${ch.text.slice(0, 120000)}`;
     try { localStorage.setItem(AB_POS, JSON.stringify(all)); } catch {}
   }
   async function abPlay(ch, si, t = 0) {
+    podStop();
     if (ttsOn) ttsStop();
     if (autoOn) stopAuto();
     const tok = (AB.tok = (AB.tok || 0) + 1);
@@ -4021,10 +4456,16 @@ ${ch.text.slice(0, 120000)}`;
         hideHlPopup(); pendingPdfMark = null;
         if (txt) { openAI(); runAI('explain', { selection: txt }); }
       };
-      $('#hl-share-btn').onclick = () => {
+      { const ib = $('#hl-irab-btn'); if (ib) ib.onclick = () => {
         const txt = selText();
         hideHlPopup(); pendingPdfMark = null;
-        if (txt) shareQuote(txt);
+        if (txt) openIrab(txt);
+      }; }
+      $('#hl-share-btn').onclick = () => {
+        const txt = selText();
+        const pg = pendingPdfSel ? pendingPdfSel.page : (pendingPdfMark ? ((state.pdfHighlights.find((x) => x.id === pendingPdfMark) || {}).page) : '');
+        hideHlPopup(); pendingPdfMark = null;
+        if (txt) shareQuote(txt, pg);
       };
       const selRect = () => { const s = getSelection(); return (s && s.rangeCount && !s.isCollapsed) ? s.getRangeAt(0).getBoundingClientRect() : null; };
       $('#hl-define-btn').onclick = () => {
