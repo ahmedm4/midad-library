@@ -559,6 +559,20 @@ const Reader = (() => {
   }
 
   // يرسم صفحة PDF إلى صورة dataURL. mirror=true يعكسها أفقياً (لوضع الكانفاس مع مرآة الحاوية RTL)
+  // لون الورق في القلب الواقعي: الصفحات صور داخل كانفاس المحرّك فلا تصلها طبقة اللون كبقية الأوضاع،
+  // فنصبغها عند الرسم (ورق: ضرب بلون السمة؛ داكن: عكس الألوان كما في العرض العادي)
+  function pfToneKey() { const r = $('#reader'); return r.classList.contains('pdf-dark') ? 'dark' : (getComputedStyle(r).getPropertyValue('--paper').trim() || '#ffffff'); }
+  let pfTone = '';
+  function pfApplyTone(cv) {
+    const k = pfToneKey(), x = cv.getContext('2d');
+    if (k === 'dark') {
+      const t = document.createElement('canvas'); t.width = cv.width; t.height = cv.height;
+      const tx = t.getContext('2d'); tx.filter = 'invert(.9) hue-rotate(180deg) contrast(.92)'; tx.drawImage(cv, 0, 0);
+      x.clearRect(0, 0, cv.width, cv.height); x.drawImage(t, 0, 0); t.width = t.height = 0;
+    } else if (!/^#?f{3,6}$/i.test(k.replace('#', '')) ) {
+      x.save(); x.globalCompositeOperation = 'multiply'; x.fillStyle = k; x.fillRect(0, 0, cv.width, cv.height); x.restore();
+    }
+  }
   async function renderPfImage(idx, mirror = false) {
     const page = await pdfDoc.getPage(idx + 1);
     const v1 = page.getViewport({ scale: 1 });
@@ -568,6 +582,7 @@ const Reader = (() => {
     cv.width = vp.width; cv.height = vp.height;
     await page.render({ canvasContext: cv.getContext('2d', { willReadFrequently: !!settings.enhanceScan }), viewport: vp, intent: 'print' }).promise;
     if (settings.enhanceScan) cleanScan(cv.getContext('2d'), cv.width, cv.height);
+    pfApplyTone(cv);
     if (!mirror) return cv.toDataURL('image/jpeg', 0.82);
     const m = document.createElement('canvas'); m.width = cv.width; m.height = cv.height;
     const mx = m.getContext('2d'); mx.translate(cv.width, 0); mx.scale(-1, 1); mx.drawImage(cv, 0, 0);
@@ -622,7 +637,7 @@ const Reader = (() => {
     const h = 800, w = Math.max(1, Math.round(h * (pfAspect || 0.707)));
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const x = c.getContext('2d');
-    x.fillStyle = ($('#reader').classList.contains('pdf-dark')) ? '#1a1c22' : '#ffffff';
+    const k = pfToneKey(); x.fillStyle = k === 'dark' ? '#1a1c22' : k;
     x.fillRect(0, 0, w, h);
     return c.toDataURL('image/jpeg', 0.5);
   }
@@ -673,7 +688,7 @@ const Reader = (() => {
     try {
       const p1 = await pdfDoc.getPage(1); const v = p1.getViewport({ scale: 1 }); pfAspect = v.width / v.height;
       if (myTok !== renderToken) { pfBuilding = false; return; }
-      pfPlaceholder = makePfPlaceholder();
+      pfPlaceholder = makePfPlaceholder(); pfTone = pfToneKey();
       pfUrls = new Array(pageCount).fill(pfPlaceholder); pfReal = new Set();
       const wtok = ++pfWinToken;
       await pfRenderWindow(targetIdx, wtok); // نافذة الموضع فقط → فتح سريع لأي حجم
@@ -3471,6 +3486,8 @@ ${text}`;
       $('#r-btn-draw').style.display = (pdfScrollActive() || flipBook) ? 'none' : '';
       $('#zoom-pill').hidden = flipBook; // لا تكبير في وضع القلب الواقعي
       r.classList.toggle('fit-width', settings.pdfFit === 'width');
+      // تغيّر لون الورق/السمة أثناء القلب الواقعي ⇒ أعد رسم الصفحات باللون الجديد
+      if (pageFlip && pfTone && pfTone !== pfToneKey()) { pfTone = ''; teardownPageFlip(); showPdfPage(pdfPage); }
     }
 
     // تفعيل الأزرار
