@@ -17,7 +17,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&family=Amiri:ital,wght@0,400;0,700;1,400&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@300;400;600;700&family=El+Messiri:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Lateef:wght@400;700&family=Markazi+Text:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Reem+Kufi:wght@400;500;600;700&family=Scheherazade+New:wght@400;700&family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/main.css">
 <link rel="stylesheet" href="css/reader.css">
-<script>/* طبّق سمة المكتبة مبكراً لتجنّب الوميض */try{var t=localStorage.getItem('midad-lib-theme');if(t&&t!=='purple')document.documentElement.setAttribute('data-lib-theme',t);}catch(e){}</script>
+<script>/* طبّق سمة المكتبة مبكراً لتجنّب الوميض */try{var t=localStorage.getItem('midad-lib-theme');if(t&&t!=='purple')document.documentElement.setAttribute('data-lib-theme',t);if(localStorage.getItem('midad-lib-style')==='shelf')document.documentElement.setAttribute('data-lib-style','shelf');}catch(e){}</script>
 </head>
 <body>
 
@@ -253,6 +253,9 @@
       <span id="r-book-author"></span>
     </div>
     <div class="r-tools">
+      <button class="icon-btn" id="r-btn-switch" title="التبديل إلى كتاب آخر (كتبك الأخيرة)" aria-label="التبديل إلى كتاب آخر">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h4v16H4V4zm5 2h4v14H9V6zm5.2.6 3.86-1.04 3.63 13.52-3.87 1.04L14.2 6.6z"/></svg>
+      </button>
       <button class="icon-btn" id="r-btn-search" title="بحث في الكتاب">
         <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
       </button>

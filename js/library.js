@@ -182,6 +182,7 @@ const Library = (() => {
     wireCloud();
     wireLibBar();
     await refresh();
+    maybeAutoDock();
     setTimeout(maybeWelcome, 1200);
     renderAnnouncement();
     setTimeout(checkStorage, 6000);
@@ -707,6 +708,7 @@ create policy "midad_own_files" on storage.objects for all
     renderHero();
     renderChips();
     renderGrid();
+    syncBookPage();
   }
 
   function renderStats() {
@@ -829,6 +831,7 @@ create policy "midad_own_files" on storage.objects for all
 
   // فتح آمن: أي خطأ يُغلق القارئ ويُظهر رسالة بدل ترك شاشة فارغة فوق المكتبة
   async function openBook(id, target) {
+    lastOpenedId = id;
     // كتاب ورقي: نصّه يُبنى من مقتبساته (التي تُزامَن مع البيانات الوصفية) فيبقى محدّثاً على كل جهاز
     try { const b = await Store.getBook(id); if (b && b.paper) await Store.updatePayload(id, paperText(b)); } catch {}
     try { await Reader.open(id, target); }
@@ -1337,6 +1340,7 @@ create policy "midad_own_files" on storage.objects for all
             <span>${pct}<i>٪</i></span>
           </div>` : ''}
         </div>
+        <i class="bk-shelf" aria-hidden="true"></i>
         <div class="bc-meta">
           <b>${esc(b.title)}</b>
           <span class="bc-author">${esc(b.author || '—')}</span>
@@ -1366,6 +1370,7 @@ create policy "midad_own_files" on storage.objects for all
           </div>` : ''}
           ${cur && !ss.finished ? `<button class="series-go" title="${ss.started ? 'واصل' : 'ابدأ'}: ${esc(curLbl)}" aria-label="${ss.started ? 'واصل' : 'ابدأ'} ${esc(curLbl)}">▶</button>` : ''}
         </div>
+        <i class="bk-shelf" aria-hidden="true"></i>
         <div class="bc-meta">
           <b>${esc(sr.title)}</b>
           <span class="bc-author">${esc(it.author || '—')}</span>
@@ -1444,8 +1449,9 @@ create policy "midad_own_files" on storage.objects for all
       if (card.dataset.series) { wireSeriesCard(card); return; }
       const id = card.dataset.id;
       const bk = card.querySelector('.bk');
-      bk.onclick = () => openBook(id);
-      coverAsButton(bk, () => openBook(id));
+      const tap = () => libStyle() === 'shelf' ? openBookPage(id, coverElOf(bk)) : openBookFx(id, coverElOf(bk));
+      bk.onclick = tap;
+      coverAsButton(bk, tap);
       card.querySelector('.bc-menu-btn').onclick = (e) => {
         e.stopPropagation();
         const r = e.currentTarget.getBoundingClientRect();
@@ -2638,6 +2644,330 @@ create policy "midad_own_files" on storage.objects for all
     return h;
   }
 
+  /* ─── صفحة الكتاب + التنقّل بين الكتب + انتقال الغلاف ───
+     اختيارية تماماً: في الأسلوب الكلاسيكي (الافتراضي) يبقى النقر على الغلاف يفتح القراءة كما كان،
+     وتُفتح الصفحة من «⋯ ← صفحة الكتاب». في أسلوب «الرفوف» يفتح النقر صفحة الكتاب، وعلى الشاشات
+     العريضة تُثبَّت لوحةً بجانب الشبكة (قائمة + تفاصيل). */
+  const LIB_STYLES = [
+    { id: 'classic', label: 'كلاسيكي', hint: 'تصميمك الحالي: النقر على الغلاف يبدأ القراءة' },
+    { id: 'shelf', label: 'رفوف وصفحة كتاب', hint: 'رفوف خشبية، والنقر يفتح صفحة الكتاب وتتنقّل بين الكتب بالسحب' },
+  ];
+  const libStyle = () => { try { return localStorage.getItem('midad-lib-style') === 'shelf' ? 'shelf' : 'classic'; } catch { return 'classic'; } };
+  function applyLibStyle(id) {
+    const v = id === 'shelf' ? 'shelf' : 'classic';
+    if (v === 'shelf') document.documentElement.setAttribute('data-lib-style', 'shelf');
+    else document.documentElement.removeAttribute('data-lib-style');
+    try { localStorage.setItem('midad-lib-style', v); } catch {}
+    if (v !== 'shelf' && bpOpenId && bpDocked()) closeBookPage();
+  }
+  const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+  const bpWide = () => innerWidth >= 1100;
+  const bpDocked = () => !!(bpEl && bpEl.classList.contains('bp-docked'));
+
+  // يطير الغلاف من مكانه إلى مستطيل آخر (أو إلى وسط الشاشة متلاشياً) — للشعور بأن الكتاب نفسه انتقل
+  function flyCover(fromEl, to, { fade = false, dur = 420 } = {}) {
+    if (!fromEl || reduceMotion() || !fromEl.animate) return Promise.resolve();
+    const a = fromEl.getBoundingClientRect();
+    if (!a.width || a.bottom < 0 || a.top > innerHeight) return Promise.resolve();
+    let b = to;
+    if (to === 'center') { const h = Math.min(innerHeight * 0.62, 560), w = h * (a.width / a.height); b = { left: (innerWidth - w) / 2, top: (innerHeight - h) / 2, width: w, height: h }; }
+    if (!b || !b.width) return Promise.resolve();
+    const ghost = fromEl.cloneNode(true);
+    ghost.removeAttribute('loading');
+    Object.assign(ghost.style, { position: 'fixed', left: a.left + 'px', top: a.top + 'px', width: a.width + 'px', height: a.height + 'px', margin: 0, zIndex: 3000, pointerEvents: 'none', borderRadius: '6px 12px 12px 6px', objectFit: 'cover', boxShadow: '0 30px 70px rgba(0,0,0,.55)', transformOrigin: '0 0', inset: 'auto' });
+    ghost.style.left = a.left + 'px'; ghost.style.top = a.top + 'px';
+    ghost.classList.add('fly-ghost');
+    document.body.appendChild(ghost);
+    const dx = b.left - a.left, dy = b.top - a.top, sx = b.width / a.width, sy = b.height / a.height;
+    const anim = ghost.animate([
+      { transform: 'translate(0,0) scale(1,1)', opacity: 1 },
+      { transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})`, opacity: fade ? 0 : 1 },
+    ], { duration: dur, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+    return anim.finished.catch(() => {}).then(() => ghost.remove());
+  }
+  const coverElOf = (root) => root && root.querySelector('img, .gen-cover');
+  const cardCoverOf = (id) => coverElOf(document.querySelector(`.book-card[data-id="${CSS.escape(id)}"] .bk`));
+
+  // فتح القراءة مع انتقال الغلاف (من البطاقة أو من صفحة الكتاب)
+  function openBookFx(id, srcEl, target) {
+    const p = flyCover(srcEl || cardCoverOf(id), 'center', { fade: true, dur: 460 });
+    openBook(id, target);
+    return p;
+  }
+
+  let bpEl = null, bpOpenId = null, bpList = [], bpHist = false;
+  // ترتيب التنقّل = ما تعرضه الشبكة الآن (بعد البحث والتصفية والترتيب)، والسلاسل تُفرد أجزاؤها
+  function bpNavList(id) {
+    const ids = [];
+    for (const it of (curList.length ? curList : visibleBooks())) {
+      if (it.__series) { const sr = seriesMap.get(it.__series); if (sr) sr.parts.forEach((p) => ids.push(p.id)); }
+      else ids.push(it.id);
+    }
+    return ids.includes(id) ? ids : [id];
+  }
+  const agoAr = (t) => {
+    if (!t) return '';
+    const d = Math.floor((Date.now() - t) / 86400000);
+    if (d <= 0) return 'اليوم';
+    if (d === 1) return 'أمس';
+    if (d === 2) return 'قبل يومين';
+    if (d < 11) return `قبل ${d} أيام`;
+    if (d < 30) return `قبل ${d} يوماً`;
+    const m = Math.round(d / 30);
+    if (m === 1) return 'قبل شهر';
+    if (m === 2) return 'قبل شهرين';
+    if (m < 11) return `قبل ${m} أشهر`;
+    if (m < 12) return `قبل ${m} شهراً`;
+    const y = Math.round(d / 365);
+    return y <= 1 ? 'قبل سنة' : y === 2 ? 'قبل سنتين' : `قبل ${y} سنوات`;
+  };
+  const countAr = (n, one, two, few, many) => n === 1 ? one : n === 2 ? two : (n >= 3 && n <= 10) ? `${n} ${few}` : `${n} ${many}`;
+
+  function bpCardHTML(b) {
+    const st = states[b.id] || Store.blankState(b.id);
+    const pct = Math.round((st.pct || 0) * 100);
+    const skey = seriesOfBook[b.id], sr = skey ? seriesMap.get(skey) : null;
+    const hl = (st.highlights || []).length + (st.pdfHighlights || []).length;
+    const notes = (st.highlights || []).filter((h) => h.note).length + (st.pdfHighlights || []).filter((h) => h.note).length + (st.pageNotes || []).length;
+    const marks = (st.bookmarks || []).length;
+    const readLbl = st.finished ? '📖 اقرأ مجدداً' : pct > 0 ? `📖 اقرأ · ${pct}٪` : '📖 ابدأ القراءة';
+    const facts = [
+      st.lastRead ? `آخر قراءة ${agoAr(st.lastRead)}` : 'لم تبدأه بعد',
+      st.seconds > 59 ? `${fmtDuration(st.seconds)} قراءة` : '',
+      st.finished && st.finishedAt ? `أنهيته ${agoAr(st.finishedAt)}` : '',
+    ].filter(Boolean).join(' · ');
+    const counts = [hl ? countAr(hl, 'تظليل واحد', 'تظليلان', 'تظليلات', 'تظليلاً') : '', notes ? countAr(notes, 'ملاحظة واحدة', 'ملاحظتان', 'ملاحظات', 'ملاحظة') : '', marks ? countAr(marks, 'علامة واحدة', 'علامتان', 'علامات', 'علامة') : ''].filter(Boolean).join(' · ');
+    const same = (arr, label) => arr.length ? `<div class="bp-row"><h4>${label}</h4><div class="bp-strip">${arr.slice(0, 14).map((x) => `
+        <button class="bp-mini ${x.id === b.id ? 'cur' : ''}" data-go="${x.id}" title="${esc(x.title)}">${coverHTML(x)}${states[x.id] && states[x.id].finished ? '<i>✓</i>' : ''}</button>`).join('')}</div></div>` : '';
+    const byAuthor = b.author ? books.filter((x) => x.id !== b.id && x.author && loose(x.author) === loose(b.author) && !(sr && seriesOfBook[x.id] === skey)) : [];
+    const A = (act, ico, label, cls = '') => `<button class="bp-act ${cls}" data-act="${act}"><span>${ico}</span>${label}</button>`;
+    return `
+      <div class="bp-cov">${coverHTML(b)}</div>
+      <div class="bp-info">
+        <h2>${esc(b.title)}</h2>
+        ${b.author ? `<button class="bp-author" data-author="${esc(b.author)}" title="كتب المؤلف في مكتبتك">${esc(b.author)}</button>` : ''}
+        <div class="bp-tags">
+          ${b.category ? `<span>${esc(b.category)}</span>` : ''}
+          <span>${b.type === 'pdf' ? 'PDF' : b.paper ? '📷 ورقي' : 'نص'}</span>
+          ${sr ? `<button class="bp-series" data-series="${esc(skey)}">📚 ${esc(partLabelOf(b))} · ${esc(sr.title)}</button>` : ''}
+          ${(b.shelves || []).map((s) => `<span>🗂 ${esc(s)}</span>`).join('')}
+        </div>
+      </div>
+      <div class="bp-main-acts">
+        <button class="bp-read" data-act="read">${readLbl}</button>
+        <button class="bp-fin" data-act="${st.finished ? 'unfinish' : 'finish'}">${st.finished ? '↺ لم أُنهِه' : '✓ أنهيته'}</button>
+        <button class="bp-fav ${b.fav ? 'on' : ''}" data-act="fav" title="${b.fav ? 'إزالة من المفضلة' : 'أضف إلى المفضلة'}" aria-label="${b.fav ? 'إزالة من المفضلة' : 'أضف إلى المفضلة'}">${b.fav ? '★' : '☆'}</button>
+      </div>
+      <div class="bp-prog">
+        <div class="bp-bar"><i style="width:${st.finished ? 100 : pct}%"></i></div>
+        <div class="bp-facts">${esc(facts)}</div>
+        ${counts ? `<div class="bp-facts bp-counts">${esc(counts)}</div>` : ''}
+      </div>
+      <div class="bp-acts">
+        ${A('edit', '✏️', 'تعديل البيانات')}
+        ${A('cover', '🖼', 'تغيير الغلاف')}
+        ${A('shelves', '🗂', 'الرفوف')}
+        ${A('series', '📚', sr ? 'تعديل السلسلة' : 'اجمع في سلسلة')}
+        ${b.type === 'pdf' ? A('ocr', '🔎', 'استخراج النص') + A('totext', '📄', 'نسخة نصية') : ''}
+        ${b.type === 'text' ? A('pdf', '🖨', 'تصدير PDF') : ''}
+        ${A('export', '⬇️', 'تصدير الملاحظات')}
+        ${st.finished ? A('card', '🎉', 'بطاقة الإنجاز') : ''}
+        ${pct > 0 || st.finished ? A('reset', '↺', 'تصفير التقدّم') : ''}
+        ${A('delete', '🗑', 'حذف', 'danger')}
+      </div>
+      ${sr ? same(sr.parts, '📚 أجزاء السلسلة') : ''}
+      ${same(byAuthor, '✍️ للمؤلف نفسه')}`;
+  }
+
+  function ensureBookPage() {
+    if (bpEl) return bpEl;
+    bpEl = document.createElement('div');
+    bpEl.className = 'bp-wrap';
+    bpEl.hidden = true;
+    bpEl.innerHTML = `
+      <div class="bp-scrim"></div>
+      <section class="bp" role="dialog" aria-modal="true" aria-label="صفحة الكتاب">
+        <header class="bp-top">
+          <button class="bp-close" title="إغلاق" aria-label="إغلاق">✕</button>
+          <span class="bp-pos" aria-live="polite"></span>
+          <span class="bp-navs">
+            <button class="bp-prev" title="الكتاب السابق" aria-label="الكتاب السابق">›</button>
+            <button class="bp-next" title="الكتاب التالي" aria-label="الكتاب التالي">‹</button>
+          </span>
+        </header>
+        <div class="bp-scroll"><div class="bp-card"></div></div>
+        <div class="bp-hint">اسحب يميناً أو يساراً للتنقّل بين الكتب</div>
+      </section>`;
+    document.body.appendChild(bpEl);
+    bpEl.querySelector('.bp-close').onclick = () => closeBookPage();
+    bpEl.querySelector('.bp-scrim').onclick = () => closeBookPage();
+    bpEl.querySelector('.bp-prev').onclick = () => bpStep(-1);
+    bpEl.querySelector('.bp-next').onclick = () => bpStep(1);
+    bpEl.querySelector('.bp-card').addEventListener('click', bpClick);
+    bpEl.addEventListener('keydown', (e) => {
+      if (e.target.closest('input,textarea')) return;
+      if (e.key === 'Escape') { e.preventDefault(); closeBookPage(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); bpStep(1); }   // من اليمين إلى اليسار: التالي على اليسار
+      else if (e.key === 'ArrowRight') { e.preventDefault(); bpStep(-1); }
+    });
+    // السحب الأفقي بين الكتب (يتبع الإصبع ثم ينزلق)
+    const card = bpEl.querySelector('.bp-card');
+    let sx = 0, sy = 0, dx = 0, drag = false, lock = '';
+    card.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target.closest('.bp-strip')) return; // شريط الأغلفة المصغّرة يتمرّر أفقياً بنفسه
+      sx = e.clientX; sy = e.clientY; dx = 0; drag = true; lock = '';
+    });
+    card.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const mx = e.clientX - sx, my = e.clientY - sy;
+      if (!lock) { if (Math.abs(mx) > 12 && Math.abs(mx) > Math.abs(my) * 1.3) lock = 'x'; else if (Math.abs(my) > 12) { lock = 'y'; drag = false; } }
+      if (lock !== 'x') return;
+      dx = mx;
+      if (bpList.length > 1) card.style.transform = `translateX(${dx * 0.9}px) rotate(${dx / 90}deg)`;
+      card.style.transition = 'none';
+    });
+    const end = () => {
+      if (!drag) return; drag = false;
+      card.style.transition = '';
+      if (lock === 'x' && Math.abs(dx) > 70 && bpList.length > 1) { bpStep(dx < 0 ? 1 : -1, dx); return; }
+      card.style.transform = '';
+    };
+    card.addEventListener('pointerup', end);
+    card.addEventListener('pointercancel', end);
+    // نقرة بعد سحب لا تُعدّ نقراً على زر
+    card.addEventListener('click', (e) => { if (Math.abs(dx) > 12) { e.stopPropagation(); e.preventDefault(); dx = 0; } }, true);
+    window.addEventListener('resize', () => { if (bpOpenId) bpLayout(); });
+    window.addEventListener('popstate', () => {
+      if (!bpOpenId || bpDocked()) return;
+      // الرجوع من القارئ يعيدنا إلى مدخل الصفحة ⇒ تبقى؛ الرجوع من الصفحة نفسها يغلقها
+      if (history.state && history.state.midadBook) return;
+      if (window.Reader && Reader.isOpen && Reader.isOpen()) return;
+      bpHist = false; closeBookPage(true);
+    });
+    return bpEl;
+  }
+  function bpLayout() {
+    const docked = libStyle() === 'shelf' && bpWide();
+    bpEl.classList.toggle('bp-docked', docked);
+    document.documentElement.classList.toggle('bp-has-dock', docked);
+  }
+
+  function renderBookPage(dir = 0) {
+    const b = books.find((x) => x.id === bpOpenId);
+    if (!b) { closeBookPage(); return; }
+    const card = bpEl.querySelector('.bp-card');
+    const i = bpList.indexOf(b.id);
+    bpEl.querySelector('.bp-pos').textContent = bpList.length > 1 ? `${(i + 1).toLocaleString('ar-EG')} من ${bpList.length.toLocaleString('ar-EG')}` : '';
+    bpEl.querySelector('.bp-prev').disabled = i <= 0;
+    bpEl.querySelector('.bp-next').disabled = i < 0 || i >= bpList.length - 1;
+    bpEl.querySelector('.bp-navs').hidden = bpList.length < 2;
+    card.innerHTML = bpCardHTML(b);
+    const ac = card.querySelector('.bp-strip .cur');
+    if (ac) ac.scrollIntoView({ block: 'nearest', inline: 'center' });
+    document.querySelectorAll('.book-card.bp-sel').forEach((c) => c.classList.remove('bp-sel'));
+    const gc = document.querySelector(`.book-card[data-id="${CSS.escape(b.id)}"]`);
+    if (gc) gc.classList.add('bp-sel');
+    if (dir && !reduceMotion() && card.animate) {
+      card.style.transform = '';
+      card.animate([{ transform: `translateX(${dir > 0 ? -60 : 60}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+  }
+  function bpStep(d, fromDx) {
+    const i = bpList.indexOf(bpOpenId), j = i + d;
+    const card = bpEl.querySelector('.bp-card');
+    if (i < 0 || j < 0 || j >= bpList.length) { card.style.transform = ''; return; }
+    const go = () => { bpOpenId = bpList[j]; bpEl.querySelector('.bp-scroll').scrollTop = 0; renderBookPage(d); };
+    if (fromDx && !reduceMotion() && card.animate) {
+      card.animate([{ transform: card.style.transform || 'none' }, { transform: `translateX(${d > 0 ? -innerWidth : innerWidth}px)`, opacity: 0 }], { duration: 180, easing: 'ease-in' })
+        .finished.then(() => { card.style.transform = ''; go(); }, go);
+    } else go();
+    if (bpDocked()) { const gc = document.querySelector(`.book-card[data-id="${CSS.escape(bpList[j])}"]`); if (gc) gc.scrollIntoView({ block: 'nearest', behavior: reduceMotion() ? 'auto' : 'smooth' }); }
+  }
+
+  async function bpClick(e) {
+    const t = e.target.closest('button');
+    if (!t) return;
+    const id = bpOpenId;
+    if (t.dataset.go) { const to = t.dataset.go; if (to !== id) { if (!bpList.includes(to)) bpList = [to]; const d = bpList.indexOf(to) > bpList.indexOf(id) ? 1 : -1; bpOpenId = to; bpEl.querySelector('.bp-scroll').scrollTop = 0; renderBookPage(d); } return; }
+    if (t.dataset.author) {
+      const si = $('#search-input');
+      if (si) { si.value = t.dataset.author; si.dispatchEvent(new Event('input', { bubbles: true })); }
+      if (!bpDocked()) closeBookPage();
+      return;
+    }
+    if (t.dataset.series) { const k = t.dataset.series; if (!bpDocked()) closeBookPage(); openSeriesView(k); return; }
+    const act = t.dataset.act;
+    if (!act) return;
+    if (act === 'read') { openBookFx(id, coverElOf(bpEl.querySelector('.bp-cov'))); return; }
+    if (act === 'finish' || act === 'unfinish') {
+      const st = await Store.getState(id);
+      if (act === 'finish') Object.assign(st, { finished: true, pct: 1, finishedAt: st.finishedAt || Date.now(), lastRead: st.lastRead || Date.now() });
+      else Object.assign(st, { finished: false, finishedAt: null });
+      await Store.saveState(st); if (window.Cloud) Cloud.pushState(id);
+      await refresh();
+      toast(act === 'finish' ? 'أُضيف إلى ما أنهيته 🎉' : 'عاد إلى قيد القراءة');
+      return;
+    }
+    await cardAction(act, id);
+  }
+
+  function openBookPage(id, srcCover) {
+    const b = books.find((x) => x.id === id);
+    if (!b) return;
+    ensureBookPage();
+    const wasOpen = !!bpOpenId;
+    bpList = bpNavList(id);
+    const dir = wasOpen && bpOpenId !== id ? (bpList.indexOf(id) > bpList.indexOf(bpOpenId) ? 1 : -1) : 0;
+    bpOpenId = id;
+    bpLayout();
+    bpEl.hidden = false;
+    bpEl.querySelector('.bp-scroll').scrollTop = 0;
+    renderBookPage(dir);
+    if (!wasOpen) {
+      bpEl.classList.remove('bp-in'); void bpEl.offsetWidth; bpEl.classList.add('bp-in');
+      if (!bpDocked()) {
+        document.body.style.overflow = 'hidden';
+        try { if (!(history.state && history.state.midadBook)) { history.pushState({ midadBook: true }, ''); bpHist = true; } } catch {}
+      }
+      // الغلاف يطير من البطاقة إلى مكانه في الصفحة
+      const dst = coverElOf(bpEl.querySelector('.bp-cov'));
+      if (srcCover && dst && !reduceMotion()) {
+        dst.style.visibility = 'hidden';
+        requestAnimationFrame(() => flyCover(srcCover, dst.getBoundingClientRect(), { dur: 380 }).then(() => { dst.style.visibility = ''; }));
+      }
+    }
+    setTimeout(() => { const f = bpEl.querySelector('.bp-read'); if (f) f.focus({ preventScroll: true }); }, 60);
+  }
+  function closeBookPage(fromHistory) {
+    if (!bpEl || !bpOpenId) return;
+    const id = bpOpenId;
+    bpOpenId = null;
+    bpEl.hidden = true;
+    document.documentElement.classList.remove('bp-has-dock');
+    document.querySelectorAll('.book-card.bp-sel').forEach((c) => c.classList.remove('bp-sel'));
+    if (!(window.Reader && Reader.isOpen && Reader.isOpen())) document.body.style.overflow = '';
+    if (fromHistory !== true && bpHist) { bpHist = false; try { if (history.state && history.state.midadBook) history.back(); } catch {} }
+    const gc = document.querySelector(`.book-card[data-id="${CSS.escape(id)}"] .bk`);
+    if (gc && !reduceMotion()) gc.animate && gc.animate([{ transform: 'scale(1.06)' }, { transform: 'none' }], { duration: 300, easing: 'ease-out' });
+  }
+  // بعد أي تحديث للمكتبة: الصفحة المفتوحة تعكس الحالة الجديدة (أو تتبع الكتاب الذي فُتح من المبدّل)
+  function syncBookPage() {
+    if (!bpOpenId || !bpEl) return;
+    if (lastOpenedId && lastOpenedId !== bpOpenId && books.some((b) => b.id === lastOpenedId) && !(window.Reader && Reader.isOpen && Reader.isOpen())) {
+      bpOpenId = lastOpenedId; bpList = bpNavList(bpOpenId);
+    }
+    if (!books.some((b) => b.id === bpOpenId)) { closeBookPage(); return; }
+    renderBookPage(0);
+  }
+  // في أسلوب الرفوف على شاشة عريضة: اللوحة الجانبية تعرض آخر كتاب قرأته منذ البداية
+  function maybeAutoDock() {
+    if (libStyle() !== 'shelf' || !bpWide() || bpOpenId || !books.length) return;
+    const last = books.filter((b) => states[b.id] && states[b.id].lastRead).sort((a, b) => states[b.id].lastRead - states[a.id].lastRead)[0] || books[0];
+    openBookPage(last.id);
+  }
+  let lastOpenedId = null;
+
   /* ─── قائمة خيارات الكتاب ─── */
   function openCardMenu(x, y, id) {
     closeCardMenu();
@@ -2646,6 +2976,7 @@ create policy "midad_own_files" on storage.objects for all
     menu.className = 'bc-menu';
     menu.innerHTML = `
       <button data-act="read">📖 قراءة</button>
+      <button data-act="page">🪪 صفحة الكتاب</button>
       <button data-act="fav">${b.fav ? '☆ إزالة من المفضلة' : '⭐ أضف إلى المفضلة'}</button>
       <button data-act="shelves">🗂 الرفوف…</button>
       <button data-act="series">📚 ${seriesOfBook[id] ? 'تعديل السلسلة…' : 'اجمع في سلسلة…'}</button>
@@ -2662,10 +2993,21 @@ create policy "midad_own_files" on storage.objects for all
     document.body.appendChild(menu);
     menu.style.top = Math.min(y, innerHeight - menu.offsetHeight - 12) + 'px';
     menu.style.left = Math.min(Math.max(10, x - menu.offsetWidth + 30), innerWidth - menu.offsetWidth - 10) + 'px';
-    menu.onclick = async (e) => {
+    menu.onclick = (e) => {
       const act = e.target.dataset.act;
       closeCardMenu();
+      cardAction(act, id);
+    };
+    setTimeout(() => document.addEventListener('pointerdown', onDocDown, { once: true }));
+    function onDocDown(e) { if (!menu.contains(e.target)) closeCardMenu(); }
+  }
+  // إجراءات الكتاب (من قائمة ⋯ ومن صفحة الكتاب)
+  async function cardAction(act, id) {
+    const b = books.find((x2) => x2.id === id);
+    if (!b) return;
+    {
       if (act === 'read') openBook(id);
+      else if (act === 'page') openBookPage(id);
       else if (act === 'fav') { await Store.updateBook(id, { fav: !b.fav }); b.fav = !b.fav; pushMetaOf(id); render(); }
       else if (act === 'series') openSeriesEditor({ seedId: id });
       else if (act === 'unseries') removeFromSeries(id);
@@ -2683,12 +3025,11 @@ create policy "midad_own_files" on storage.objects for all
         await Store.saveState(st); if (window.Cloud) Cloud.pushState(id); await refresh(); toast('تم تصفير التقدم');
       } else if (act === 'delete') {
         if (await uiConfirm(`سيُحذف «${b.title}» نهائياً مع كل ملاحظاته وتظليلاته.`, { title: 'حذف الكتاب؟', okText: 'احذف', cancelText: 'إلغاء', danger: true })) {
+          if (bpOpenId === id) closeBookPage();
           await Store.deleteBook(id); if (window.Cloud) Cloud.deleteBook(id); await refresh(); toast('حُذف الكتاب');
         }
       }
-    };
-    setTimeout(() => document.addEventListener('pointerdown', onDocDown, { once: true }));
-    function onDocDown(e) { if (!menu.contains(e.target)) closeCardMenu(); }
+    }
   }
   function closeCardMenu() { document.querySelectorAll('.bc-menu').forEach((m) => m.remove()); }
 
@@ -4169,6 +4510,7 @@ create policy "midad_own_files" on storage.objects for all
     { id: 'teal', label: 'بحري', bg: '#071518', glow: '#2d7f7a', dot: '#e0b45a' },
     { id: 'rose', label: 'وردي', bg: '#1a0a12', glow: '#9f2d6a', dot: '#d9a94f' },
     { id: 'paper', label: 'ورقي فاتح', bg: '#efe7d4', glow: '#d8c49a', dot: '#a9782e' },
+    { id: 'bookcase', label: 'خزانة خشبية', bg: '#1f140d', glow: '#6b4527', dot: '#e3b768' },
   ];
   function applyLibTheme(id) {
     if (id && id !== 'purple') document.documentElement.setAttribute('data-lib-theme', id);
@@ -4179,6 +4521,7 @@ create policy "midad_own_files" on storage.objects for all
   window.addEventListener('midad-settings-adopted', () => {
     let t = 'purple'; try { t = localStorage.getItem('midad-lib-theme') || 'purple'; } catch {}
     applyLibTheme(t);
+    { let st = 'classic'; try { st = localStorage.getItem('midad-lib-style') || 'classic'; } catch {} if (document.documentElement.hasAttribute('data-lib-style') !== (st === 'shelf')) { applyLibStyle(st); render(); } }
     const ns = savedSort();
     if (ns !== sort) { sort = ns; const el = $('#sort-select'); if (el) el.value = sort; refresh(); }
   });
@@ -4196,8 +4539,20 @@ create policy "midad_own_files" on storage.objects for all
           <span class="ts-dot" style="background:${t.dot}"></span>
           <span class="ts-check">✓</span>
         </button>`).join('')}</div>
+      <h4 class="style-h">أسلوب العرض</h4>
+      <div class="style-grid">${LIB_STYLES.map((t) => `
+        <button class="style-opt ${t.id === libStyle() ? 'on' : ''}" data-style="${t.id}">
+          <span class="so-pic so-${t.id}"><i></i><i></i><i></i></span>
+          <b>${esc(t.label)}</b><small>${esc(t.hint)}</small>
+        </button>`).join('')}</div>
       <div class="ud-actions"><button class="ud-cancel">تمّ</button></div></div>`;
     document.body.appendChild(overlay);
+    overlay.querySelectorAll('.style-opt').forEach((so) => so.onclick = () => {
+      applyLibStyle(so.dataset.style);
+      if (Store.markSettingsChanged) Store.markSettingsChanged();
+      overlay.querySelectorAll('.style-opt').forEach((x) => x.classList.toggle('on', x === so));
+      render(); maybeAutoDock();
+    });
     const close = () => overlay.remove();
     overlay.querySelector('.ud-cancel').onclick = close;
     overlay.onclick = (e) => { if (e.target === overlay) close(); };
@@ -4223,7 +4578,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="quotes">✍️ مقتبساتي</button>
         <button data-act="vocab">📒 كلماتي</button>
         <button data-act="capture">📷 اقتباس من كتاب ورقي</button>
-        <button data-act="theme">🎨 سمة المكتبة</button>
+        <button data-act="theme">🎨 السمة وأسلوب العرض</button>
         <button data-act="keys">🤖 الذكاء الاصطناعي</button>
         <button data-act="enrich">✨ أكمل بيانات الكتب</button>
         <button data-act="dups">🔁 الكتب المكرّرة</button>
@@ -5204,6 +5559,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf, openAiKeyDialog, needAI };
+  return { init, refresh, toast, openBookPage, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf, openAiKeyDialog, needAI };
 })();
 window.Library = Library;

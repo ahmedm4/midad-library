@@ -48,7 +48,66 @@ const Reader = (() => {
   let celebrated = false;
 
   /* ═══════ فتح وإغلاق ═══════ */
+  // التبديل إلى كتاب آخر والقارئ مفتوح: احفظ الكتاب الحالي ونظّف ما بُني له، دون إغلاق شاشة القارئ
+  async function unloadForSwitch() {
+    try { await persist(true); } catch {}
+    clearTimeout(saveTimer); clearTimeout(uiTimer);
+    closeDrawers(); hideHlPopup(); $('#r-search').hidden = true;
+    { const d = $('#define-bubble'); if (d) d.hidden = true; }
+    rswHide();
+    setDrawMode(false);
+    ttsStop(); abStop(); podStop();
+    try { await loFlush(); } catch {}
+    loReset(); stopAuto();
+    teardownPdfScroll(); teardownPageFlip();
+    $('#r-pdf-scroll').innerHTML = '';
+    if (pdfDoc) { try { await pdfDoc.destroy(); } catch {} }
+    pdfDoc = null; ocrFull = null; pristineHTML = ''; if (contentEl) contentEl.innerHTML = '';
+    revokeAssets();
+  }
+
+  /* ─── المبدّل السريع: كتبك الأخيرة دون الرجوع إلى المكتبة ─── */
+  function rswHide() { const p = $('#r-switch'); if (p) p.hidden = true; const b = $('#r-btn-switch'); if (b) b.classList.remove('on'); }
+  async function rswToggle() {
+    let p = $('#r-switch');
+    if (p && !p.hidden) { rswHide(); return; }
+    if (!p) {
+      p = document.createElement('div');
+      p.id = 'r-switch'; p.className = 'rsw'; p.hidden = true;
+      p.setAttribute('role', 'dialog'); p.setAttribute('aria-label', 'التبديل إلى كتاب آخر');
+      p.innerHTML = `<div class="rsw-head"><b>كتبك الأخيرة</b><button class="rsw-lib" type="button">📚 المكتبة</button><button class="rsw-x" type="button" aria-label="إغلاق">✕</button></div><div class="rsw-strip"></div>`;
+      $('#reader').appendChild(p);
+      p.querySelector('.rsw-x').onclick = rswHide;
+      p.querySelector('.rsw-lib').onclick = () => { rswHide(); close(); };
+      p.addEventListener('click', (e) => {
+        const t = e.target.closest('[data-sw]'); if (!t) return;
+        rswHide();
+        if (t.dataset.sw !== (book && book.id)) Library.openBook(t.dataset.sw);
+      });
+    }
+    const all = await Store.getBooks();
+    const sts = {}; try { for (const s2 of await Store.getAllStates()) sts[s2.bookId] = s2; } catch {}
+    const cur = book && book.id;
+    const list = all.filter((b) => b.id !== cur)
+      .sort((a, b) => ((sts[b.id] || {}).lastRead || 0) - ((sts[a.id] || {}).lastRead || 0) || (b.addedAt || 0) - (a.addedAt || 0))
+      .slice(0, 14);
+    p.querySelector('.rsw-strip').innerHTML = list.length ? list.map((b) => {
+      const st = sts[b.id] || {}, pct = Math.round((st.pct || 0) * 100);
+      return `<button class="rsw-item" data-sw="${b.id}" title="${esc(b.title)}">
+        <span class="rsw-cov">${Library.coverHTML(b)}</span>
+        <span class="rsw-t">${esc(b.title)}</span>
+        <span class="rsw-p">${st.finished ? '✓ مكتمل' : pct ? pct + '٪' : 'لم تبدأ'}</span>
+        <i class="rsw-bar"><i style="width:${st.finished ? 100 : pct}%"></i></i>
+      </button>`;
+    }).join('') : '<div class="rsw-empty">لا كتب أخرى بعد</div>';
+    p.hidden = false;
+    $('#r-btn-switch').classList.add('on');
+    p.querySelector('.rsw-strip').scrollLeft = 0;
+    const f = p.querySelector('.rsw-item'); if (f) f.focus({ preventScroll: true });
+  }
+
   async function open(id, target) {
+    if (isOpen && book) await unloadForSwitch();
     book = await Store.getBook(id);
     if (!book) return;
     state = await Store.getState(id);
@@ -173,7 +232,7 @@ const Reader = (() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     $('#reader').hidden = true;
     document.body.style.overflow = '';
-    closeDrawers(); hideHlPopup(); $('#r-search').hidden = true;
+    closeDrawers(); hideHlPopup(); rswHide(); $('#r-search').hidden = true;
     { const m = $('#ai-modal'); if (m) m.hidden = true; }
     { const d = $('#define-bubble'); if (d) d.hidden = true; }
     setDrawMode(false);
@@ -4215,12 +4274,14 @@ ${text}`;
     contentEl = $('#r-content');
     viewportEl = $('#r-viewport');
     $('#r-back').onclick = () => close();
+    { const sw = $('#r-btn-switch'); if (sw) sw.onclick = rswToggle; }
+    document.addEventListener('pointerdown', (e) => { const p = $('#r-switch'); if (p && !p.hidden && !p.contains(e.target) && !e.target.closest('#r-btn-switch')) rswHide(); });
     window.addEventListener('popstate', () => {
       if (!isOpen) return;
       // الرجوع يغلق أولاً ما فوق الصفحة (درج/بحث/مساعد/تحديد)، ثم الكتاب نفسه
-      const layer = document.querySelector('.r-drawer.open') || !$('#r-search').hidden || ($('#ai-modal') && !$('#ai-modal').hidden) || !$('#hl-popup').hidden || !$('#define-bubble').hidden;
+      const layer = document.querySelector('.r-drawer.open') || ($('#r-switch') && !$('#r-switch').hidden) || !$('#r-search').hidden || ($('#ai-modal') && !$('#ai-modal').hidden) || !$('#hl-popup').hidden || !$('#define-bubble').hidden;
       if (layer) {
-        closeDrawers(); $('#r-search').hidden = true; hideHlPopup(); hideDefineBubble();
+        closeDrawers(); rswHide(); $('#r-search').hidden = true; hideHlPopup(); hideDefineBubble();
         if ($('#ai-modal')) { $('#ai-modal').hidden = true; const ab = $('#r-btn-ai'); if (ab) ab.classList.remove('on'); }
         try { history.pushState({ midadReader: true }, ''); } catch {}
         return;

@@ -177,6 +177,7 @@ const Store = (() => {
     try { o.libTheme = localStorage.getItem(LIBTHEME_KEY) || 'purple'; } catch {}
     try { const g = localStorage.getItem('midad-year-goal'); if (g) o.yearGoal = +g; } catch {} // هدف كتب السنة
     try { const so = localStorage.getItem('midad-lib-sort'); if (so) o.libSort = so; } catch {} // ترتيب المكتبة
+    try { const ls = localStorage.getItem('midad-lib-style'); if (ls) o.libStyle = ls; } catch {} // أسلوب العرض
     return o;
   }
   // اعتماد حزمة أحدث من جهاز آخر (مع ختمها الأصلي، دون اعتبارها تعديلاً محلياً جديداً)
@@ -186,6 +187,7 @@ const Store = (() => {
     for (const k of SYNC_SETTING_KEYS) if (remote[k] !== undefined) next[k] = remote[k];
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
     if (remote.libTheme) { try { localStorage.setItem(LIBTHEME_KEY, remote.libTheme); } catch {} }
+    if (remote.libStyle === 'shelf' || remote.libStyle === 'classic') { try { localStorage.setItem('midad-lib-style', remote.libStyle); } catch {} }
     if (typeof remote.libSort === 'string') { try { localStorage.setItem('midad-lib-sort', remote.libSort); } catch {} }
     if (remote.yearGoal > 0) { try { localStorage.setItem('midad-year-goal', String(remote.yearGoal | 0)); } catch {} }
     try { localStorage.setItem(SETTINGS_AT_KEY, String(at || Date.now())); } catch {}
