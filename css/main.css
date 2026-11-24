@@ -1914,3 +1914,12 @@ html.bp-has-dock #library-view { padding-left: 430px; }
 .rsw-empty { padding: 18px; color: #9a92ad; font-size: 13px; }
 #r-btn-switch.on { color: var(--gold, #d9a94f); }
 .fly-ghost { will-change: transform, opacity; }
+/* نافذة تطبيق أندرويد */
+.apk-box { text-align: start; }
+.apk-box h3 { text-align: center; }
+.apk-list { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.6; }
+.apk-dl { display: block; text-align: center; margin: 14px 0 8px; padding: 13px; border-radius: 999px; font-weight: 700; color: #241802; text-decoration: none;
+  background: linear-gradient(135deg, var(--gold-soft), var(--gold)); box-shadow: 0 8px 22px rgba(217,169,79,.3); }
+.apk-how { font-size: 13px; color: var(--muted); line-height: 1.7; }
+.apk-how summary { cursor: pointer; color: var(--cream); margin: 6px 0; }
+.apk-how ol { padding-inline-start: 20px; margin: 6px 0; }

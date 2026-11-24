@@ -1,5 +1,5 @@
 /* ═══════ مِداد — التشغيل ═══════ */
-const APP_VERSION = 'v147'; // يُحدَّث مع كل إصدار
+const APP_VERSION = 'v148'; // يُحدَّث مع كل إصدار
 
 (async function boot() {
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
@@ -12,6 +12,8 @@ const APP_VERSION = 'v147'; // يُحدَّث مع كل إصدار
   await seedGuide();
   // المكتبة يجب أن تظهر دائماً حتى لو فشل ربط القارئ (مثلاً عند عدم تطابق نسخ الملفات)
   try { Reader.wire(); } catch (e) { console.error('reader wire', e); }
+  // داخل تطبيق أندرويد (TWA): المُحيل android-app:// في أول تحميل فقط، فنحفظه للجلسة
+  try { if (/^android-app:\/\//.test(document.referrer)) sessionStorage.setItem('midad-twa', '1'); } catch {}
   try { await Library.init(); } catch (e) { console.error('library init', e); }
   try { if (window.Cloud) Cloud.init(); } catch (e) { console.error('cloud init', e); }
   // إعدادات الموقع من لوحة التحكم (الإعلان، المصادر المفعّلة، التسجيل…) — للجميع، تُحدَّث كل ١٠ دقائق
@@ -28,8 +30,32 @@ const APP_VERSION = 'v147'; // يُحدَّث مع كل إصدار
         if (last) Library.openBook(last.bookId); else if (window.Library) Library.toast('لم تبدأ قراءة أي كتاب بعد');
       } else if (act === 'discover' && window.Discover) Discover.open();
       else if (act === 'add') { const b = document.getElementById('btn-add'); if (b) b.click(); }
+      else if (act === 'shared') {
+        // ملفات/رابط شاركها المستخدم إلى مِداد من تطبيق آخر (يحفظها عامل الخدمة)
+        const c = await caches.open('midad-share');
+        const files = [];
+        let link = '';
+        for (const k of await c.keys()) {
+          const r = await c.match(k);
+          if (/\/link$/.test(k.url)) link = await r.text();
+          else { const bl = await r.blob(); files.push(new File([bl], decodeURIComponent(r.headers.get('X-Name') || 'كتاب'), { type: bl.type })); }
+          await c.delete(k);
+        }
+        if (files.length) Library.importFiles(files);
+        else if (link) Library.importFiles([], link);
+        else Library.toast('لم يصل ملف يمكن إضافته — شارك ملف PDF أو EPUB أو نصّاً');
+      }
     }
   } catch (e) { console.warn('shortcut', e); }
+  // «فتح بواسطة مِداد» (التطبيق المثبّت): الملفات تصل عبر launchQueue
+  try {
+    if ('launchQueue' in window) launchQueue.setConsumer(async (p) => {
+      if (!p || !p.files || !p.files.length) return;
+      const files = [];
+      for (const h of p.files) { try { files.push(await h.getFile()); } catch {} }
+      if (files.length) Library.importFiles(files);
+    });
+  } catch (e) { console.warn('launchQueue', e); }
   try { if (window.A11y) A11y.init(); } catch (e) { console.error('a11y init', e); }
 
   // تسجيل عامل الخدمة (تطبيق قابل للتثبيت + عمل بلا إنترنت) مع تحديث مُتحكَّم فيه

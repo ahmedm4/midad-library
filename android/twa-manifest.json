@@ -1,0 +1,100 @@
+{
+  "packageId": "io.github.ahmedm4.midad",
+  "host": "ahmedm4.github.io",
+  "name": "مِداد — مكتبتك الرقمية",
+  "launcherName": "مِداد",
+  "display": "standalone",
+  "themeColor": "#0E0B16",
+  "themeColorDark": "#0E0B16",
+  "navigationColor": "#0E0B16",
+  "navigationColorDark": "#0E0B16",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#0E0B16",
+  "enableNotifications": false,
+  "startUrl": "/midad-library/",
+  "iconUrl": "https://ahmedm4.github.io/midad-library/icon-512.png",
+  "maskableIconUrl": "https://ahmedm4.github.io/midad-library/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "D:/midad-android-keys/midad-release.jks",
+    "alias": "midad"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "واصل القراءة",
+      "shortName": "واصل",
+      "url": "https://ahmedm4.github.io/midad-library/?open=continue",
+      "chosenIconUrl": "https://ahmedm4.github.io/midad-library/icon-96.png"
+    },
+    {
+      "name": "استكشف كتباً",
+      "shortName": "استكشف",
+      "url": "https://ahmedm4.github.io/midad-library/?open=discover",
+      "chosenIconUrl": "https://ahmedm4.github.io/midad-library/icon-96.png"
+    },
+    {
+      "name": "أضف كتاباً",
+      "shortName": "أضف",
+      "url": "https://ahmedm4.github.io/midad-library/?open=add",
+      "chosenIconUrl": "https://ahmedm4.github.io/midad-library/icon-96.png"
+    }
+  ],
+  "generatorApp": "midad",
+  "webManifestUrl": "https://ahmedm4.github.io/midad-library/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://ahmedm4.github.io/midad-library/",
+  "minSdkVersion": 21,
+  "shareTarget": {
+    "action": "https://ahmedm4.github.io/midad-library/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "book",
+          "accept": [
+            "application/pdf",
+            ".pdf",
+            "application/epub+zip",
+            ".epub",
+            "text/plain",
+            ".txt",
+            "text/markdown",
+            ".md"
+          ]
+        }
+      ]
+    }
+  },
+  "orientation": "default",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [
+    {
+      "actionUrl": "https://ahmedm4.github.io/midad-library/?open=file",
+      "mimeTypes": [
+        "application/pdf",
+        "application/epub+zip",
+        "text/plain"
+      ]
+    }
+  ],
+  "launchHandlerClientMode": "focus-existing",
+  "displayOverride": [],
+  "appVersion": "1.0.0"
+}

@@ -4053,6 +4053,20 @@ create policy "midad_own_files" on storage.objects for all
   }
 
   /* سحب الملفات وإفلاتها في أي مكان بالمكتبة */
+  // ملفات وصلت من خارج التطبيق (مشاركة / «فتح بواسطة») أو رابط كتاب
+  function importFiles(files, link) {
+    const ok = (files || []).filter((f) => /\.(pdf|txt|md|epub)$/i.test(f.name) || f.type === 'application/pdf' || f.type === 'application/epub+zip' || (f.type || '').startsWith('text/'));
+    if (!ok.length && link) {
+      openAddModal();
+      const tab = document.querySelector('[data-tab="url"]'); if (tab) tab.click();
+      const u = $('#url-input'); if (u) { u.value = link; u.dispatchEvent(new Event('input', { bubbles: true })); }
+      return;
+    }
+    if (!ok.length) { toast('هذا النوع من الملفات غير مدعوم — PDF أو EPUB أو نص'); return; }
+    if (ok.length === 1) { openAddModal(); handleFile(ok[0]); }
+    else bulkImport(ok);
+  }
+
   function wireGlobalDrop() {
     const lv = $('#library-view');
     lv.addEventListener('dragover', (e) => { e.preventDefault(); });
@@ -4563,6 +4577,35 @@ create policy "midad_own_files" on storage.objects for all
     });
   }
 
+  /* ─── تطبيق أندرويد (غلاف TWA لنفس الموقع: يتحدّث مع كل إصدار للويب تلقائياً) ─── */
+  const APK_URL = 'https://github.com/ahmedm4/midad-library/releases/latest/download/midad.apk';
+  const inAndroidApp = () => { try { return sessionStorage.getItem('midad-twa') === '1'; } catch { return false; } };
+  const isAndroidWeb = () => /Android/i.test(navigator.userAgent) && !inAndroidApp();
+  function openAndroidApp() {
+    document.querySelectorAll('.ui-dialog').forEach((m) => m.remove());
+    const o = document.createElement('div');
+    o.className = 'ui-dialog';
+    o.innerHTML = `<div class="ud-box apk-box" role="dialog" aria-modal="true" aria-labelledby="apk-h">
+      <div class="ud-icon">📲</div><h3 id="apk-h">تطبيق مِداد لأندرويد</h3>
+      <ul class="apk-list">
+        <li>📂 <b>«فتح بواسطة مِداد»</b> لملفات PDF وEPUB من مدير الملفات أو واتساب</li>
+        <li>↗️ <b>شارِك</b> أي كتاب أو رابط إلى مِداد من التطبيقات الأخرى</li>
+        <li>🔄 يتحدّث تلقائياً مع كل إصدار جديد — لا حاجة لتنزيله مرة أخرى</li>
+        <li>📚 كتبك وإعداداتك ومزامنتك كما هي</li>
+      </ul>
+      <a class="apk-dl" href="${APK_URL}" rel="noopener">⬇️ نزّل التطبيق (APK)</a>
+      <details class="apk-how"><summary>كيف أثبّته؟</summary>
+        <ol><li>افتح الملف المنزَّل <b>midad.apk</b> من الإشعارات أو مجلّد التنزيلات.</li>
+        <li>إن سألك الهاتف، اسمح لـChrome بـ«تثبيت تطبيقات غير معروفة» ثم ارجع واضغط «تثبيت».</li>
+        <li>افتح «مِداد» من الشاشة الرئيسية. أول تشغيل يحتاج اتصالاً بالإنترنت.</li></ol>
+        <p>كتب التطبيق منفصلة عن كتب المتصفح: فعّل المزامنة (زر السحابة) لتصلك كتبك فيه، أو صدّر نسخة احتياطية من هنا واستوردها هناك.</p>
+      </details>
+      <div class="ud-actions"><button class="ud-cancel">إغلاق</button></div></div>`;
+    document.body.appendChild(o);
+    o.querySelector('.ud-cancel').onclick = () => o.remove();
+    o.onclick = (e) => { if (e.target === o) o.remove(); };
+  }
+
   /* ─── قائمة المكتبة: إحصائيات + نسخ احتياطي ─── */
   function wireLibMenu() {
     $('#btn-lib-menu').onclick = (e) => {
@@ -4579,6 +4622,7 @@ create policy "midad_own_files" on storage.objects for all
         <button data-act="vocab">📒 كلماتي</button>
         <button data-act="capture">📷 اقتباس من كتاب ورقي</button>
         <button data-act="theme">🎨 السمة وأسلوب العرض</button>
+        ${isAndroidWeb() ? '<button data-act="android">📲 تطبيق أندرويد</button>' : ''}
         <button data-act="keys">🤖 الذكاء الاصطناعي</button>
         <button data-act="enrich">✨ أكمل بيانات الكتب</button>
         <button data-act="dups">🔁 الكتب المكرّرة</button>
@@ -4600,6 +4644,7 @@ create policy "midad_own_files" on storage.objects for all
         else if (act === 'enrich') openEnrich();
         else if (act === 'dups') openDuplicates();
         else if (act === 'theme') openThemePicker();
+        else if (act === 'android') openAndroidApp();
         else if (act === 'review') openReview();
         else if (act === 'libai') openLibAI();
         else if (act === 'keys') openAiKeyDialog();
@@ -5559,6 +5604,6 @@ create policy "midad_own_files" on storage.objects for all
     return (s && s.text) || '';
   }
 
-  return { init, refresh, toast, openBookPage, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf, openAiKeyDialog, needAI };
+  return { init, refresh, toast, openBookPage, importFiles, fmtDuration, coverHTML, esc, getBookText, ocrBook, addRemoteBook, openBook, confirm: uiConfirm, partInfo, nextPartOf, openAiKeyDialog, needAI };
 })();
 window.Library = Library;

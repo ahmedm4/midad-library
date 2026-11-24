@@ -1,5 +1,5 @@
 /* ═══════ مِداد — عامل الخدمة (عمل بلا إنترنت) ═══════ */
-const VERSION = 'midad-v147';
+const VERSION = 'midad-v148';
 const SHELL = [
   './', 'index.html',
   'css/main.css', 'css/reader.css',
@@ -30,8 +30,26 @@ self.addEventListener('activate', (e) => {
   })());
 });
 
+// «مشاركة إلى مِداد» من تطبيقات الهاتف: نحفظ الملفات مؤقتاً ثم نفتح التطبيق ليضيفها
+async function receiveShare(req) {
+  try {
+    const fd = await req.formData();
+    const c = await caches.open('midad-share');
+    for (const k of await c.keys()) await c.delete(k);
+    let i = 0;
+    for (const f of fd.getAll('book')) {
+      if (!f || typeof f === 'string') continue;
+      await c.put(`./__shared/${i++}`, new Response(f, { headers: { 'Content-Type': f.type || 'application/octet-stream', 'X-Name': encodeURIComponent(f.name || 'كتاب') } }));
+    }
+    const link = fd.get('url') || ((String(fd.get('text') || '').match(/https?:\/\/\S+/) || [])[0]) || '';
+    if (link) await c.put('./__shared/link', new Response(String(link)));
+  } catch {}
+  return Response.redirect('./?open=shared', 303);
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
+  if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/share-target')) { e.respondWith(receiveShare(req)); return; }
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
