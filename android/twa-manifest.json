@@ -20,8 +20,8 @@
     "path": "D:/midad-android-keys/midad-release.jks",
     "alias": "midad"
   },
-  "appVersionName": "1.0.0",
-  "appVersionCode": 1,
+  "appVersionName": "1.0.1",
+  "appVersionCode": 2,
   "shortcuts": [
     {
       "name": "واصل القراءة",
@@ -67,13 +67,9 @@
           "name": "book",
           "accept": [
             "application/pdf",
-            ".pdf",
             "application/epub+zip",
-            ".epub",
             "text/plain",
-            ".txt",
-            "text/markdown",
-            ".md"
+            "text/markdown"
           ]
         }
       ]

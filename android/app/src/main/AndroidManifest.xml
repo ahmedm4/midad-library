@@ -156,19 +156,15 @@
                     
                         <data android:mimeType="application/pdf" />
                     
-                        <data android:mimeType=".pdf" />
                     
                         <data android:mimeType="application/epub+zip" />
                     
-                        <data android:mimeType=".epub" />
                     
                         <data android:mimeType="text/plain" />
                     
-                        <data android:mimeType=".txt" />
                     
                         <data android:mimeType="text/markdown" />
                     
-                        <data android:mimeType=".md" />
                     
                 </intent-filter>
             

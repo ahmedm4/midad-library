@@ -89,13 +89,9 @@
           "name": "book",
           "accept": [
             "application/pdf",
-            ".pdf",
             "application/epub+zip",
-            ".epub",
             "text/plain",
-            ".txt",
-            "text/markdown",
-            ".md"
+            "text/markdown"
           ]
         }
       ]
