@@ -4045,7 +4045,9 @@ create policy "midad_own_files" on storage.objects for all
     } else {
       const text = cleanImportedText(typeof blob === 'string' ? blob : await blob.text());
       if (!text.trim()) throw new Error('لم يُعثر على نص قابل للقراءة في هذه الصيغة — جرّب صيغة أخرى');
-      id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'text', cover }, text);
+      id = await Store.addBook({ title: title || name, author: author || '', category: category || 'أخرى', type: 'text', cover,
+        ...(Array.isArray(shelves) && shelves.length ? { shelves: shelves.slice() } : {}),
+        ...(series && series.key ? { series: { ...series } } : {}) }, text);
     }
     if (window.Cloud) Cloud.pushBook(id);
     await refresh();

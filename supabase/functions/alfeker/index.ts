@@ -112,7 +112,7 @@ const allowedEmails = () => (Deno.env.get("ALLOWED_EMAILS") || "").split(/[,\s]+
 // مواقع الكتب التي يخدمها الوسيط لأي زائر بلا حساب (كي لا يصير وسيطاً مفتوحاً لكل الإنترنت)
 const PUBLIC_HOSTS = ["alfeker.net", "mediafire.com", "drive.google.com", "docs.google.com", "googleusercontent.com",
   "dropbox.com", "dropboxusercontent.com", "narjeslibrary.com", "ww-api.com", "ablibrary.net", "archive.org",
-  "wikisource.org", "inahj.org", "imamhussain.org"];
+  "wikisource.org", "inahj.org", "imamhussain.org", "rafed.net", "haydarya.org"];
 const isPublicHost = (u: string) => {
   try { const h = new URL(u).hostname.toLowerCase(); return PUBLIC_HOSTS.some((d) => h === d || h.endsWith("." + d)); }
   catch { return false; }
@@ -148,6 +148,247 @@ function ihSections(html: string) {
     seen.add(m[1]); out.push({ id: m[1], label });
   }
   return out;
+}
+
+/* ── «مكتبة رافد» (lib.rafed.net) ──
+   موقع PHP قديم بلا CORS. لكل كتاب مجلد ثابت Books/<id>_<slug>/ فيه الأغلفة بثلاثة أحجام
+   (cover / cover-medium ‏300px / cover-big نحو 900px). الملفات عبر print.php?type=d_book&format=pdf|pdfimg|doc
+   (تحويل 302 إلى الملف؛ نحو ٨٠٪ من الكتب بلا PDF، Word فقط). لكن نصّ كل كتاب متاح كاملاً في
+   «نسخة الطباعة» print.php?type=p_book&from=1&to=N: صفحات div.page فيها فقرات بأصناف rfdToc1-3
+   (العناوين) و rfdFootnote (الحواشي) — نحوّلها إلى نصّ بعناوين Markdown يقرؤه مِداد مباشرة.
+   البحث: ac.php?text=…&ops=1 (العناوين) | 2 (المؤلفون) &page=N (من الصفر، ٢٠ نتيجة) → JSON فيه HTML. */
+const RF = "https://lib.rafed.net";
+const rfDigits = (s: string) => latinDigits(decode(s || ""));
+function rfCard(bl: string) {
+  const id = (bl.match(/b_id=(\d+)/) || [])[1];
+  if (!id) return null;
+  const img = (bl.match(/src="(Books\/[^"]+?)\/images\/cover[^"]*"/) || [])[1] || "";
+  const title = decode(stripTags((bl.match(/<h3>([\s\S]*?)<\/h3>/) || [])[1] || ""));
+  const spans = [...bl.matchAll(/<span>([\s\S]*?)<\/span>/g)].map((m) => decode(stripTags(m[1])));
+  const author = spans.find((s) => !/^الناشر/.test(s)) || "";
+  const publisher = (spans.find((s) => /^الناشر/.test(s)) || "").replace(/^الناشر\s*:\s*/, "");
+  const pages = +(rfDigits((bl.match(/>([^<]*?)\s*صفحة<\/span>/) || [])[1] || "").replace(/\D/g, "")) || 0;
+  const views = +(rfDigits((bl.match(/>([^<]*?)\s*مشاهدة<\/span>/) || [])[1] || "").replace(/\D/g, "")) || 0;
+  const fmts = [...new Set([...bl.matchAll(/format=(\w+)/g)].map((m) => m[1]))];
+  return { id, title, author, publisher, pages, views, fmts, cover: img ? `${RF}/${img}/images/cover-medium.jpg` : "" };
+}
+// مجلد الكتاب من تحويل رابط التنزيل (دون تنزيل الملف نفسه) — لأغلفة نتائج البحث
+async function rfFolder(id: string): Promise<string> {
+  for (const f of ["doc", "pdf"]) {
+    try {
+      const r = await fetch(`${RF}/print.php?type=d_book&book=${id}&format=${f}`, { headers: { "User-Agent": UA }, redirect: "manual" });
+      const loc = r.headers.get("location") || "";
+      await r.body?.cancel();
+      const m = loc.match(/\/(Books\/[^/]+)\//);
+      if (m) return m[1];
+    } catch { /* التالي */ }
+  }
+  return "";
+}
+function rfSearchRows(out: string) {
+  const rows: any[] = [];
+  for (const part of out.split('class="resultRow"').slice(1)) {
+    const id = (part.match(/b_id=(\d+)/) || [])[1];
+    if (!id) continue;
+    rows.push({
+      id,
+      title: decode(stripTags((part.match(/<h2>([\s\S]*?)<\/h2>/) || [])[1] || "")),
+      vols: +rfDigits((part.match(/عدد المجلدات\s*:\s*([^\]<]+)/) || [])[1] || "").replace(/\D/g, "") || 0,
+      author: decode(stripTags((part.match(/<span style="color: green;">([\s\S]*?)<\/span>/) || [])[1] || "")),
+      desc: decode(stripTags((part.match(/<span style="font-size:10px;color:#888;">([\s\S]*?)<\/span>/) || [])[1] || "")).slice(0, 300),
+    });
+  }
+  return rows;
+}
+function rfDetail(html: string, id: string) {
+  const v = (name: string) => (html.match(new RegExp(`var ${name}\\s*=\\s*['"]([^'"]*)['"]`)) || [])[1] || "";
+  const folder = (v("imgpath").match(/^(Books\/[^/]+)\//) || [])[1] || "";
+  const field = (label: string) => decode(stripTags((html.match(new RegExp(label + "\\s*:\\s*(?:<[^>]+>\\s*)*([^<\\n]+)")) || [])[1] || "")).trim();
+  const vols: { id: string; label: string }[] = [];
+  const sel = (html.match(/<select id="relbooks"[\s\S]*?<\/select>/) || [])[0] || "";
+  for (const m of sel.matchAll(/<option value="(\d+)"[^>]*>([^<]*)<\/option>/g)) vols.push({ id: m[1], label: rfDigits(m[2]).trim() });
+  const fmts = [...new Set([...html.matchAll(/print\.php\?type=d_book&(?:amp;)?book=\d+&(?:amp;)?format=(\w+)/g)].map((m) => m[1]))];
+  const pages = +((html.match(/bEd\s*=\s*(\d+)/) || [])[1] || 0);
+  const intro = (html.match(/b_id=(\d+)">مقدمة الكتاب</) || [])[1] || "";
+  // العنوان الكامل (مع رقم الجزء) في رأس الصفحة: «إختيار معرفة الرجال - ج ١»
+  const head = rfDigits(stripTags((html.match(/&nbsp;\s*<\/[a-z]+>\s*([^<]{2,300}?)\s*<(?:br|\/)/) || [])[1] || ""));
+  const name = decode(v("bookName"));
+  return {
+    id, title: name || head, fullTitle: head && name && head.startsWith(name) ? head : name || head,
+    author: field("المؤلف"), editor: field("المحقق"), publisher: field("الناشر"), edition: rfDigits(field("الطبعة")).replace(/^0$/, ""),
+    subject: field("الموضوع"), date: rfDigits(field("تاريخ النشر")), pages,
+    cover: folder ? `${RF}/${folder}/images/${/hasBigCover\s*=\s*true/.test(html) ? "cover-big" : "cover"}.jpg` : "",
+    coverSmall: folder ? `${RF}/${folder}/images/${/hasBigCover\s*=\s*true/.test(html) ? "cover-medium" : "cover"}.jpg` : "",
+    fmts, vols, intro,
+    pdf: fmts.includes("pdf") ? `${RF}/print.php?type=d_book&book=${id}&format=pdf` : "",
+    pdfimg: fmts.includes("pdfimg") ? `${RF}/print.php?type=d_book&book=${id}&format=pdfimg` : "",
+  };
+}
+// فهرس الكتاب من صفحته (ul.treeview متداخلة): العنوان، والصفحة، والمستوى
+function rfToc(html: string): { title: string; page: number; depth: number }[] {
+  const at = html.indexOf('<ul class="treeview">');
+  if (at < 0) return [];
+  const out: { title: string; page: number; depth: number }[] = [];
+  let depth = -1;
+  for (const m of html.slice(at, at + 400000).matchAll(/<ul\b[^>]*>|<\/ul>|<a href="\?type=c_fbook&(?:amp;)?b_id=\d+&(?:amp;)?page=(\d+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    if (m[0].startsWith("<ul")) { depth++; continue; }
+    if (m[0] === "</ul>") { if (--depth < 0) break; continue; }
+    const title = decode(stripTags(m[2])).replace(/\s+/g, " ").trim();
+    if (title) out.push({ title, page: +m[1], depth: Math.max(0, depth) });
+  }
+  return out;
+}
+const rfKey = (s: string) => arNorm(s).replace(/[^\p{L}\p{N}]+/gu, "");
+// «نسخة الطباعة» → نصّ مِداد. العناوين (# ## ###) من فهرس الكتاب في موقعه، كلٌّ في صفحته
+// (تحلّ محلّ سطرها في الصفحة إن وُجد)؛ أسطر «دليل الكتاب» (rfdToc) تبقى أسطراً عادية بلا نقاط الحشو.
+function rfToText(html: string, toc: { title: string; page: number; depth: number }[] = []): { text: string; pages: number; heads: number } {
+  const chunks = html.split(/class="page booksize"/).slice(1);
+  const out: string[] = [];
+  const para = (inner: string) => decode(stripTags(inner.replace(/<br\s*\/?>/gi, " "))).replace(/\s+/g, " ").trim();
+  const byPage = new Map<number, typeof toc>();
+  for (const t of toc) { const l = byPage.get(t.page) || []; l.push(t); byPage.set(t.page, l); }
+  let heads = 0;
+  chunks.forEach((ch, idx) => {
+    const body = (ch.match(/<div class="pgcontent">([\s\S]*?)<\/div>\s*<div class="pgnum">/) || [])[1] || "";
+    const lines: string[] = [];
+    // فقرات وجداول (الشعر يأتي في جداول: صدر وعجز)
+    for (const m of body.matchAll(/<p(?:\s+class=["']?([\w-]+)["']?)?[^>]*>([\s\S]*?)<\/p>|<table[\s\S]*?<\/table>/g)) {
+      if (m[0].startsWith("<table")) {
+        for (const tr of m[0].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
+          const cells = [...tr[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => para(c[1])).filter(Boolean);
+          if (cells.length) lines.push(cells.join(" … "));
+        }
+        continue;
+      }
+      const cls = m[1] || "";
+      let t = para(m[2]);
+      if (!t) continue;
+      if (/^rfdToc/.test(cls)) { t = t.replace(/\s*[.…·]{3,}\s*/g, " … "); lines.push(t); }
+      else if (/^rfdLine/.test(cls)) lines.push("————");
+      else if (/Bold|Center|Heading/i.test(cls) && t.length < 140) lines.push("**" + t.replace(/\*/g, "") + "**");
+      else lines.push(t);
+    }
+    // عناوين هذه الصفحة من الفهرس: تحلّ محلّ السطر المطابق، وإلا تُضاف أعلى الصفحة
+    const hs = byPage.get(idx + 1) || [];
+    let insertAt = 0;
+    for (const h of hs) {
+      const mark = "#".repeat(Math.min(3, h.depth + 1)) + " " + h.title;
+      const k = rfKey(h.title);
+      const found = k ? lines.findIndex((l, n) => n >= insertAt && !l.startsWith("#") && rfKey(l.replace(/\*\*/g, "")) === k) : -1;
+      if (found >= 0) { lines[found] = mark; insertAt = found + 1; }
+      else { lines.splice(insertAt, 0, mark); insertAt++; }
+      heads++;
+    }
+    if (lines.length) out.push(lines.join("\n\n"));
+  });
+  return { text: out.join("\n\n"), pages: chunks.length, heads };
+}
+
+/* ── «مكتبة الروضة الحيدرية» (haydarya.org) — «المكتبة المختصة بأمير المؤمنين (ع)» ──
+   نظام محتوى قديم: كل باب ?id=N؛ الأبواب الأمّ تعرض أبوابها الفرعية بطاقاتٍ <li><a href="?id=N">،
+   والأبواب الطرفية قائمةٌ كاملة بلا ترقيم: span.ace_item فيه الغلاف (rpic.php?i=files/…jpg) والعنوان
+   (?id=N&sid=M) والمؤلف والمحقق وعدد المجلدات والناشر والتاريخ. صفحة الكتاب فيها div.books2_files
+   بروابط PDF مباشرة (جزء أو أجزاء). الموقع يرفض وكلاء المستخدم القصيرة (406) — نرسل UA متصفح كاملاً.
+   أقسام الموقع الأخرى (الرسائل الجامعية…) نصوص HTML بلا ملفات، فلا تُعرض. */
+const HY = "https://www.haydarya.org";
+const HY_ROOT = "38";
+type HySec = { id: string; label: string; parent: string; leaf: boolean; count: number };
+let hyTree: { at: number; list: HySec[] } | null = null;
+const hyIndex = new Map<string, { at: number; items: any[] }>();
+const hyTitle = (h: string) => decode((h.match(/<title>\s*([\s\S]*?)\s*-\s*مكتبة الروضة/) || [])[1] || "").replace(/\s+/g, " ").trim();
+function hyChildren(h: string) {
+  // البطاقات الفرعية في جسم الصفحة فقط (لا روابط القوائم العامة)
+  const at = h.indexOf('class="sub-menu"');
+  const body = at >= 0 ? h.slice(at) : h;
+  const out: { id: string; label: string }[] = [], seen = new Set<string>();
+  for (const m of body.matchAll(/<li><a href="\?id=(\d+)"[^>]*>([\s\S]*?)<\/a><\/li>/g)) {
+    if (seen.has(m[1])) continue;
+    const label = decode(stripTags(m[2].replace(/<div class="veiw_num">[\s\S]*?<\/div>\s*<\/div>/, ""))).replace(/\s+/g, " ").trim();
+    seen.add(m[1]); out.push({ id: m[1], label });
+  }
+  return out;
+}
+function hyItems(h: string, cat: string) {
+  const out: any[] = [], seen = new Set<string>();
+  for (const part of h.split('<span class="ace_item">').slice(1)) {
+    const sid = (part.match(new RegExp(`href="\\?id=${cat}&(?:amp;)?sid=(\\d+)"`)) || [])[1];
+    if (!sid || seen.has(sid)) continue;
+    seen.add(sid);
+    const f = (label: string) => decode(stripTags((part.match(new RegExp(`<span>${label}\\s*:?(?:&nbsp;)?\\s*</span>([\\s\\S]*?)</div>`)) || [])[1] || "")).replace(/\s+/g, " ").trim();
+    const img = (part.match(/rpic\.php\?i=(files\/[^&"]+)/) || [])[1] || "";
+    out.push({
+      id: `${cat}:${sid}`, cat,
+      title: decode((part.match(/class="name"[^>]*title="([^"]*)"/) || [])[1] || "").replace(/\s+/g, " ").trim(),
+      author: f("المؤلف"), editor: f("المحقق"), vols: +latinDigits(f("عدد المجلدات")).replace(/\D/g, "") || 0,
+      publisher: f("الناشر"), date: f("تاريخ الانتشار"),
+      cover: img ? `${HY}/rpic.php?i=${img}&w=300&h=424` : "", coverFull: img ? `${HY}/${img}` : "",
+    });
+  }
+  return out;
+}
+const hyGet = (q: string) => getHtml(`${HY}/${q}`);
+// شجرة الأبواب (بحثاً بالعرض، ٦ طلبات متوازية) — تُحفظ في ذاكرة الدالة ١٢ ساعة
+async function hySections(): Promise<HySec[]> {
+  if (hyTree && Date.now() - hyTree.at < 12 * 3600e3) return hyTree.list;
+  const list: HySec[] = [];
+  let front = [{ id: HY_ROOT, label: "", parent: "" }];
+  const seen = new Set([HY_ROOT]);
+  for (let depth = 0; front.length && depth < 6; depth++) {
+    const next: typeof front = [];
+    for (let i = 0; i < front.length; i += 6) {
+      const batch = front.slice(i, i + 6);
+      const pages = await Promise.all(batch.map((s) => hyGet(`?id=${s.id}`).catch(() => "")));
+      batch.forEach((s, k) => {
+        const h = pages[k];
+        if (!h) return;
+        const kids = hyChildren(h).filter((c) => !seen.has(c.id));
+        const items = hyItems(h, s.id);
+        if (s.id !== HY_ROOT) list.push({ id: s.id, label: s.label || hyTitle(h), parent: s.parent, leaf: !kids.length, count: items.length });
+        if (items.length) hyIndex.set(s.id, { at: Date.now(), items });
+        for (const c of kids) { seen.add(c.id); next.push({ id: c.id, label: c.label, parent: s.id === HY_ROOT ? "" : s.id }); }
+      });
+    }
+    front = next;
+  }
+  // الأبواب التي لا كتب فيها ولا في فروعها تُحذف؛ والعدد يشمل الفروع
+  const total = (id: string): number => list.filter((x) => x.parent === id).reduce((a, x) => a + total(x.id), 0) + (list.find((x) => x.id === id)?.count || 0);
+  const kept = list.map((x) => ({ ...x, count: total(x.id) })).filter((x) => x.count > 0);
+  if (kept.length) hyTree = { at: Date.now(), list: kept };
+  return kept;
+}
+async function hyCat(cat: string) {
+  const c = hyIndex.get(cat);
+  if (c && Date.now() - c.at < 6 * 3600e3) return c.items;
+  const items = hyItems(await hyGet(`?id=${cat}`), cat);
+  hyIndex.set(cat, { at: Date.now(), items });
+  return items;
+}
+// كل الكتب تحت باب (أو في المكتبة كلها): يجمع كتب الباب وفروعه
+async function hyAll(under: string) {
+  const tree = await hySections();
+  const desc = (id: string): string[] => tree.filter((x) => x.parent === id).flatMap((x) => [x.id, ...desc(x.id)]);
+  const ids = under ? [under, ...desc(under)] : tree.map((x) => x.id);
+  const out: any[] = [];
+  for (let i = 0; i < ids.length; i += 6) {
+    const got = await Promise.all(ids.slice(i, i + 6).map((id) => hyCat(id).catch(() => [])));
+    for (const g of got) out.push(...g);
+  }
+  const seen = new Set<string>();
+  return out.filter((x) => !seen.has(x.id) && seen.add(x.id));
+}
+const arNorm = (s: string) => String(s || "").replace(/[ً-ٰٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/\s+/g, " ").trim().toLowerCase();
+function hyDetail(h: string, cat: string, sid: string) {
+  const files: { label: string; url: string; kind: string }[] = [];
+  const box = (h.match(/<div class="books2_files">([\s\S]*?)<\/div>/) || [])[1] || "";
+  for (const m of box.matchAll(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    let url = "";
+    try { url = new URL(decode(m[1]), HY + "/").href; } catch { continue; }
+    const kind = ((url.match(/\.(\w+)(?:[?#]|$)/) || [])[1] || "").toLowerCase();
+    files.push({ url, kind, label: decode(stripTags(m[2])).replace(/^تحميل\s*/, "").replace(/\s+/g, " ").trim() });
+  }
+  const it = hyItems(h.replace('<div class="ace_bio_info">', '<span class="ace_item">'), cat).find((x) => x.id === `${cat}:${sid}`) || {};
+  const bio = decode(stripTags(((h.match(/<div class="ace_bio_text">([\s\S]*?)<\/div>/) || [])[1] || "").replace(/<\/p>/g, "\n"))).trim();
+  return { ...it, id: `${cat}:${sid}`, cat, files, desc: bio.slice(0, 1500), title: (it as any).title || hyTitle(h) };
 }
 
 /* ── المستضيفات والمرايا ── */
@@ -498,14 +739,16 @@ Deno.serve(async (req) => {
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "list");
-    if (action === "version") return json({ fn: "alfeker", fnVersion: "2026.11.18" });
+    if (action === "version") return json({ fn: "alfeker", fnVersion: "2026.11.25" });
 
     // لوحة التحكم: المصدر موقوف؟ الزوار بلا حساب ممنوعون؟ المستخدم معطّلة عنه الإمكانية؟
     {
       const cfg = await siteConfig();
       const isNarjes = action === "fetch" && /narjeslibrary\.com|ww-api\.com/i.test(String(b.url || ""));
       const isIH = action.startsWith("ih_") || (action === "fetch" && /imamhussain\.org/i.test(String(b.url || "")));
-      const src = isIH ? "imamhussain" : isNarjes ? "narjes" : action === "fetch" ? "" : "alfeker";
+      const isRF = action.startsWith("rf_") || (action === "fetch" && /rafed\.net/i.test(String(b.url || "")));
+      const isHY = action.startsWith("hy_") || (action === "fetch" && /haydarya\.org/i.test(String(b.url || "")));
+      const src = isIH ? "imamhussain" : isRF ? "rafed" : isHY ? "haydarya" : isNarjes ? "narjes" : action === "fetch" ? "" : "alfeker";
       if (src && cfg.sources && cfg.sources[src] === false) return json({ error: "هذا المصدر موقوف حالياً من إدارة التطبيق", code: "source_off" }, 403);
       const who = await callerUser(req);
       if (!who && cfg.discover_anonymous === false && src) return json({ error: "«استكشف» متاح لأصحاب الحسابات فقط — سجّل الدخول من زر السحابة ☁️", code: "auth" }, 401);
@@ -532,6 +775,71 @@ Deno.serve(async (req) => {
       const items = ihParse(html);
       const hasMore = !latest && items.length > 0 && new RegExp(`[?&]page=${page + 1}(?!\\d)`).test(html);
       return json({ items, page, hasMore });
+    }
+
+    // مكتبة رافد: القوائم (باب | بحث بالعنوان والمؤلف)، والتفاصيل، والنصّ الكامل
+    if (action === "rf_list") {
+      const q = String(b.q || "").trim().slice(0, 120);
+      const cat = /^\d+$/.test(String(b.cat || "")) ? String(b.cat) : "0";
+      const page = Math.max(1, Math.min(500, Math.floor(+b.page || 1)));
+      if (q) {
+        // العناوين والمؤلفون معاً (طلبان متوازيان)، ثم مجلد كل كتاب لغلافه
+        const one = async (ops: string) => {
+          const r = await fetch(`${RF}/ac.php?text=${encodeURIComponent(q)}&ops=${ops}&page=${page - 1}&output=true`, { headers: { "User-Agent": UA, "X-Requested-With": "XMLHttpRequest" } });
+          if (!r.ok) return { rows: [] as any[], more: false };
+          const j = await r.json().catch(() => ({}));
+          const out = String(j.output || "");
+          return { rows: rfSearchRows(out), more: out.includes(`page = '${page}'`) };
+        };
+        const [t, a] = await Promise.all([one("1"), one("2")]);
+        const seen = new Set<string>();
+        const rows = [...t.rows, ...a.rows].filter((x) => !seen.has(x.id) && seen.add(x.id));
+        const folders = await Promise.all(rows.map((x) => rfFolder(x.id)));
+        const items = rows.map((x, i) => ({ ...x, cover: folders[i] ? `${RF}/${folders[i]}/images/cover-medium.jpg` : "" }));
+        return json({ items, page, hasMore: t.more || a.more });
+      }
+      let html: string;
+      try { html = await getHtml(`${RF}/view.php?type=c_blist&cid=${cat}&lang=&cen=&order=title&limit=42&page=${page - 1}`); }
+      catch (e) { if (page > 1) return json({ items: [], page, hasMore: false }); throw e; }
+      const items = html.split('class="specCatBook"').slice(1).map(rfCard).filter(Boolean);
+      return json({ items, page, hasMore: items.length > 0 && html.includes(`page=${page}"`) });
+    }
+    if (action === "rf_detail") {
+      const id = String(b.id || "").trim();
+      if (!/^\d+$/.test(id)) return json({ error: "معرّف الكتاب مفقود" }, 400);
+      return json(rfDetail(await getHtml(`${RF}/view.php?type=c_fbook&b_id=${id}`), id));
+    }
+    if (action === "rf_text") {
+      const id = String(b.id || "").trim();
+      const to = Math.max(1, Math.min(20000, Math.floor(+b.pages || 0)));
+      if (!/^\d+$/.test(id) || !b.pages) return json({ error: "معرّف الكتاب أو عدد صفحاته مفقود" }, 400);
+      const [html, page] = await Promise.all([
+        getHtml(`${RF}/print.php?type=p_book&book=${id}&from=1&to=${to}`),
+        getHtml(`${RF}/view.php?type=c_fbook&b_id=${id}`).catch(() => ""),
+      ]);
+      const r = rfToText(html, rfToc(page));
+      if (!r.text.trim()) return json({ error: "لا يوجد نصّ متاح لهذا الكتاب" }, 404);
+      return json(r);
+    }
+
+    // مكتبة الروضة الحيدرية: الأبواب (شجرة)، والقوائم (باب | الكل | بحث)، والتفاصيل
+    if (action === "hy_sections") return json({ sections: await hySections() });
+    if (action === "hy_list") {
+      const q = arNorm(String(b.q || "").slice(0, 120));
+      const cat = /^\d+$/.test(String(b.cat || "")) ? String(b.cat) : "";
+      const page = Math.max(1, Math.min(500, Math.floor(+b.page || 1)));
+      const per = 48;
+      let items = cat && !q ? await hyAll(cat) : await hyAll("");
+      if (q) {
+        const words = q.split(" ").filter(Boolean);
+        items = items.filter((x) => { const hay = arNorm(`${x.title} ${x.author} ${x.editor} ${x.publisher}`); return words.every((w) => hay.includes(w)); });
+      }
+      return json({ items: items.slice((page - 1) * per, page * per), page, total: items.length, hasMore: items.length > page * per });
+    }
+    if (action === "hy_detail") {
+      const m = String(b.id || "").match(/^(\d+):(\d+)$/);
+      if (!m) return json({ error: "معرّف الكتاب مفقود" }, 400);
+      return json(hyDetail(await hyGet(`?id=${m[1]}&sid=${m[2]}`), m[1], m[2]));
     }
 
     if (action === "sections") {

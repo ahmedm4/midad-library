@@ -1923,3 +1923,8 @@ html.bp-has-dock #library-view { padding-left: 430px; }
 .apk-how { font-size: 13px; color: var(--muted); line-height: 1.7; }
 .apk-how summary { cursor: pointer; color: var(--cream); margin: 6px 0; }
 .apk-how ol { padding-inline-start: 20px; margin: 6px 0; }
+
+/* v149: «مكتبة رافد» — اختيار صيغة الإضافة (نص | PDF | مصوّر) */
+.rf-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 4px; }
+.rf-kinds > span { font-size: 12.5px; color: var(--muted); margin-inline-end: 2px; }
+.rf-kind-note { margin: 0 0 10px; }

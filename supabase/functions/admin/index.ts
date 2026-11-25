@@ -20,7 +20,7 @@ const FEATURES = ["sync", "ai_server", "discover", "ocr_local"] as const;
 
 /* إصدارات الدوال: «صحة النظام» في اللوحة يقارن ما هو منشور بما يتوقّعه هذا الإصدار من التطبيق */
 const FN_VERSION = "2026.11.9";
-const EXPECTED_FN: Record<string, string> = { admin: FN_VERSION, ai: FN_VERSION, alfeker: "2026.11.18", gdrive: FN_VERSION };
+const EXPECTED_FN: Record<string, string> = { admin: FN_VERSION, ai: FN_VERSION, alfeker: "2026.11.25", gdrive: FN_VERSION };
 const SCHEMA_EXPECTED = 2;
 const STATUSES = ["pending", "approved", "blocked"];
 
@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
       }
       if (v.sources && typeof v.sources === "object") {
         const s: Record<string, boolean> = { ...(cur.sources || {}) };
-        for (const k of ["archive", "wikisource", "ablibrary", "narjes", "alfeker", "imamhussain"]) if (typeof v.sources[k] === "boolean") s[k] = v.sources[k];
+        for (const k of ["archive", "wikisource", "ablibrary", "narjes", "alfeker", "imamhussain", "rafed", "haydarya"]) if (typeof v.sources[k] === "boolean") s[k] = v.sources[k];
         next.sources = s;
       }
       if (v.defaults && typeof v.defaults === "object") {

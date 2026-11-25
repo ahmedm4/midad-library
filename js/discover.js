@@ -81,6 +81,8 @@ const Discover = (() => {
     ablibrary: { name: 'مكتبة أهل البيت', sub: 'مكتبة إسلامية شاملة — ablibrary.net (نصّ كامل قابل للبحث)' },
     narjes: { name: 'مكتبة نرجس', sub: 'كتب عربية مصوّرة (PDF) — narjeslibrary.com (عبر خادمك)' },
     imamhussain: { name: 'إصدارات العتبة الحسينية', sub: 'كتب ومجلات العتبة الحسينية المقدسة (PDF) — publication.imamhussain.org (عبر خادمك)' },
+    rafed: { name: 'مكتبة رافد', sub: 'آلاف الكتب الإسلامية بنصّها الكامل، وبعضها PDF — lib.rafed.net (عبر خادمك)' },
+    haydarya: { name: 'مكتبة الروضة الحيدرية', sub: 'المكتبة المختصة بأمير المؤمنين (ع) — كتب PDF من haydarya.org (عبر خادمك)' },
   };
   // «إصدارات العتبة الحسينية»: شريحتان ثابتتان ثم الأبواب (الجهات الناشرة) من الموقع، تُحفظ يوماً
   const IH_FIXED = [{ label: '📚 الكتب', kind: 'books' }, { label: '🆕 أحدث الإصدارات', kind: 'latest' }];
@@ -161,6 +163,8 @@ const Discover = (() => {
             <button class="disc-src" data-src="narjes">📕 ${SOURCES.narjes.name}</button>
             <button class="disc-src" data-src="alfeker">📗 ${SOURCES.alfeker.name}</button>
             <button class="disc-src" data-src="imamhussain">📘 ${SOURCES.imamhussain.name}</button>
+            <button class="disc-src" data-src="rafed">📙 ${SOURCES.rafed.name}</button>
+            <button class="disc-src" data-src="haydarya">📒 ${SOURCES.haydarya.name}</button>
           </div>
           <button class="disc-x" title="إغلاق">✕</button>
         </div>
@@ -202,6 +206,8 @@ const Discover = (() => {
     { const sc = modal.querySelector('.disc-subchips'); if (sc) { sc.hidden = true; sc.innerHTML = ''; } }
     if (source === 'alfeker' && afSections) return renderAfChips();
     if (source === 'imamhussain') return renderIhChips();
+    if (source === 'rafed') return renderRfChips();
+    if (source === 'haydarya') return renderHyChips();
     const cats = source === 'alfeker' ? ALFEKER_CATS : (source === 'wikisource' ? WIKISOURCE_CATS : (source === 'ablibrary' ? AB_CATS : (source === 'narjes' ? NARJES_CATS : CATS)));
     chipsEl.innerHTML = cats.map((c) => `<button class="disc-chip" data-q="${esc(c.q || '')}" data-catid="${esc(c.catid || '')}">${c.label}</button>`).join('');
     chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
@@ -280,6 +286,8 @@ const Discover = (() => {
       search('');
       if (!ihSections) ensureIhSections().then((l) => { if (l && source === 'imamhussain') renderIhChips(); });
     }
+    else if (source === 'rafed') { rfCat = '0'; renderRfChips(); search(''); }
+    else if (source === 'haydarya') { hyCat = ''; renderHyChips(); search(''); }
     else search('', CATS[0].q);
   }
 
@@ -402,6 +410,9 @@ const Discover = (() => {
           let page = d.page || 1;
           moreFn = async () => { page++; const dd = await Cloud.invokeFn('alfeker', { ...req, page }); if (!dd.hasMore) moreFn = null; return fresh(dd.items); };
         }
+      } else if (source === 'rafed' || source === 'haydarya') {
+        cards = await (source === 'rafed' ? searchRafed : searchHaydarya)(q, my);
+        if (!cards) return;
       } else if (source === 'narjes') {
         if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) status('فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «مكتبة نرجس».'); return; }
         await njEnsureCatalog();
@@ -435,7 +446,7 @@ const Discover = (() => {
   const cardHTML = (c) => `
       <button class="disc-card" data-src="${c.source}" data-id="${esc(c.id)}" data-title="${esc(c.title)}" data-author="${esc(c.author || '')}" data-cover="${esc(c.cover || '')}">
         <div class="disc-cover">
-          <img loading="lazy" referrerpolicy="no-referrer" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="this.parentNode.classList.add('no-img')">
+          <img loading="lazy" referrerpolicy="no-referrer" src="${esc(c.cover || '')}" alt="" ${c.cover ? '' : 'style="display:none"'} onerror="if(/cover-medium\.jpg$/.test(this.src)){this.src=this.src.replace('cover-medium.jpg','cover.jpg')}else{this.parentNode.classList.add('no-img')}">
           <span class="disc-fallback gen">${esc((c.title || '؟').trim())}</span>
           ${(c.source === 'wikisource' || c.source === 'ablibrary' || c.source === 'narjes' || c.source === 'imamhussain') ? '<span class="disc-quickadd" role="button" title="أضِف إلى مكتبتك مباشرة">＋ أضف</span>' : ''}
         </div>
@@ -551,6 +562,8 @@ const Discover = (() => {
     if (ds.src === 'ablibrary') return openAblibraryDetail(ds);
     if (ds.src === 'narjes') return openNarjesDetail(ds);
     if (ds.src === 'imamhussain') return openIhDetail(ds);
+    if (ds.src === 'rafed') return openRafedDetail(ds);
+    if (ds.src === 'haydarya') return openHaydaryaDetail(ds);
     const id = ds.id;
     sheet.hidden = false;
     sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
@@ -1418,6 +1431,330 @@ const Discover = (() => {
       btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = orig;
       addFailed(e);
     }
+  }
+
+
+  /* ═══ «مكتبة رافد» و«مكتبة الروضة الحيدرية» — عبر خادمك (الموقعان بلا CORS) ═══ */
+  // ملف من الموقع عبر الوسيط العام؛ يرفض صفحات HTML (رافد يعيد صفحة حين لا يوجد PDF)
+  async function proxyFile(url) {
+    const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url });
+    const ct = r.headers.get('content-type') || '';
+    if (!r.ok || /application\/json/i.test(ct)) { let msg = 'تعذّر تنزيل الملف'; try { const j = await r.json(); if (j.error) msg = j.error; } catch {} throw new Error(msg); }
+    if (/text\/html/i.test(ct)) throw new Error('الموقع لم يُرسل الملف — قد لا يتوفّر بهذه الصيغة');
+    return { blob: await r.blob(), size: +r.headers.get('content-length') || 0 };
+  }
+  // غلاف الموقع بدقّة عالية (٦٠٠ بكسل عرضاً) محفوظاً مع الكتاب — أوضح من الصفحة الأولى المرسومة
+  async function siteCover(url, maxW = 600) {
+    if (!url) return '';
+    try {
+      const r = await Cloud.invokeFnRaw('alfeker', { action: 'fetch', url });
+      if (!r.ok || !/^image\//i.test(r.headers.get('content-type') || '')) return '';
+      const blob = await r.blob();
+      return await new Promise((res) => {
+        const img = new Image();
+        img.onload = () => {
+          // غلاف صغير (نحو ١٠٠ بكسل في بعض كتب رافد) يبدو ضبابياً — نتركه ويرسم مِداد غلافاً واضحاً
+          if ((img.naturalWidth || 0) < 250) { URL.revokeObjectURL(img.src); res(''); return; }
+          const w = Math.min(maxW, img.naturalWidth || maxW), h = Math.round(w * img.naturalHeight / img.naturalWidth);
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(img.src);
+          res(c.toDataURL('image/jpeg', 0.88));
+        };
+        img.onerror = () => { URL.revokeObjectURL(img.src); res(''); };
+        img.src = URL.createObjectURL(blob);
+      });
+    } catch { return ''; }
+  }
+  const coverCache = new Map();
+  const siteCoverOnce = (url) => { if (!coverCache.has(url)) coverCache.set(url, siteCover(url)); return coverCache.get(url); };
+  const needCloud = (name) => { status(`فعّل المزامنة السحابية أولاً (زر ☁️) لاستخدام مصدر «${name}».`); };
+
+  /* صفحة تفاصيل مشتركة: كتاب من جزء أو أجزاء. parts: [{ short, size, manual, add(): Promise<bookId> }] */
+  async function partsSheet(o) {
+    let have = new Set();
+    try { have = new Set((await Store.getBooks()).map((b) => normT(b.title))); } catch {}
+    const parts = o.parts, multi = parts.length > 1;
+    const countText = (n) => (n === 2 ? 'جزأين' : `${n} ${n <= 10 ? 'أجزاء' : 'جزءاً'}`);
+    const isDone = (p) => have.has(normT(p.title));
+    const allDone = parts.length && parts.every(isDone);
+    sheet.hidden = false;
+    sheet.innerHTML = `
+      <div class="disc-sheet-box">
+        <button class="disc-back" title="رجوع">→ رجوع</button>
+        <div class="disc-detail">
+          <div class="disc-detail-cover${o.cover ? '' : ' no-img'}">${o.cover ? `<img referrerpolicy="no-referrer" src="${esc(o.cover)}" alt="" onerror="this.style.display='none'">` : `<span class="disc-fallback">${esc((o.title || '؟').trim().slice(0, 1))}</span>`}</div>
+          <div class="disc-detail-meta">
+            <h3>${esc(o.title)}</h3>
+            ${o.author ? `<p class="dd-author">${esc(o.author)}</p>` : ''}
+            ${o.facts ? `<p class="dd-desc">${o.facts}</p>` : ''}
+            ${o.desc ? `<p class="dd-desc">${esc(o.desc)}</p>` : ''}
+            ${o.link ? `<a class="dd-link" href="${esc(o.link)}" target="_blank" rel="noopener">↗ ${esc(o.linkText || 'صفحة الكتاب في الموقع')}</a>` : ''}
+          </div>
+        </div>
+        <div class="disc-formats">
+          ${o.extra || ''}
+          ${!parts.length ? `<p>${esc(o.empty || 'لا يوجد ملف قابل للتنزيل لهذا الكتاب.')}</p>` : ''}
+          ${parts.length && !multi ? `
+            <button class="disc-import px-one"${allDone ? ' disabled' : ''}>
+              <span class="di-label">${allDone ? '✓ في مكتبتك' : esc(o.addLabel || '📕 أضِف إلى مكتبتي')}<em>${esc(o.addHint || 'يُنزَّل عبر خادمك ويُضاف إلى مكتبتك')}</em></span>${parts[0].size ? `<span class="di-size">${esc(parts[0].size)}</span>` : ''}
+            </button>
+            ${parts[0].manual ? `<a class="disc-alt" href="${esc(parts[0].manual)}" target="_blank" rel="noopener">أو نزّله يدوياً من متصفحك ↗</a>` : ''}` : ''}
+          ${multi ? `
+            <p class="af-parts-head">📚 هذا الكتاب من <b>${countText(parts.length)}</b></p>
+            <button class="disc-import px-all"${allDone ? ' disabled' : ''}>
+              <span class="di-label">${allDone ? '✓ كل الأجزاء في مكتبتك' : `📕 أضِف كل الأجزاء (${parts.length})`}<em>تُحفظ معاً سلسلةً واحدة «${esc(o.base)}»</em></span>
+            </button>
+            <div class="af-parts">${parts.map((p, i) => `<div class="af-part${isDone(p) ? ' done' : ''}" data-i="${i}">
+                <span class="afp-name">${esc(p.short)}</span>
+                <span class="afp-size">${esc(p.size || '')}</span>
+                <button class="afp-add"${isDone(p) ? ' disabled' : ''}>${isDone(p) ? '✓ في مكتبتك' : 'أضِف'}</button>
+                ${p.manual ? `<a class="afp-manual" href="${esc(p.manual)}" target="_blank" rel="noopener" title="تنزيل يدوي من متصفحك">↗</a>` : '<span></span>'}
+              </div>`).join('')}</div>` : ''}
+        </div>
+      </div>`;
+    sheet.querySelector('.disc-back').onclick = closeSheet;
+    if (o.onRender) o.onRender(sheet);
+    const one = sheet.querySelector('.px-one');
+    if (one && !one.disabled) one.onclick = async () => {
+      const orig = one.innerHTML;
+      one.disabled = true; one.classList.add('loading');
+      one.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ التنزيل… (قد يستغرق دقيقة)</span>`;
+      try {
+        const bookId = await parts[0].add((t) => { one.innerHTML = `<span class="di-label"><span class="disc-spin"></span> ${esc(t)}</span>`; });
+        one.classList.remove('loading'); one.classList.add('done');
+        one.innerHTML = `<span class="di-label">✓ أُضيف إلى مكتبتك</span>`;
+        Library.toast('أُضيف الكتاب إلى مكتبتك 📚', 'gold');
+        noteOwned(parts[0].title, bookId);
+        addReadNow(bookId);
+      } catch (e) { one.disabled = false; one.classList.remove('loading'); one.innerHTML = orig; addFailed(e); }
+    };
+    if (!multi) return;
+    const rows = [...sheet.querySelectorAll('.af-part')];
+    const setRow = (row, st, text, err) => {
+      row.classList.remove('loading', 'done', 'failed');
+      if (st) row.classList.add(st);
+      const b = row.querySelector('.afp-add');
+      b.textContent = text; b.disabled = st === 'loading' || st === 'done';
+      let e = row.querySelector('.afp-err');
+      if (err) { if (!e) { e = document.createElement('div'); e.className = 'afp-err'; row.appendChild(e); } e.textContent = err; }
+      else if (e) e.remove();
+    };
+    const doPart = async (i) => {
+      const row = rows[i];
+      if (row.classList.contains('done')) return true;
+      setRow(row, 'loading', 'جارٍ…');
+      try { const id = await parts[i].add(() => {}); noteOwned(parts[i].title, id); setRow(row, 'done', '✓ في مكتبتك'); return true; }
+      catch (e) { setRow(row, 'failed', 'أعِد المحاولة', e.message || String(e)); return false; }
+    };
+    rows.forEach((row) => { const i = +row.dataset.i; row.querySelector('.afp-add').onclick = async () => { if (await doPart(i)) Library.toast(`أُضيف «${parts[i].short}» إلى مكتبتك 📚`, 'gold'); }; });
+    const all = sheet.querySelector('.px-all');
+    if (all && !all.disabled) all.onclick = async () => {
+      const todo = rows.map((r, i) => i).filter((i) => !rows[i].classList.contains('done'));
+      if (!todo.length) return;
+      all.disabled = true; all.classList.add('loading');
+      let ok = 0, fail = 0;
+      for (let k = 0; k < todo.length; k++) {
+        all.innerHTML = `<span class="di-label"><span class="disc-spin"></span> جارٍ تنزيل ${esc(parts[todo[k]].short)} (${k + 1} من ${todo.length})…</span>`;
+        if (await doPart(todo[k])) ok++; else fail++;
+      }
+      all.classList.remove('loading');
+      if (!fail) { all.classList.add('done'); all.innerHTML = `<span class="di-label">✓ أُضيفت كل الأجزاء<em>سلسلة «${esc(o.base)}»</em></span>`; Library.toast(`أُضيفت ${countText(ok)} إلى مكتبتك 📚`, 'gold'); }
+      else { all.disabled = false; all.innerHTML = `<span class="di-label">أُضيف ${ok} وتعذّر ${fail} — اضغط لإعادة المحاولة<em>سبب كل تعذّر مكتوب تحت الجزء</em></span>`; Library.toast(`أُضيف ${ok} من ${todo.length} — تعذّر ${fail}`); }
+    };
+  }
+  const seriesOf = (base, label, order, total, src) => ({ key: String(base).replace(/ـ/g, '').replace(/\s+/g, ' ').trim(), title: base, label, order, total, src });
+
+  /* ── مكتبة رافد ── */
+  const RF_CATS = [[0, '📚 كل الكتب'], [3, 'العقائد والكلام'], [7, 'سيرة النبي (ص) وأهل البيت (ع)'], [1, 'القرآن وعلومه'], [2, 'الحديث وعلومه'], [4, 'الفقه'], [5, 'أصول الفقه'],
+    [6, 'رجال الحديث'], [8, 'التراجم'], [9, 'الأخلاق'], [20, 'العرفان والأدعية والزيارات'], [11, 'التاريخ والجغرافيا'], [10, 'الفرق والمذاهب'], [12, 'الفلسفة والمنطق'],
+    [19, 'الشعر والأدب'], [24, 'اللغة والبلاغة'], [17, 'علم النفس والتربية والاجتماع'], [15, 'العلوم السياسية'], [14, 'الإقتصاد'], [13, 'القانون'], [18, 'العلوم الطبيعيّة'],
+    [23, 'الطّب'], [21, 'دليل المؤلفات'], [26, 'مجلّة تراثنا'], [22, 'العامة']].map(([cat, label]) => ({ label, cat: String(cat) }));
+  let rfCat = '0';
+  const RF_KIND = { text: '📄 نصّ الكتاب', pdf: '📕 PDF', pdfimg: '🖼 PDF مصوّر' };
+  let rfKindPref = 'text';
+  try { rfKindPref = localStorage.getItem('midad-rf-kind') || 'text'; } catch {}
+  const rfDetails = new Map();
+  const rfDetail = (id) => { if (!rfDetails.has(id)) rfDetails.set(id, Cloud.invokeFn('alfeker', { action: 'rf_detail', id }).catch((e) => { rfDetails.delete(id); throw e; })); return rfDetails.get(id); };
+  // عنوان البطاقة «… [ج ٢]» ← العنوان وحده (رقم الجزء يظهر في الصفحة)
+  const rfBase = (t) => String(t || '').replace(/\s*\[ج\s*[^\]]*\]\s*$/, '').trim();
+  function renderRfChips() {
+    chipsEl.innerHTML = RF_CATS.map((c) => `<button class="disc-chip${c.cat === rfCat ? ' on' : ''}" data-cat="${c.cat}">${esc(c.label)}</button>`).join('');
+    chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
+      chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.remove('on'));
+      ch.classList.add('on'); input.value = ''; rfCat = ch.dataset.cat; search('');
+    });
+  }
+  async function searchRafed(q, my) {
+    if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) needCloud(SOURCES.rafed.name); return null; }
+    const term = (q || '').trim();
+    const req = term ? { action: 'rf_list', q: term } : { action: 'rf_list', cat: rfCat };
+    const map = (b) => ({
+      source: 'rafed', id: b.id, title: b.title, author: b.author, cover: b.cover,
+      meta: [b.fmts && b.fmts.includes('pdf') ? 'PDF + نص' : 'نصّ كامل', b.pages ? b.pages + ' ص' : '', b.vols > 1 ? b.vols + ' مجلدات' : ''].filter(Boolean).join(' · '),
+    });
+    const seen = new Set();
+    const fresh = (l) => (l || []).filter((b) => !seen.has(b.id) && seen.add(b.id)).map(map);
+    const d = await Cloud.invokeFn('alfeker', req);
+    if (my !== curReq) return null;
+    if (d.hasMore) { let page = d.page || 1; moreFn = async () => { page++; const dd = await Cloud.invokeFn('alfeker', { ...req, page }); if (!dd.hasMore) moreFn = null; return fresh(dd.items); }; }
+    return fresh(d.items);
+  }
+  async function openRafedDetail(ds) {
+    sheet.hidden = false;
+    sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
+    let d;
+    try { d = await rfDetail(ds.id); }
+    catch (e) { sheet.innerHTML = `<div class="disc-sheet-box"><p>تعذّر جلب التفاصيل: ${esc(e.message || e)}</p><button class="btn-ghost disc-back">رجوع</button></div>`; sheet.querySelector('.disc-back').onclick = closeSheet; return; }
+    const base = d.title || rfBase(ds.title);
+    const vols = d.vols && d.vols.length > 1 ? d.vols : [{ id: d.id, label: '' }];
+    const multi = vols.length > 1;
+    const kinds = ['text', ...(d.pdf ? ['pdf'] : []), ...(d.pdfimg ? ['pdfimg'] : [])];
+    let kind = kinds.includes(rfKindPref) ? rfKindPref : 'text';
+    const facts = [d.editor ? 'تحقيق: ' + esc(d.editor) : '', d.publisher ? 'الناشر: ' + esc(d.publisher) : '', d.subject ? 'الموضوع: ' + esc(d.subject) : '',
+      [d.date, d.pages ? d.pages + ' صفحة' : ''].filter(Boolean).map(esc).join(' · ')].filter(Boolean).join('<br>');
+    const titleOf = (v) => (multi ? `${base} — ${v.label}` : base);
+    const addVol = (v, i) => async (say) => {
+      const vd = v.id === d.id ? d : await rfDetail(v.id);
+      // الصيغة المختارة إن توفّرت لهذا الجزء، وإلا الأقرب (المصوّر ← PDF ← النص)
+      const k = kind === 'pdfimg' && vd.pdfimg ? 'pdfimg' : kind !== 'text' && vd.pdf ? 'pdf' : 'text';
+      const meta = { title: titleOf(v), author: vd.author || d.author || '', category: 'دين',
+        series: multi ? seriesOf(base, v.label, i + 1, vols.length, 'rafed:' + d.id) : undefined, shelves: multi ? [base] : undefined };
+      const coverP = siteCoverOnce(vd.cover || d.cover);
+      let bookId;
+      if (k === 'text') {
+        say && say('جارٍ جلب نصّ الكتاب…');
+        const j = await Cloud.invokeFn('alfeker', { action: 'rf_text', id: vd.id, pages: vd.pages || 2000 });
+        if (!j || !j.text) throw new Error((j && j.error) || 'لا يوجد نصّ متاح');
+        const cover = await coverP;
+        say && say('جارٍ الإضافة…');
+        bookId = await Library.addRemoteBook({ ...meta, blob: `# ${meta.title}\n\n${j.text}`, name: meta.title, kind: 'text', cover });
+      } else {
+        const f = await proxyFile(k === 'pdfimg' ? vd.pdfimg : vd.pdf);
+        const cover = await coverP;
+        say && say('جارٍ الإضافة…');
+        bookId = await Library.addRemoteBook({ ...meta, blob: f.blob, name: meta.title, kind: 'pdf', cover, expectedSize: f.size });
+      }
+      if (bookId) { try { await Store.updateBook(bookId, { coverFrom: 'site' }); } catch {} }
+      return bookId;
+    };
+    const kindPicker = kinds.length > 1 ? `<div class="rf-kinds" role="radiogroup" aria-label="صيغة الإضافة"><span>الصيغة:</span>${kinds.map((k) => `<button class="disc-subchip${k === kind ? ' on' : ''}" data-k="${k}" role="radio" aria-checked="${k === kind}">${RF_KIND[k]}</button>`).join('')}</div>
+      <p class="disc-note rf-kind-note"></p>` : `<p class="disc-note">يُضاف <b>نصّ الكتاب كاملاً</b> (قابلاً للبحث والتظليل والقراءة الصوتية) — هذا الكتاب بلا ملف PDF في الموقع.</p>`;
+    const kindNote = { text: 'نصّ كامل مُنسّق بالعناوين — الأخفّ والأفضل للبحث والتظليل والقراءة الصوتية.', pdf: 'PDF منضَّد من الموقع بنصّ قابل للبحث.', pdfimg: 'صور صفحات الطبعة الورقية (حجم أكبر بكثير).' };
+    await partsSheet({
+      title: multi ? base : (d.fullTitle || base), author: d.author || ds.author, cover: d.coverSmall || ds.cover, facts, base,
+      link: `https://lib.rafed.net/view.php?type=c_fbook&b_id=${encodeURIComponent(d.id)}`, linkText: 'صفحة الكتاب في مكتبة رافد',
+      extra: kindPicker, addLabel: '📕 أضِف إلى مكتبتي', addHint: 'يُجلب عبر خادمك ويُضاف إلى مكتبتك',
+      parts: vols.map((v, i) => ({ short: v.label || base, title: titleOf(v), add: addVol(v, i) })),
+      onRender: (el) => {
+        const note = el.querySelector('.rf-kind-note');
+        if (note) note.textContent = kindNote[kind];
+        el.querySelectorAll('.rf-kinds button').forEach((b) => b.onclick = () => {
+          kind = rfKindPref = b.dataset.k;
+          try { localStorage.setItem('midad-rf-kind', kind); } catch {}
+          el.querySelectorAll('.rf-kinds button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
+          if (note) note.textContent = kindNote[kind] + (multi && kind !== 'text' ? ' (الأجزاء التي لا PDF لها تُضاف نصّاً)' : '');
+        });
+      },
+    });
+  }
+
+  /* ── مكتبة الروضة الحيدرية: «المكتبة المختصة بأمير المؤمنين (ع)» ── */
+  let hySecs = null, hyCat = '';
+  const hyItemsMap = new Map();
+  try { const c = JSON.parse(localStorage.getItem('midad-hy-sections') || 'null'); if (c && Date.now() - c.at < 864e5 && c.list && c.list.length) hySecs = c.list; } catch {}
+  async function ensureHySections() {
+    if (hySecs) return hySecs;
+    try {
+      const d = await Cloud.invokeFn('alfeker', { action: 'hy_sections' });
+      if (d && d.sections && d.sections.length) { hySecs = d.sections; try { localStorage.setItem('midad-hy-sections', JSON.stringify({ at: Date.now(), list: hySecs })); } catch {} }
+    } catch {}
+    return hySecs;
+  }
+  function renderHyChips() {
+    const top = (hySecs || []).filter((s) => !s.parent).sort((a, b) => /[A-Za-z]/.test(a.label) - /[A-Za-z]/.test(b.label)); // باب اللغات الأخرى آخراً
+    const chip = (s, cls = 'disc-chip') => `<button class="${cls}" data-cat="${esc(s.id)}">${esc(s.label)}${s.count ? ` <small class="dc-n">${fmtCount(s.count)}</small>` : ''}</button>`;
+    chipsEl.classList.add('af');
+    chipsEl.innerHTML = chip({ id: '', label: '📚 كل الكتب' }) + top.map((s) => chip(s)).join('');
+    let sub = modal.querySelector('.disc-subchips');
+    if (!sub) { sub = document.createElement('div'); sub.className = 'disc-subchips'; }
+    chipsEl.after(sub); sub.hidden = true; sub.innerHTML = '';
+    const topOf = (id) => { let s = (hySecs || []).find((x) => x.id === id); while (s && s.parent) s = hySecs.find((x) => x.id === s.parent); return s ? s.id : ''; };
+    const mark = () => {
+      chipsEl.querySelectorAll('.disc-chip').forEach((x) => x.classList.toggle('on', x.dataset.cat === (hyCat ? topOf(hyCat) : '')));
+      sub.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.cat === hyCat));
+    };
+    const showSubs = (pid, anchor) => {
+      const kids = (hySecs || []).filter((x) => x.parent === pid);
+      if (!kids.length) { sub.hidden = true; sub.innerHTML = ''; return; }
+      // الفروع وفروعها (مستوى ثانٍ بمسافة) في صفّ واحد
+      const rows = [];
+      const walk = (id, depth) => (hySecs || []).filter((x) => x.parent === id).forEach((x) => { rows.push({ ...x, label: (depth ? '↳ ' : '') + x.label }); walk(x.id, depth + 1); });
+      walk(pid, 0);
+      const parent = hySecs.find((x) => x.id === pid);
+      sub.hidden = false;
+      if (sideLayout() && anchor) anchor.after(sub); else chipsEl.after(sub);
+      sub.innerHTML = chip({ id: pid, label: 'كل كتب الباب', count: parent && parent.count }, 'disc-subchip') + rows.map((x) => chip(x, 'disc-subchip')).join('');
+      sub.querySelectorAll('button').forEach((b) => b.onclick = () => { hyCat = b.dataset.cat; input.value = ''; mark(); search(''); });
+    };
+    chipsEl.querySelectorAll('.disc-chip').forEach((ch) => ch.onclick = () => {
+      hyCat = ch.dataset.cat; input.value = '';
+      showSubs(hyCat, ch); mark(); search('');
+    });
+    if (hyCat) { const t = topOf(hyCat); showSubs(t, chipsEl.querySelector(`.disc-chip[data-cat="${CSS.escape(t)}"]`)); }
+    mark();
+  }
+  async function searchHaydarya(q, my) {
+    if (!window.Cloud || !Cloud.fnReady || !Cloud.fnReady()) { if (my === curReq) needCloud(SOURCES.haydarya.name); return null; }
+    const term = (q || '').trim();
+    const req = term ? { action: 'hy_list', q: term } : { action: 'hy_list', cat: hyCat };
+    const map = (it) => { hyItemsMap.set(it.id, it); return { source: 'haydarya', id: it.id, title: it.title, author: it.author, cover: it.cover, meta: [it.vols > 1 ? it.vols + ' مجلدات' : '', it.date].filter(Boolean).join(' · ') }; };
+    const seen = new Set();
+    const fresh = (l) => (l || []).filter((b) => !seen.has(b.id) && seen.add(b.id)).map(map);
+    if (!hySecs) status(`<div class="disc-spin"></div> أول مرة: جارٍ فهرسة أبواب المكتبة (ثوانٍ)…`);
+    const d = await Cloud.invokeFn('alfeker', req);
+    if (my !== curReq) return null;
+    if (!hySecs) ensureHySections().then((l) => { if (l && source === 'haydarya') renderHyChips(); });
+    if (d.hasMore) { let page = d.page || 1; moreFn = async () => { page++; const dd = await Cloud.invokeFn('alfeker', { ...req, page }); if (!dd.hasMore) moreFn = null; return fresh(dd.items); }; }
+    return fresh(d.items);
+  }
+  async function openHaydaryaDetail(ds) {
+    sheet.hidden = false;
+    sheet.innerHTML = `<div class="disc-sheet-box"><div class="disc-spin big"></div><p>جارٍ جلب تفاصيل الكتاب…</p></div>`;
+    let d;
+    try { d = await Cloud.invokeFn('alfeker', { action: 'hy_detail', id: ds.id }); }
+    catch (e) { sheet.innerHTML = `<div class="disc-sheet-box"><p>تعذّر جلب التفاصيل: ${esc(e.message || e)}</p><button class="btn-ghost disc-back">رجوع</button></div>`; sheet.querySelector('.disc-back').onclick = closeSheet; return; }
+    const it = { ...(hyItemsMap.get(ds.id) || {}), ...d };
+    const base = (it.title || ds.title || 'بدون عنوان').trim();
+    const pdfs = (it.files || []).filter((f) => f.kind === 'pdf');
+    const others = (it.files || []).filter((f) => f.kind !== 'pdf');
+    const multi = pdfs.length > 1;
+    const short = (f, i) => (/^الجزء|^المجلد|^ج/.test(f.label) ? f.label : (multi ? `الجزء ${i + 1}` : f.label || base));
+    const titleOf = (f, i) => (multi ? `${base} — ${short(f, i)}` : base);
+    const facts = [it.editor ? 'تحقيق: ' + esc(it.editor) : '', it.publisher ? 'الناشر: ' + esc(it.publisher) : '', it.date ? esc(it.date) : '', it.vols > 1 ? it.vols + ' مجلدات' : ''].filter(Boolean).join('<br>');
+    const [cat, sid] = String(ds.id).split(':');
+    await partsSheet({
+      title: base, author: it.author || ds.author, cover: it.cover || ds.cover, facts, desc: it.desc, base,
+      link: `https://www.haydarya.org/?id=${encodeURIComponent(cat)}&sid=${encodeURIComponent(sid)}`, linkText: 'صفحة الكتاب في مكتبة الروضة الحيدرية',
+      empty: others.length ? 'هذا الكتاب بلا PDF في الموقع — ملفه بصيغة أخرى، نزّله يدوياً من الرابط أدناه.' : 'لا يوجد ملف قابل للتنزيل لهذا الكتاب في الموقع.',
+      extra: !pdfs.length && others.length ? others.map((f) => `<a class="disc-alt" href="${esc(f.url)}" target="_blank" rel="noopener">↗ ${esc(f.label || f.kind)} (${esc(f.kind.toUpperCase())})</a>`).join('') : '',
+      addLabel: '📕 أضِف إلى مكتبتي (PDF)',
+      parts: pdfs.map((f, i) => ({
+        short: short(f, i), title: titleOf(f, i), manual: f.url,
+        add: async (say) => {
+          const coverP = siteCoverOnce(it.coverFull || it.cover);
+          const file = await proxyFile(f.url);
+          const cover = await coverP;
+          say && say('جارٍ الإضافة…');
+          const id = await Library.addRemoteBook({
+            blob: file.blob, name: titleOf(f, i), kind: 'pdf', title: titleOf(f, i), author: it.author || '', category: 'دين', cover, expectedSize: file.size,
+            series: multi ? seriesOf(base, short(f, i), i + 1, pdfs.length, 'haydarya:' + ds.id) : undefined, shelves: multi ? [base] : undefined,
+          });
+          if (id && cover) { try { await Store.updateBook(id, { coverFrom: 'site' }); } catch {} }
+          return id;
+        },
+      })),
+    });
   }
 
   function closeSheet() { if (sheet) { sheet.hidden = true; sheet.innerHTML = ''; } }
